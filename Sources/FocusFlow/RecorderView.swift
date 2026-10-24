@@ -454,13 +454,23 @@ private struct BrowserCaptureCard: View {
             Text("One tab. Your full attention.").font(.title2.weight(.semibold))
             Text("Choose a specific Chrome tab with Chrome’s sharing picker. See your screen and camera live, pause when needed, then send the recording straight to this editor.")
                 .multilineTextAlignment(.center).font(.callout).foregroundStyle(.secondary).frame(maxWidth: 540)
-            Button(opening ? "Opening…" : "Open Chrome tab studio ↗") {
-                opening = true
-                Task {
-                    do { try await bridge.launch() } catch { self.error = error.localizedDescription }
-                    opening = false
+            HStack(spacing: 10) {
+                Button(opening ? "Opening…" : bridge.isActive ? "Reopen tab studio ↗" : "Open Chrome tab studio ↗") {
+                    opening = true
+                    Task {
+                        do { try await bridge.launch() } catch { self.error = error.localizedDescription }
+                        opening = false
+                    }
+                }.buttonStyle(.borderedProminent).tint(AppTheme.green).disabled(opening)
+
+                // Without this the session runs until the app quits, which
+                // also leaves the mode below permanently locked.
+                if bridge.isActive {
+                    Button("End session") { bridge.stop(); error = nil }
+                        .buttonStyle(.bordered)
+                        .help("Closes the local recording session. The page in Chrome stops being able to save.")
                 }
-            }.buttonStyle(.borderedProminent).tint(AppTheme.green).disabled(opening)
+            }
             Text(error ?? bridge.status).font(.caption).foregroundStyle(.secondary)
 
             Toggle("Open the web studio instead", isOn: $useWeb)
@@ -468,6 +478,12 @@ private struct BrowserCaptureCard: View {
                 .toggleStyle(.checkbox)
                 .disabled(bridge.isActive)
                 .onChange(of: useWeb) { _, value in BrowserRecorderBridge.usesWebStudio = value }
+                .overlay(alignment: .trailing) {
+                    if bridge.isActive {
+                        Text("End the session to change this")
+                            .font(.caption2).foregroundStyle(.tertiary).offset(x: 190)
+                    }
+                }
                 .help("Loads the studio from the FocusFlow website instead of this app. The recording still goes straight to your Mac, but the page itself is fetched over the network.")
 
             Text(useWeb

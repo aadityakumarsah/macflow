@@ -39,10 +39,13 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testReleaseVersionOrdering()
             try tests.testReleaseParsingAcceptsGitHubDiskImagesOnly()
             try tests.testUpdateSwapReplacesBundleAndRestoresOnFailure()
+            print("Checking key storage and editor controls…")
+            try tests.testAPIKeyStorageAndValidation()
+            await tests.testSplitIsOfferedOnlyWhenItCanAct()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }
-        if failures.isEmpty { print("PASS: 9 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, real MP4 export.") }
+        if failures.isEmpty { print("PASS: 10 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, keys/editor controls, real MP4 export.") }
         else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
     }
 }

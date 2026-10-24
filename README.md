@@ -75,6 +75,19 @@ has no session and cannot record. Chrome additionally treats a public page
 reaching loopback as Private Network Access, so the bridge answers that
 preflight explicitly.
 
+Click zooms work for tab recordings too. A page cannot see pointer events in
+the tab it is capturing, so FocusFlow follows the pointer itself while Chrome
+records and builds the zooms from that. The browser reports the captured size,
+which together with Chrome's window bounds pins down where the page sits on
+screen. Samples are taken only while Chrome is frontmost and the pointer is
+over the captured page, so a click in another app cannot invent a zoom. This is
+an approximation of a geometry the browser does not expose, and it needs Input
+Monitoring permission.
+
+API keys for AI providers live in **FocusFlow → Settings → AI**, stored in the
+macOS Keychain rather than in preferences or project files. Nothing calls them
+yet; the storage exists so a key is in place before the features that need it.
+
 Keep FocusFlow open during tab capture. The companion uses a random port bound to `127.0.0.1`, a per-session token, and same-origin write checks. Media chunks are written locally. Nothing is uploaded to an external service. A 512 MB combined session limit bounds the browser’s recovery buffer; the session stops and saves when reached. Backup download buttons remain available after capture, including if local handoff fails. A browser supporting MP4 MediaRecorder output is required; unsupported browsers show a useful error before recording starts.
 
 Grant Screen Recording permission to FocusFlow for native capture. Camera and microphone permission is requested only when enabled. Input Monitoring enables shortcut badges; ordinary typed text is not collected. Browser capture uses Chrome’s separate sharing and device permission prompts.

@@ -14,6 +14,9 @@ struct FocusFlowApp: App {
                 .preferredColorScheme(.light)
         }
         .windowStyle(.hiddenTitleBar)
+
+        Settings { SettingsView() }
+
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {

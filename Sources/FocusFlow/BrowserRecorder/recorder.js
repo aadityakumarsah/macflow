@@ -111,7 +111,11 @@ async function start() {
       sources.forEach(stream => audioContext.createMediaStreamSource(new MediaStream(stream.getAudioTracks())).connect(mixed));
       tracks.push(...mixed.stream.getAudioTracks());
     }
-    captureID = crypto.randomUUID(); await post('/begin', '');
+    captureID = crypto.randomUUID();
+    // Report the captured surface size so FocusFlow can locate this tab on
+    // screen and follow the pointer; without it there are no click zooms.
+    const captured = display.getVideoTracks()[0]?.getSettings() || {};
+    await post('/begin', JSON.stringify({width: captured.width || 0, height: captured.height || 0}));
     screenRecorder = recorder(new MediaStream(tracks), screenChunks, '/screen');
     cameraRecorder = camera?.active ? recorder(camera, cameraChunks, '/camera') : null;
     started = performance.now(); screenRecorder.start(1000); cameraRecorder?.start(1000);
@@ -131,9 +135,11 @@ async function start() {
 function pause() {
   if (state === 'recording') {
     screenRecorder.pause(); cameraRecorder?.pause(); pausedAt = performance.now(); state = 'paused';
+    post('/pause','').catch(() => {});
     $('pause').textContent = 'Resume'; $('badge').textContent = 'PAUSED'; status('Paused. This time will be excluded from your video.');
   } else if (state === 'paused') {
     pausedDuration += performance.now() - pausedAt; screenRecorder.resume(); cameraRecorder?.resume(); state = 'recording';
+    post('/resume','').catch(() => {});
     $('pause').textContent = 'Pause'; $('badge').textContent = '● RECORDING'; status('Recording resumed.');
   }
 }

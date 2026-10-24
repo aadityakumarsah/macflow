@@ -235,8 +235,16 @@ final class EditorModel: ObservableObject {
         lastHistory = .distantPast; segment.id = UUID(); segment.start = min(max(0, duration - segment.duration), segment.end + 0.1)
         segments.append(segment); selectedSegmentID = segment.id
     }
+    /// Splitting needs the playhead inside the segment, with room either
+    /// side. Exposed so the button can be disabled rather than silently doing
+    /// nothing when it is pressed.
+    var canSplitSelected: Bool {
+        guard let segment = selectedSegment else { return false }
+        return playhead > segment.start + 0.1 && playhead < segment.end - 0.1
+    }
+
     func splitSelected() {
-        guard var segment = selectedSegment, playhead > segment.start + 0.1, playhead < segment.end - 0.1 else { return }
+        guard canSplitSelected, var segment = selectedSegment else { return }
         lastHistory = .distantPast
         let oldEnd = segment.end
         updateSelected { $0.duration = playhead - $0.start }

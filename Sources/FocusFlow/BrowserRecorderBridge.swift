@@ -32,6 +32,7 @@ final class BrowserRecorderBridge: ObservableObject {
     private var isFinalizing = false
     private var captureID: String?
     private var lastActivity = Date.distantPast
+    private let pointer = BrowserPointerCapture()
 
     var sessionURL: URL? { isActive ? studioURL : nil }
 
@@ -86,6 +87,7 @@ final class BrowserRecorderBridge: ObservableObject {
         } else { NSWorkspace.shared.open(url) }
     }
     func stop() {
+        pointer.discard()
         listener?.cancel(); listener = nil; isActive = false
         if let directory { try? FileManager.default.removeItem(at: directory) }
         directory = nil
@@ -155,12 +157,26 @@ final class BrowserRecorderBridge: ObservableObject {
                     for file in ["screen.mp4", "camera.mp4"] { try? FileManager.default.removeItem(at: directory.appendingPathComponent(file)) }
                 }
                 captureID = requestID; lastActivity = Date()
+                // The page reports the captured surface size; without it the
+                // pointer cannot be placed inside the tab, so clicks are
+                // simply not collected rather than guessed at.
+                let info = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+                let width = (info["width"] as? NSNumber)?.doubleValue ?? 0
+                let height = (info["height"] as? NSNumber)?.doubleValue ?? 0
+                pointer.begin(viewportPixels: CGSize(width: width, height: height))
                 respond(200, "text/plain", Data("Ready".utf8)); return
             }
             guard requestID == captureID else { respond(409, "text/plain", Data("This capture session has ended. Download the backup and start a new session.".utf8)); return }
             lastActivity = Date()
             if path == "/heartbeat" { respond(200, "text/plain", Data()); return }
-            if path == "/release" { if !isFinalizing { captureID = nil }; respond(200, "text/plain", Data()); return }
+            // The browser drops paused time from the video, so the pointer
+            // timeline has to drop it too or every later click lands late.
+            if path == "/pause" { pointer.pause(); respond(200, "text/plain", Data()); return }
+            if path == "/resume" { pointer.resume(); respond(200, "text/plain", Data()); return }
+            if path == "/release" {
+                if !isFinalizing { captureID = nil; pointer.discard() }
+                respond(200, "text/plain", Data()); return
+            }
             if path == "/screen" || path == "/camera" {
                 guard !didFinish, !isFinalizing, !body.isEmpty else { throw ExportError.failed("This session has already finished.") }
                 let file = directory.appendingPathComponent(path == "/screen" ? "screen.mp4" : "camera.mp4")
@@ -199,7 +215,8 @@ final class BrowserRecorderBridge: ObservableObject {
                     value.x = min(1, max(0, value.x)); value.y = min(1, max(0, value.y)); value.size = min(0.48, max(0.12, value.size))
                     presentation = value
                 }
-                let metadata = RecordingMetadata(clicks: [], pointerSamples: [], keystrokes: [], sourceWidth: size.width, sourceHeight: size.height, sourceName: String((info["sourceName"] as? String ?? "Chrome tab").prefix(200)), cameraFileName: cameraName, cameraPresentation: presentation)
+                pointer.stop()
+                let metadata = RecordingMetadata(clicks: pointer.clicks, pointerSamples: pointer.samples, keystrokes: [], sourceWidth: size.width, sourceHeight: size.height, sourceName: String((info["sourceName"] as? String ?? "Chrome tab").prefix(200)), cameraFileName: cameraName, cameraPresentation: presentation)
                 didFinish = true; status = "Saved to your library. Ready to edit."
                 respond(200, "text/plain", Data("Saved to FocusFlow".utf8)); onFinish?(video, metadata)
             } else { respond(404, "text/plain", Data()) }

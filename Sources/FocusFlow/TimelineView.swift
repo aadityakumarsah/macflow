@@ -13,7 +13,13 @@ struct TimelineView: View {
                 Button { model.addSegment(.blur) } label: { Label("Blur", systemImage: "drop") }
                 Divider().frame(height: 14)
                 Button { model.duplicateSelected() } label: { Image(systemName: "plus.square.on.square") }.disabled(model.selectedSegment == nil).help("Duplicate selected segment")
-                Button { model.splitSelected() } label: { Image(systemName: "scissors") }.disabled(model.selectedSegment == nil).help("Split selected segment at playhead")
+                Button { model.splitSelected() } label: { Image(systemName: "scissors") }
+                    .disabled(!model.canSplitSelected)
+                    .help(model.selectedSegment == nil
+                          ? "Select a segment to split it"
+                          : model.canSplitSelected
+                            ? "Split selected segment at playhead"
+                            : "Move the playhead inside the selected segment to split it")
                 Button { model.deleteSelected() } label: { Label("Delete", systemImage: "trash") }.disabled(model.selectedSegment == nil)
             }.buttonStyle(.plain).font(.caption).padding(.horizontal, 16).frame(height: 40).disabled(model.videoURL == nil)
             GeometryReader { geo in
@@ -109,6 +115,7 @@ struct SegmentBlock: View {
         .contextMenu {
             Button("Duplicate") { select(); model.duplicateSelected() }
             Button("Split at playhead") { select(); model.splitSelected() }
+                .disabled(!(model.playhead > segment.start + 0.1 && model.playhead < segment.end - 0.1))
             Button("Delete", role: .destructive) { select(); model.deleteSelected() }
         }
     }

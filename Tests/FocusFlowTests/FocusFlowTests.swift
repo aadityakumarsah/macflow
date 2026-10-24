@@ -544,6 +544,91 @@ final class FocusFlowTests {
         XCTAssertNil(webURL.query)
     }
 
+    /// Keys go to the Keychain, so the round trip and the shape checks that
+    /// run before any network call are worth pinning down.
+    func testAPIKeyStorageAndValidation() throws {
+        // Shape checks catch an obviously wrong paste without a network call.
+        XCTAssertNil(AIProvider.anthropic.looksPlausible("sk-ant-" + String(repeating: "x", count: 40)))
+        XCTAssertNil(AIProvider.openai.looksPlausible("sk-" + String(repeating: "x", count: 40)))
+        // Gemini keys have no fixed prefix, so only length and spacing apply.
+        XCTAssertNil(AIProvider.gemini.looksPlausible(String(repeating: "x", count: 39)))
+
+        XCTAssertTrue(AIProvider.anthropic.looksPlausible("") != nil)
+        XCTAssertTrue(AIProvider.anthropic.looksPlausible("short") != nil)
+        // A wrong-provider key must be caught rather than sent off and rejected.
+        XCTAssertTrue(AIProvider.anthropic.looksPlausible("sk-" + String(repeating: "x", count: 40)) != nil)
+        // A pasted key with a stray space is a common copy error.
+        XCTAssertTrue(AIProvider.openai.looksPlausible("sk-" + String(repeating: "x", count: 20) + " tail") != nil)
+
+        // Round trip through the Keychain, on a provider left clean after.
+        let provider = AIProvider.gemini
+        let existing = Credentials.key(for: provider)
+        defer {
+            if let existing { Credentials.store(existing, for: provider) } else { Credentials.remove(provider) }
+        }
+
+        let secret = "focusflow-test-" + UUID().uuidString
+        XCTAssertTrue(Credentials.store(secret, for: provider))
+        XCTAssertEqual(Credentials.key(for: provider), secret)
+        XCTAssertTrue(Credentials.hasKey(for: provider))
+
+        // Storing again must replace rather than duplicate.
+        let second = "focusflow-test-" + UUID().uuidString
+        XCTAssertTrue(Credentials.store(second, for: provider))
+        XCTAssertEqual(Credentials.key(for: provider), second)
+
+        // Surrounding whitespace is a paste artefact, not part of the key.
+        XCTAssertTrue(Credentials.store("  \(second)  ", for: provider))
+        XCTAssertEqual(Credentials.key(for: provider), second)
+
+        XCTAssertTrue(Credentials.remove(provider))
+        XCTAssertNil(Credentials.key(for: provider))
+        XCTAssertTrue(!Credentials.hasKey(for: provider))
+        // Removing what is not there is not an error.
+        XCTAssertTrue(Credentials.remove(provider))
+
+        // Each provider is stored separately.
+        XCTAssertTrue(Credentials.store("alpha-key-alpha-key-alpha", for: .openai))
+        XCTAssertTrue(Credentials.store("beta-key-beta-key-beta-ke", for: .gemini))
+        XCTAssertEqual(Credentials.key(for: .openai), "alpha-key-alpha-key-alpha")
+        XCTAssertEqual(Credentials.key(for: .gemini), "beta-key-beta-key-beta-ke")
+        Credentials.remove(.openai)
+        XCTAssertEqual(Credentials.key(for: .gemini), "beta-key-beta-key-beta-ke")
+        Credentials.remove(.gemini)
+    }
+
+    /// The split button used to stay enabled while doing nothing, which reads
+    /// as broken. Its guard and the button's condition must be the same test.
+    @MainActor func testSplitIsOfferedOnlyWhenItCanAct() {
+        let model = EditorModel()
+        model.duration = 10
+        model.trimEnd = 10
+        model.segments = [EditSegment(kind: .zoom, start: 2, duration: 4, intensity: 1.5, x: 0.5, y: 0.5)]
+        model.selectedSegmentID = model.segments[0].id
+
+        // Playhead outside the segment: not offered, and does nothing if called.
+        model.playhead = 0.5
+        XCTAssertTrue(!model.canSplitSelected)
+        model.splitSelected()
+        XCTAssertEqual(model.segments.count, 1)
+
+        // Hard against an edge is still no room to split.
+        model.playhead = 2.05
+        XCTAssertTrue(!model.canSplitSelected)
+        model.splitSelected()
+        XCTAssertEqual(model.segments.count, 1)
+
+        // Inside, with room either side.
+        model.playhead = 4
+        XCTAssertTrue(model.canSplitSelected)
+        model.splitSelected()
+        XCTAssertEqual(model.segments.count, 2)
+
+        // Nothing selected is nothing to split.
+        model.selectedSegmentID = nil
+        XCTAssertTrue(!model.canSplitSelected)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

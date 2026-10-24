@@ -33,8 +33,19 @@ struct MotionAppearanceInspector: View {
             if model.motionAppearance.entrance != .none || model.motionAppearance.fadeOut {
                 InspectorSlider(title: "Transition", value: $model.motionAppearance.duration, range: 0.2...2, suffix: "s")
             }
-            Button { model.addAutoZooms() } label: { Label("Rebuild click zooms", systemImage: "sparkles") }.disabled(model.recordedClicks.isEmpty)
-            Text("Add Zoom or Pan from the left rail. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
+            Button { model.addAutoZooms() } label: { Label("Rebuild click zooms", systemImage: "sparkles") }
+                .disabled(model.recordedClicks.isEmpty)
+                .help(model.recordedClicks.isEmpty
+                      ? "This recording has no click data, so there is nothing to build zooms from."
+                      : "Replaces every zoom with ones generated from \(model.recordedClicks.count) recorded clicks.")
+
+            // A greyed-out button with no explanation reads as broken.
+            if model.recordedClicks.isEmpty && model.videoURL != nil {
+                Text("No clicks were recorded with this video, so zooms cannot be generated. Add Zoom or Pan from the left rail instead.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text("Add Zoom or Pan from the left rail. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }
