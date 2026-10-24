@@ -23,6 +23,13 @@ struct FocusFlowApp: App {
                     Task { await updater.check(userInitiated: true) }
                 }.disabled(updater.isBusy)
             }
+            CommandGroup(after: .toolbar) {
+                Button(model.theatreMode ? "Exit Full Screen Preview" : "Full Screen Preview") {
+                    model.toggleTheatreMode()
+                }
+                .keyboardShortcut("f", modifiers: [.control, .command])
+                .disabled(model.videoURL == nil)
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { model.undo() }.keyboardShortcut("z").disabled(!model.canUndo)
                 Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)

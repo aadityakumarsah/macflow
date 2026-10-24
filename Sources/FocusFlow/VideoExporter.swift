@@ -306,8 +306,13 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             result = opacity(placed, pow(1 - progress, 2)).composited(over: result)
         }
         if settings.showCursor, let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor), let cursor = RenderAssets.cursor(settings.cursor, shape: settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!) {
-            let isSystem = settings.cursor.style == .macOS || settings.cursor.shape == .text || ((settings.cursor.shape == nil || settings.cursor.shape == .automatic) && pointer.shape == .text)
-            var scale = isSystem ? settings.cursorPointScale * settings.cursorSize : target.width / 1920 * settings.cursorSize / 3
+            let resolvedShape = settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!
+            let isText = resolvedShape == .text
+            let isSystem = settings.cursor.style == .macOS || isText
+            // The I-beam is a thin glyph and reads much smaller than the arrow
+            // at the same scale, so it carries its own multiplier.
+            let shapeScale = settings.cursorSize * (isText ? max(0.1, settings.cursor.textScale) : 1)
+            var scale = isSystem ? settings.cursorPointScale * shapeScale : target.width / 1920 * shapeScale / 3
             if settings.clickEffects, let click {
                 let age = (time - click.time) / 0.3
                 if age < 1 { scale *= 1 - 0.18 * sin(age * .pi) }

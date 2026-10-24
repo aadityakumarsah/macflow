@@ -7,28 +7,43 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar()
-            UpdateBanner()
-            Divider().overlay(AppTheme.line)
-            HStack(spacing: 0) {
-                ToolRail()
+            if !model.theatreMode {
+                TopBar()
+                UpdateBanner()
                 Divider().overlay(AppTheme.line)
+            }
+            HStack(spacing: 0) {
+                if !model.theatreMode {
+                    ToolRail()
+                    Divider().overlay(AppTheme.line)
+                }
                 VStack(spacing: 0) {
                     PreviewArea()
-                    Divider().overlay(AppTheme.line)
-                    TimelineView()
+                    if !model.theatreMode {
+                        Divider().overlay(AppTheme.line)
+                        TimelineView()
+                    }
                 }
-                Divider().overlay(AppTheme.line)
-                InspectorView()
+                if !model.theatreMode {
+                    Divider().overlay(AppTheme.line)
+                    InspectorView()
+                }
             }
         }
-        .background(AppTheme.workspace)
+        .background(model.theatreMode ? Color.black : AppTheme.workspace)
         .sheet(isPresented: $model.showCropEditor) { CropEditor() }
         .sheet(isPresented: $model.showRecorder) { RecorderView() }
         .sheet(isPresented: $model.showLibrary) { RecordingLibraryView(library: model.library) }
         .alert("FocusFlow", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
             Button("OK") { model.message = nil }
         } message: { Text(model.message ?? "") }
+        .background(
+            // Escape leaves theatre mode. A hidden toolbar with no way back
+            // would be a trap.
+            Button("") { if model.theatreMode { model.setTheatreMode(false) } }
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+        )
         .task {
             // A quiet check at launch, then every few hours, so a window left
             // open for days still learns about a release. Reports nothing
@@ -140,6 +155,9 @@ struct TopBar: View {
             Button { confirmDelete = true } label: { Image(systemName: "trash") }
                 .help("Move this recording to Trash")
                 .disabled(!model.library.recordings.contains(where: { $0.url == model.videoURL }))
+            Button { model.toggleTheatreMode() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .help("Full screen preview ⌃⌘F")
+                .disabled(model.videoURL == nil)
             Button { model.saveProject() } label: { Label("Save", systemImage: "square.and.arrow.down") }
                 .buttonStyle(.plain).foregroundStyle(.secondary).disabled(model.videoURL == nil)
             Button { model.export() } label: {
@@ -205,11 +223,27 @@ struct PreviewArea: View {
             let canvas = canvasSize(in: proxy.size)
             VStack(spacing: 14) {
                 HStack {
-                    Label("PREVIEW", systemImage: "viewfinder").font(.system(size: 10, weight: .semibold)).tracking(1)
+                    if model.theatreMode {
+                        Button {
+                            model.setTheatreMode(false)
+                        } label: {
+                            Label("Exit full screen", systemImage: "arrow.down.right.and.arrow.up.left")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(.white.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.white)
+                        .help("Escape also leaves full screen")
+                    } else {
+                        Label("PREVIEW", systemImage: "viewfinder").font(.system(size: 10, weight: .semibold)).tracking(1)
+                    }
                     Spacer()
                     Text(model.ratio.rawValue).font(.caption)
                     if model.videoURL != nil { Text("\(Int(model.sourceSize.width)) × \(Int(model.sourceSize.height))").font(.caption.monospacedDigit()) }
-                }.foregroundStyle(.secondary).padding(.horizontal, 30).padding(.top, 18)
+                }
+                .foregroundStyle(model.theatreMode ? .white.opacity(0.65) : .secondary)
+                .padding(.horizontal, 30).padding(.top, 18)
                 Spacer(minLength: 0)
                 ZStack {
                     if model.videoURL != nil {
@@ -231,7 +265,11 @@ struct PreviewArea: View {
     }
     func canvasSize(in available: CGSize) -> CGSize {
         let render = model.canvasSize, ratio = render.width / render.height
-        let maxW = max(100, available.width - 60), maxH = max(100, available.height - 122)
+        // Theatre mode keeps only enough room for the transport and the exit
+        // control; the editor layout leaves space for its surrounding chrome.
+        let insetW: CGFloat = model.theatreMode ? 24 : 60
+        let insetH: CGFloat = model.theatreMode ? 96 : 122
+        let maxW = max(100, available.width - insetW), maxH = max(100, available.height - insetH)
         return maxW / maxH > ratio ? CGSize(width: maxH * ratio, height: maxH) : CGSize(width: maxW, height: maxW / ratio)
     }
 }
@@ -335,6 +373,31 @@ struct CanvasInspector: View {
             BackgroundInspector()
             InspectorSection(title: "FORMAT") {
                 Picker("Ratio", selection: $model.ratio) { ForEach(CanvasRatio.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden()
+
+                if model.ratio == .custom {
+                    HStack(spacing: 6) {
+                        RatioField(value: $model.customRatio.width)
+                        Text(":").foregroundStyle(.secondary)
+                        RatioField(value: $model.customRatio.height)
+                        Spacer()
+                        Button {
+                            // Swapping is the common case — the same shape the
+                            // other way up for a vertical cut.
+                            model.customRatio = CGSize(width: model.customRatio.height, height: model.customRatio.width)
+                        } label: { Image(systemName: "arrow.left.arrow.right") }
+                            .buttonStyle(.borderless)
+                            .help("Swap width and height")
+                    }
+                    HStack(spacing: 6) {
+                        ForEach(CanvasPreset.all) { preset in
+                            Button(preset.label) { model.customRatio = preset.size }
+                                .buttonStyle(.borderless).font(.caption2)
+                        }
+                    }
+                    let size = model.canvasSize
+                    Text("\(Int(size.width)) × \(Int(size.height))")
+                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                }
                 Toggle("Re-fit when the ratio changes", isOn: $model.autoAdjustCanvas)
                     .font(.caption)
                     .help("Pulls in the padding and moves the camera into the free area after switching aspect.")
@@ -424,4 +487,50 @@ struct InspectorSlider: View {
             Slider(value: $value, in: range).tint(AppTheme.green)
         }
     }
+}
+
+
+/// A ratio component. Accepts a decimal so 2.39 : 1 works, and refuses zero,
+/// which would make the canvas degenerate.
+private struct RatioField: View {
+    @Binding var value: CGFloat
+    @State private var text: String = ""
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 58)
+            .multilineTextAlignment(.center)
+            .font(.system(.caption, design: .monospaced))
+            .onAppear { text = format(value) }
+            .onChange(of: value) { _, new in
+                if abs((Double(text) ?? -1) - Double(new)) > 0.0001 { text = format(new) }
+            }
+            .onSubmit { commit() }
+            .onChange(of: text) { _, _ in commit() }
+    }
+
+    private func commit() {
+        guard let parsed = Double(text.replacingOccurrences(of: ",", with: ".")),
+              parsed > 0, parsed <= 1000 else { return }
+        value = CGFloat(parsed)
+    }
+
+    private func format(_ value: CGFloat) -> String {
+        let rounded = (Double(value) * 100).rounded() / 100
+        return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+    }
+}
+
+struct CanvasPreset: Identifiable {
+    let label: String
+    let size: CGSize
+    var id: String { label }
+
+    static let all: [CanvasPreset] = [
+        CanvasPreset(label: "21:9", size: CGSize(width: 21, height: 9)),
+        CanvasPreset(label: "2.39:1", size: CGSize(width: 2.39, height: 1)),
+        CanvasPreset(label: "3:2", size: CGSize(width: 3, height: 2)),
+        CanvasPreset(label: "4:5", size: CGSize(width: 4, height: 5)),
+    ]
 }

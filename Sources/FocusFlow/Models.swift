@@ -35,11 +35,14 @@ struct EditSegment: Identifiable, Codable, Equatable {
 
 enum CanvasRatio: String, CaseIterable, Identifiable, Codable {
     case source = "Source", landscape = "16:9", portrait = "9:16", square = "1:1", classic = "4:3"
+    case custom = "Custom"
     var id: String { rawValue }
+
+    /// The ratio's own proportions. `.custom` has none of its own — it reads
+    /// them from the project — so it falls back to the source shape here.
     var size: CGSize {
         switch self {
-        case .source: CGSize(width: 1920, height: 1080)
-        case .landscape: CGSize(width: 1920, height: 1080)
+        case .source, .landscape, .custom: CGSize(width: 1920, height: 1080)
         case .portrait: CGSize(width: 1080, height: 1920)
         case .square: CGSize(width: 1080, height: 1080)
         case .classic: CGSize(width: 1440, height: 1080)
@@ -47,12 +50,32 @@ enum CanvasRatio: String, CaseIterable, Identifiable, Codable {
     }
 
     func size(for sourceSize: CGSize) -> CGSize {
-        guard self == .source, sourceSize.width > 0, sourceSize.height > 0 else { return size }
+        size(for: sourceSize, custom: nil)
+    }
+
+    /// `custom` is the chosen width:height, used only by the custom case.
+    func size(for sourceSize: CGSize, custom: CGSize?) -> CGSize {
         let limit: CGFloat = 1920
+
+        if self == .custom {
+            guard let custom, custom.width > 0, custom.height > 0 else { return size }
+            // Fit the ratio inside the limit on its longer side, so a very
+            // wide or very tall choice stays a sane number of pixels.
+            let aspect = custom.width / custom.height
+            let width = aspect >= 1 ? limit : limit * aspect
+            let height = aspect >= 1 ? limit / aspect : limit
+            return CanvasRatio.even(CGSize(width: width, height: height))
+        }
+
+        guard self == .source, sourceSize.width > 0, sourceSize.height > 0 else { return size }
         let scale = min(1, limit / max(sourceSize.width, sourceSize.height))
-        let width = max(2, (sourceSize.width * scale / 2).rounded() * 2)
-        let height = max(2, (sourceSize.height * scale / 2).rounded() * 2)
-        return CGSize(width: width, height: height)
+        return CanvasRatio.even(CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale))
+    }
+
+    /// H.264 rejects odd dimensions.
+    static func even(_ size: CGSize) -> CGSize {
+        CGSize(width: max(2, (size.width / 2).rounded() * 2),
+               height: max(2, (size.height / 2).rounded() * 2))
     }
 }
 
@@ -183,6 +206,8 @@ struct ProjectDocument: Codable {
     var cursorAppearance: CursorAppearance? = nil
     var customBackground: CustomBackground? = nil
     var exportOptions: ExportOptions? = nil
+    var customRatioWidth: Double? = nil
+    var customRatioHeight: Double? = nil
 }
 
 struct RecordedClick: Codable {

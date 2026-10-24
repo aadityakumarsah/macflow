@@ -23,10 +23,22 @@ final class EditorModel: ObservableObject {
         }
     }
     @Published var customBackground = CustomBackground() { willSet { remember() } didSet { changed() } }
+    /// Only meaningful while `ratio` is `.custom`.
+    @Published var customRatio = CGSize(width: 16, height: 10) {
+        willSet { remember() }
+        didSet {
+            guard ratio == .custom, customRatio != oldValue else { return }
+            if autoAdjustCanvas { adjustForRatio() }
+            changed()
+        }
+    }
     @Published var exportOptions = ExportOptions() { willSet { remember() } didSet { changed() } }
     /// Re-fits padding and the camera when the aspect changes. On by default;
     /// any manual change to those controls afterwards is left alone.
     @Published var autoAdjustCanvas = true
+    /// Hides the rails, inspector and timeline and gives the preview the
+    /// whole window, for watching the result rather than editing it.
+    @Published var theatreMode = false
     @Published var padding: Double = 7 { willSet { remember() } didSet { changed() } }
     @Published var cornerRadius: Double = 18 { willSet { remember() } didSet { changed() } }
     @Published var shadow: Double = 30 { willSet { remember() } didSet { changed() } }
@@ -109,7 +121,7 @@ final class EditorModel: ObservableObject {
     var canvasSize: CGSize {
         var size = contentSize
         if frameAppearance.chrome != .none { size.height += size.width * frameAppearance.barHeight / 1920 }
-        return exportOptions.canvas(from: ratio.size(for: size))
+        return exportOptions.canvas(from: ratio.size(for: size, custom: ratio == .custom ? customRatio : nil))
     }
 
     /// Re-fits the composition after the canvas aspect changes.
@@ -121,7 +133,7 @@ final class EditorModel: ObservableObject {
     private func adjustForRatio() {
         let content = contentSize
         guard content.width > 0, content.height > 0 else { return }
-        let canvas = ratio.size(for: content)
+        let canvas = ratio.size(for: content, custom: ratio == .custom ? customRatio : nil)
         guard canvas.width > 0, canvas.height > 0 else { return }
 
         let contentAspect = content.width / content.height
@@ -159,6 +171,7 @@ final class EditorModel: ObservableObject {
         trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false
         frameAppearance = FrameAppearance(); motionAppearance = MotionAppearance(); cursorAppearance = CursorAppearance()
         customBackground = CustomBackground(); exportOptions = ExportOptions()
+        customRatio = CGSize(width: 16, height: 10)
         if let camera = self.metadata.cameraPresentation {
             cameraX = camera.x; cameraY = camera.y; cameraSize = camera.size; cameraShape = camera.shape; cameraMirrored = camera.mirrored
         }
@@ -263,6 +276,18 @@ final class EditorModel: ObservableObject {
         }
         segments[index] = segment
     }
+    /// Enters or leaves theatre mode, taking the window to macOS full screen
+    /// with it so the preview really does fill the display.
+    func setTheatreMode(_ on: Bool) {
+        guard theatreMode != on else { return }
+        theatreMode = on
+        guard let window = NSApplication.shared.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+        let isFullScreen = window.styleMask.contains(.fullScreen)
+        if on != isFullScreen { window.toggleFullScreen(nil) }
+    }
+
+    func toggleTheatreMode() { setTheatreMode(!theatreMode) }
+
     func setTrimStart() { trimStart = max(0, min(playhead, trimEnd - 0.1)) }
     func setTrimEnd() { trimEnd = min(duration, max(playhead, trimStart + 0.1)) }
     func resetTrim() { trimStart = 0; trimEnd = duration }
@@ -299,10 +324,11 @@ final class EditorModel: ObservableObject {
         cursorAppearance = d.cursorAppearance ?? CursorAppearance()
         customBackground = d.customBackground ?? CustomBackground()
         exportOptions = d.exportOptions ?? ExportOptions()
+        customRatio = CGSize(width: d.customRatioWidth ?? 16, height: d.customRatioHeight ?? 10)
         restoring = false
     }
     private func document() -> ProjectDocument {
-        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions)
+        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
     }
     private func readProject(at url: URL) -> ProjectDocument? { guard let data = try? Data(contentsOf: url) else { return nil }; return try? JSONDecoder().decode(ProjectDocument.self, from: data) }
     private func editsURL(for url: URL) -> URL { url.deletingPathExtension().appendingPathExtension("edits.json") }

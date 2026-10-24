@@ -70,7 +70,8 @@ struct CursorAppearanceInspector: View {
                 Toggle("Cursor shadow", isOn: $model.cursorShadow)
                 Toggle("Click effects", isOn: $model.clickEffects)
                 if model.clickEffects { Picker("Click", selection: $model.cursorAppearance.clickStyle) { ForEach(ClickStyle.allCases) { Text($0.rawValue).tag($0) } } }
-                InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.7...2.4, suffix: "×")
+                InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...6, suffix: "×")
+                InspectorSlider(title: "Text cursor", value: $model.cursorAppearance.textScale, range: 0.5...6, suffix: "×")
             }.disabled(model.pointerSamples.isEmpty)
             Toggle("Shortcut badges", isOn: $model.showKeystrokes).disabled(model.keystrokes.isEmpty)
         }

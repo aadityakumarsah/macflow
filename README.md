@@ -100,12 +100,14 @@ Grant Screen Recording permission to FocusFlow for native capture. Camera and mi
 - Editable macOS light/dark window frame with red/yellow/green controls, optional title, title-bar height, and control size. The frame stays fixed while the content zooms.
 - Non-destructive **Crop to tab or pane** in the editor, including imported and browser videos. Canvas fitting preserves the selected content instead of filling and clipping the edges.
 - Timed spotlights and text callouts, with easing and preview positioning. Select an effect and drag its focus directly on the preview.
+- **Full screen preview** (⌃⌘F, or the arrows in the toolbar) hides the rails, inspector and timeline, takes the window to macOS full screen, and gives the preview the display. Escape or the on-screen control returns.
+- Cursor size now goes to 6×, and the I-beam has its own scale beside it — it is a thin glyph and reads far smaller than the arrow at the same size.
 - Smooth bounded cursor interpolation, outlined Pearl/Obsidian/Accent styles, four accent colors, gentle movement tilt, size, visibility, shadow, ripple/pulse/press click effects, and optional keyboard shortcut badges. Cursor and title-bar artwork is cached for playback.
 - Region blur with editable center, width, height, strength, and timing; one button blurs the entire frame. Multiple regions can overlap.
 - Timeline scrubbing, segment move/edge resize, duplicate, split at playhead, delete, undo, and redo.
 - Non-destructive trim in/out markers, playback/export speed, and audio mute.
 - Separate camera layer with position, size, rounded/circular shape, mirroring, and show/hide. Drag the camera directly in the preview.
-- Source, landscape, portrait, square, and 4:3 canvas formats. Changing the ratio re-fits the composition: padding tightens as the content and canvas aspects diverge, and the camera moves into the area that opens up. Turn this off with **Re-fit when the ratio changes**.
+- Source, landscape, portrait, square, 4:3, and **Custom** canvas formats. Custom takes any width:height, including decimals such as 2.39:1, with one-tap presets for 21:9, 2.39:1, 3:2 and 4:5 and a swap button. The result is capped on its longer side and kept to even dimensions. Changing the ratio re-fits the composition: padding tightens as the content and canvas aspects diverge, and the camera moves into the area that opens up. Turn this off with **Re-fit when the ratio changes**.
 - Backgrounds: six gradient presets, a solid colour, a custom two-colour gradient at any angle, an image file (fill or fit, with an adjustable dim), or the recording itself blurred behind the frame. A missing image file falls back to the gradient rather than rendering black.
 - Export settings: MP4 or MOV, Source/720p/1080p/1440p/4K, and 30 or 60 fps. Resolution scales the composed canvas and keeps even dimensions.
 - Recording library and recoverable deletion through macOS Trash. Deleting the open recording also clears the editor.

@@ -629,6 +629,67 @@ final class FocusFlowTests {
         XCTAssertTrue(!model.canSplitSelected)
     }
 
+    /// A custom ratio has to produce the shape asked for, at a sane pixel
+    /// count, with even dimensions — and never a degenerate canvas.
+    func testCustomAspectRatioGeometry() {
+        func canvas(_ w: Double, _ h: Double) -> CGSize {
+            CanvasRatio.custom.size(for: CGSize(width: 1920, height: 1080),
+                                    custom: CGSize(width: w, height: h))
+        }
+
+        // Ultra-wide: capped on the long side, aspect preserved.
+        let wide = canvas(21, 9)
+        XCTAssertEqual(wide.width, 1920)
+        XCTAssertEqual(Double(wide.width / wide.height), 21.0 / 9.0, accuracy: 0.01)
+
+        // Tall: the limit applies to the height instead.
+        let tall = canvas(4, 5)
+        XCTAssertEqual(tall.height, 1920)
+        XCTAssertEqual(Double(tall.width / tall.height), 4.0 / 5.0, accuracy: 0.01)
+
+        // Square sits at the limit both ways.
+        let square = canvas(1, 1)
+        XCTAssertEqual(square.width, 1920)
+        XCTAssertEqual(square.height, 1920)
+
+        // Decimal cinema ratios must work, not just whole numbers.
+        let cinema = canvas(2.39, 1)
+        XCTAssertEqual(Double(cinema.width / cinema.height), 2.39, accuracy: 0.01)
+
+        // Every result must be even — H.264 rejects odd dimensions.
+        for (w, h) in [(21.0, 9.0), (4.0, 5.0), (2.39, 1.0), (3.0, 2.0), (1.0, 3.7), (16.0, 10.0)] {
+            let size = canvas(w, h)
+            XCTAssertEqual(Int(size.width) % 2, 0)
+            XCTAssertEqual(Int(size.height) % 2, 0)
+            XCTAssertGreaterThan(size.width, 0)
+            XCTAssertGreaterThan(size.height, 0)
+        }
+
+        // A nonsense ratio must fall back rather than produce a zero canvas.
+        for bad in [CGSize(width: 0, height: 10), CGSize(width: 10, height: 0), CGSize(width: -4, height: 3)] {
+            let size = CanvasRatio.custom.size(for: CGSize(width: 1920, height: 1080), custom: bad)
+            XCTAssertGreaterThan(size.width, 0)
+            XCTAssertGreaterThan(size.height, 0)
+        }
+        let missing = CanvasRatio.custom.size(for: CGSize(width: 1920, height: 1080), custom: nil)
+        XCTAssertGreaterThan(missing.width, 0)
+        XCTAssertGreaterThan(missing.height, 0)
+
+        // The fixed ratios must be untouched by the new case.
+        XCTAssertEqual(CanvasRatio.portrait.size(for: .zero), CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(CanvasRatio.square.size(for: .zero), CGSize(width: 1080, height: 1080))
+        XCTAssertEqual(CanvasRatio.classic.size(for: .zero), CGSize(width: 1440, height: 1080))
+
+        // And a project written before custom ratios existed still decodes.
+        let legacy = """
+        {"videoPath":"/tmp/a.mp4","segments":[],"background":"ocean","ratio":"9:16",
+         "padding":7,"cornerRadius":18,"shadow":20,"cursorSize":1,"clickEffects":true}
+        """
+        let document = try? JSONDecoder().decode(ProjectDocument.self, from: Data(legacy.utf8))
+        XCTAssertEqual(document?.ratio, .portrait)
+        XCTAssertNil(document?.customRatioWidth)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

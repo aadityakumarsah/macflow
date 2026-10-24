@@ -42,6 +42,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             print("Checking key storage and editor controls…")
             try tests.testAPIKeyStorageAndValidation()
             await tests.testSplitIsOfferedOnlyWhenItCanAct()
+            tests.testCustomAspectRatioGeometry()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }
