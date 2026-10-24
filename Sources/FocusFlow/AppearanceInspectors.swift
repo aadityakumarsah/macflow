@@ -66,27 +66,29 @@ struct CursorAppearanceInspector: View {
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 if model.recordingMetadata.embeddedCursor == true {
-                    Text("Chrome included its cursor in the video. FocusFlow can add a larger cursor overlay, but the original cursor may still be visible beneath it.")
+                    Text("Chrome included its cursor in these video pixels. FocusFlow turns off the extra cursor so two pointers never overlap. Use Window or Display recording in FocusFlow for a fully replaceable cursor.")
                         .font(.caption).foregroundStyle(.orange)
                 }
                 CursorStylePreview(size: model.cursorSize, appearance: model.cursorAppearance,
-                                   visible: model.showCursor, shadow: model.cursorShadow,
+                                   visible: model.showCursor && model.recordingMetadata.embeddedCursor != true, shadow: model.cursorShadow,
                                    clicks: model.clickEffects && !model.recordedClicks.isEmpty).equatable()
-                Text("Changes appear in your video and export. Your original recording stays untouched.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if model.recordingMetadata.embeddedCursor != true {
+                    Text("The replacement cursor is drawn inside the video frame, above the recorded content and beneath callouts and window chrome. It appears in preview and export.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             VStack(alignment: .leading, spacing: 24) {
                 InspectorSection(title: "Cursor") {
                     Toggle("Show cursor", isOn: $model.showCursor)
                     InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...10, suffix: "×")
                     HStack(spacing: 6) {
-                        ForEach([1.0, 2, 4, 6, 8], id: \.self) { size in
+                        ForEach([1.0, 1.25, 1.5, 2, 3], id: \.self) { size in
                             Button { model.cursorSize = size } label: {
-                                Text("\(Int(size))×").font(.system(size: 11, weight: .semibold))
+                                Text(String(format: "%g×", size)).font(.system(size: 11, weight: .semibold))
                                     .frame(maxWidth: .infinity).padding(.vertical, 7)
                                     .background(abs(model.cursorSize - size) < 0.01 ? AppTheme.green.opacity(0.1) : AppTheme.elevated, in: RoundedRectangle(cornerRadius: 6))
                                     .foregroundStyle(abs(model.cursorSize - size) < 0.01 ? AppTheme.green : .secondary)
-                            }.buttonStyle(.plain).accessibilityLabel("Cursor size \(Int(size)) times")
+                            }.buttonStyle(.plain).accessibilityLabel("Cursor size \(size.formatted()) times")
                         }
                     }
                     Picker("Style", selection: $model.cursorAppearance.style) { ForEach(PointerStyle.allCases) { Text($0.rawValue).tag($0) } }
@@ -96,7 +98,7 @@ struct CursorAppearanceInspector: View {
                     Text("Automatic follows recorded arrow and text cursor changes.").font(.caption2).foregroundStyle(.secondary)
                     Toggle("Smooth movement", isOn: $model.smoothCursor)
                     Toggle("Cursor shadow", isOn: $model.cursorShadow)
-                }
+                }.disabled(model.recordingMetadata.embeddedCursor == true)
                 Divider()
                 InspectorSection(title: "Click effects") {
                     Toggle("Animate clicks", isOn: $model.clickEffects).disabled(model.recordedClicks.isEmpty)
@@ -140,14 +142,14 @@ struct CursorAppearanceInspector: View {
                         InspectorSlider(title: "Spread", value: optional(\.highlightSize, fallback: 3.4), range: 0.4...5, suffix: "×")
                         InspectorSlider(title: "Opacity", value: optional(\.highlightOpacity, fallback: 0.22), range: 0.05...0.8, suffix: "")
                     }
-                }
+                }.disabled(model.recordingMetadata.embeddedCursor == true)
                 DisclosureGroup("Advanced") {
                     VStack(alignment: .leading, spacing: 14) {
                         Toggle("Gentle tilt", isOn: $model.cursorAppearance.sway)
                         InspectorSlider(title: "Text cursor scale", value: $model.cursorAppearance.textScale, range: 0.5...10, suffix: "×")
                         InspectorSlider(title: "Cursor opacity", value: optional(\.opacity, fallback: 1), range: 0...1, suffix: "")
                     }.padding(.top, 12)
-                }.font(.caption)
+                }.font(.caption).disabled(model.recordingMetadata.embeddedCursor == true)
             }.disabled(model.pointerSamples.isEmpty)
             Toggle("Show keyboard shortcuts", isOn: $model.showKeystrokes).disabled(model.keystrokes.isEmpty)
             Button("Reset cursor settings") { model.resetCursorSettings() }

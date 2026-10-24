@@ -30,6 +30,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             tests.testAutomaticEditTracksTextSelectionAndVariesEffects()
             try tests.testPixelateAndOutlineRenderInsideSelectedRegion()
             await tests.testCursorResetIsUndoable()
+            try await tests.testRecordedCursorNeverGetsSecondOverlay()
             try tests.testLegacyProjectAndCaptureMetadataStillDecode()
             print("Checking crop, motion, and editable appearance…")
             try tests.testCropGeometryMotionAndPresentationRoundTrip()

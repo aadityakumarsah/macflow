@@ -5,9 +5,10 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync('docs/studio/recorder.js', 'utf8');
 
-function studio(hash) {
+function studio(hash, capturedCursor = 'never') {
   const nodes = new Map();
   const requests = [];
+  const captureOptions = [], constraints = [];
   const downloads = [];
   const classes = [];
   const node = id => {
@@ -20,8 +21,8 @@ function studio(hash) {
   node('connection-help').hidden = true;
   const track = {
     stopped: false,
-    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, cursor: 'never' }),
-    applyConstraints: async () => {},
+    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, cursor: capturedCursor }),
+    applyConstraints: async value => { constraints.push(value); },
     stop() { this.stopped = true; },
     addEventListener() {},
   };
@@ -57,7 +58,7 @@ function studio(hash) {
     },
     navigator: { mediaDevices: {
       enumerateDevices: async () => [],
-      getDisplayMedia: async () => stream,
+      getDisplayMedia: async options => { captureOptions.push(options); return stream; },
     } },
     window: { MediaRecorder: FakeRecorder, addEventListener() {} },
     MediaRecorder: FakeRecorder,
@@ -69,7 +70,7 @@ function studio(hash) {
     fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, text: async () => '' }; },
   });
   vm.runInContext(source, context);
-  return { context, node, requests, downloads, classes, track };
+  return { context, node, requests, downloads, classes, track, captureOptions, constraints };
 }
 
 (async () => {
@@ -103,7 +104,15 @@ function studio(hash) {
   ]);
   assert.equal(connected.node('badge').textContent, 'SAVED');
   assert.equal(JSON.parse(connected.requests.at(-1).options.body).cursorIncluded, false);
+  assert.equal(connected.captureOptions[0].video.cursor, 'never');
+  assert.equal(connected.constraints[0].cursor, 'never');
   assert.match(connected.node('status').textContent, /Switching to FocusFlow/);
   assert.deepEqual(connected.classes, ['handed-off']);
+  const baked = studio('#session-token&port=4321', 'always');
+  await vm.runInContext('choose()', baked.context);
+  assert.match(baked.node('status').textContent, /suppress its own overlay/);
+  await vm.runInContext('start()', baked.context);
+  await vm.runInContext('stop()', baked.context);
+  assert.equal(JSON.parse(baked.requests.at(-1).options.body).cursorIncluded, true);
   console.log('PASS: direct studio opens FocusFlow; browser-only mode downloads locally; connected recording hands off cursor metadata.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

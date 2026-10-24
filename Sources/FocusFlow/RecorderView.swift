@@ -246,7 +246,7 @@ struct RecorderView: View {
         case .display(let display): filter = SCContentFilter(display: display, excludingApplications: applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: []); size = display.frame.size
         }
         let config = SCStreamConfiguration(); config.width = 800; config.height = max(2, Int(800 * size.height / max(1, size.width)))
-        config.showsCursor = true; config.ignoreShadowsSingleWindow = true; config.scalesToFit = true
+        config.showsCursor = false; config.ignoreShadowsSingleWindow = true; config.scalesToFit = true
         while !Task.isCancelled && !recorder.isRecording {
             do {
                 let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
@@ -361,7 +361,8 @@ struct RecorderView: View {
                     let url = try await recorder.stop()
                     let cameraURL = await cameraRecorder.stop()
                     cameraRecorder.shutdown()
-                    let metadata = RecordingMetadata(clicks: recorder.clicks, pointerSamples: recorder.pointerSamples, keystrokes: recorder.keystrokes, sourceWidth: recorder.sourceSize.width, sourceHeight: recorder.sourceSize.height, sourceName: recorder.sourceName, cameraFileName: cameraURL?.lastPathComponent, cameraTimeOffset: recorder.firstFrameDate.flatMap { start in cameraRecorder.recordingStartedAt.map { start.timeIntervalSince($0) } }, sourcePointWidth: recorder.sourcePointSize.width, sourcePointHeight: recorder.sourcePointSize.height)
+                    var metadata = RecordingMetadata(clicks: recorder.clicks, pointerSamples: recorder.pointerSamples, keystrokes: recorder.keystrokes, sourceWidth: recorder.sourceSize.width, sourceHeight: recorder.sourceSize.height, sourceName: recorder.sourceName, cameraFileName: cameraURL?.lastPathComponent, cameraTimeOffset: recorder.firstFrameDate.flatMap { start in cameraRecorder.recordingStartedAt.map { start.timeIntervalSince($0) } }, sourcePointWidth: recorder.sourcePointSize.width, sourcePointHeight: recorder.sourcePointSize.height)
+                    metadata.embeddedCursor = false
                     self.completedURL = url
                     self.completedMetadata = metadata
                     do { try await model.library.register(url, metadata: metadata) }

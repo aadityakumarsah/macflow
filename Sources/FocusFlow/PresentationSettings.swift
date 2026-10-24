@@ -85,7 +85,7 @@ enum PointerShape: String, Codable, CaseIterable, Identifiable {
 struct CursorAppearance: Codable, Equatable {
     /// Extra scale for the I-beam only. It is a thin glyph and reads far
     /// smaller than the arrow at the same size, so it gets its own control.
-    var textScale: Double = 2.5
+    var textScale: Double = 1.5
     var style: PointerStyle = .light
     var accent: EffectAccent = .blue
     var clickStyle: ClickStyle = .ripple

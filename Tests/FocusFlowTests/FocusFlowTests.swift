@@ -290,13 +290,13 @@ final class FocusFlowTests {
 
     @MainActor func testCursorResetIsUndoable() {
         let model = EditorModel(restoreLatest: false)
-        XCTAssertEqual(model.cursorSize, 5)
+        XCTAssertEqual(model.cursorSize, 1.25)
         model.videoURL = URL(fileURLWithPath: "/tmp/nonexistent-focusflow-cursor-test.mp4")
         model.duration = 2
         model.cursorSize = 4; model.showCursor = false
         model.cursorAppearance.highlight = true
         model.resetCursorSettings()
-        XCTAssertEqual(model.cursorSize, 5)
+        XCTAssertEqual(model.cursorSize, 1.25)
         XCTAssertTrue(model.showCursor)
         XCTAssertEqual(model.cursorAppearance.highlight, false)
         model.undo()
@@ -304,9 +304,27 @@ final class FocusFlowTests {
         XCTAssertEqual(model.showCursor, false)
         XCTAssertEqual(model.cursorAppearance.highlight, true)
         model.redo()
-        XCTAssertEqual(model.cursorSize, 5)
+        XCTAssertEqual(model.cursorSize, 1.25)
         XCTAssertTrue(model.showCursor)
         // Cancel pending preview work for the intentionally nonexistent test video.
+        model.videoURL = nil
+    }
+
+    @MainActor func testRecordedCursorNeverGetsSecondOverlay() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-cursor-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let video = folder.appendingPathComponent("screen.mp4")
+        try await makeFixture(at: video, camera: false)
+        var metadata = RecordingMetadata(clicks: [], pointerSamples: [PointerSample(time: 0.5, x: 0.5, y: 0.5)], keystrokes: [], sourceWidth: 320, sourceHeight: 180, sourceName: "Chrome tab")
+        metadata.embeddedCursor = true
+        let model = EditorModel(restoreLatest: false)
+        model.open(url: video, metadata: metadata)
+        for _ in 0..<80 where model.isPreparingPreview { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(model.recordingMetadata.embeddedCursor, true)
+        XCTAssertEqual(model.showCursor, false)
+        model.showCursor = true
+        XCTAssertEqual(model.settings().showCursor, false)
         model.videoURL = nil
     }
 

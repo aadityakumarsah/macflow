@@ -41,7 +41,7 @@ async function choose() {
   $('choose').disabled = $('change').disabled = true;
   try {
     mp4Type(true);
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: {displaySurface:'browser',frameRate:{ideal:60,max:60}}, audio:$('audio').checked, selfBrowserSurface:'exclude',surfaceSwitching:'exclude',monitorTypeSurfaces:'exclude',systemAudio:'exclude' });
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: {displaySurface:'browser',frameRate:{ideal:60,max:60},cursor:'never'}, audio:$('audio').checked, selfBrowserSurface:'exclude',surfaceSwitching:'exclude',monitorTypeSurfaces:'exclude',systemAudio:'exclude' });
     const track = stream.getVideoTracks()[0];
     // Ask Chrome to omit the baked-in cursor so the app can draw a larger, editable one.
     try { await track.applyConstraints({cursor:'never'}); } catch {}
@@ -57,7 +57,7 @@ async function choose() {
     sourceName = 'Selected Chrome tab'; $('source').textContent = sourceName;
     $('resolution').textContent = `${settings.width || 'Auto'} × ${settings.height || 'Auto'} · Live preview`;
     $('record').disabled = false;
-    status(display.getAudioTracks().length ? 'Tab selected. Audio is included. Ready when you are.' : 'Tab selected. No tab audio was shared. Change source to include it.');
+    status(cursorIncluded ? 'Chrome is including its cursor. FocusFlow will keep the recorded cursor and suppress its own overlay to prevent a double pointer. For a replaceable cursor, record a Window or Display in the Mac app.' : display.getAudioTracks().length ? 'Tab selected. Audio is included. The editable cursor will be drawn in FocusFlow.' : 'Tab selected. No tab audio was shared. The editable cursor will be drawn in FocusFlow.');
     track.addEventListener('ended', () => {
       if (state === 'recording' || state === 'paused') stop();
       else if (state === 'setup' && display === stream) { $('record').disabled = true; status('Sharing ended. Choose a tab to continue.'); }
