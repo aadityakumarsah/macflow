@@ -194,6 +194,106 @@ final class FocusFlowTests {
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url)); generator.appliesPreferredTrackTransform = true
         return try await generator.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)).image
     }
+    /// Each background kind must actually reach the canvas, and the corners
+    /// are the safest place to look: the recording is inset by the padding, so
+    /// whatever is there came from the background generator.
+    func testCustomBackgroundKindsRenderDistinctly() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 480, height: 270)
+        let source = CIImage(color: CIColor(red: 0.95, green: 0.2, blue: 0.1)).cropped(to: CGRect(x: 0, y: 0, width: 480, height: 270))
+
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 12, cornerRadius: 10, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 10, cameraShape: .circle)
+        settings.showCursor = false
+
+        func corner(_ background: CustomBackground) throws -> [UInt8] {
+            settings.customBackground = background
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 0, settings: settings), from: canvas))
+            let data = pixels(image)
+            // Top-left corner, inside the padding band.
+            return Array(data[0..<3])
+        }
+
+        // A solid blue background must land blue in the corner.
+        let solid = try corner(CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 0.2, b: 0.9)))
+        XCTAssertGreaterThan(Int(solid[2]), 150)
+        XCTAssertLessThan(Int(solid[0]), 90)
+
+        // A different solid must differ from the first.
+        let otherSolid = try corner(CustomBackground(kind: .solid, top: RGBColor(r: 0.9, g: 0.85, b: 0)))
+        XCTAssertGreaterThan(abs(Int(otherSolid[2]) - Int(solid[2])), 60)
+
+        // A gradient between two colours must not match either endpoint
+        // everywhere — the two opposite corners should differ.
+        settings.customBackground = CustomBackground(kind: .gradient, top: RGBColor(r: 1, g: 0, b: 0), bottom: RGBColor(r: 0, g: 0, b: 1), angle: 0)
+        let gradientImage = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 0, settings: settings), from: canvas))
+        let gradientPixels = pixels(gradientImage)
+        let leftRed = Int(gradientPixels[0])
+        let rightOffset = (480 - 1) * 4
+        let rightRed = Int(gradientPixels[rightOffset])
+        XCTAssertGreaterThan(abs(leftRed - rightRed), 60)
+
+        // A missing image file must fall back to the gradient, not a black
+        // frame, so a moved file does not look like a broken render.
+        let missing = try corner(CustomBackground(kind: .image, top: RGBColor(r: 0, g: 0.9, b: 0.3), bottom: RGBColor(r: 0, g: 0.9, b: 0.3), imagePath: "/nonexistent/background.png"))
+        XCTAssertGreaterThan(Int(missing[1]), 110)
+
+        // The blurred backdrop derives from the frame, which is red here.
+        let blurred = try corner(CustomBackground(kind: .blur, blurRadius: 20, dim: 0))
+        XCTAssertGreaterThan(Int(blurred[0]), Int(blurred[2]))
+    }
+
+    /// Export resolution scales the composed canvas, keeps its aspect, and
+    /// yields even dimensions — H.264 rejects odd ones.
+    func testExportResolutionScalesCanvasKeepingAspect() {
+        let landscape = CGSize(width: 1920, height: 1080)
+        var options = ExportOptions()
+
+        options.resolution = .source
+        XCTAssertEqual(options.canvas(from: landscape), landscape)
+
+        options.resolution = .p720
+        let small = options.canvas(from: landscape)
+        XCTAssertEqual(small.width, 1280)
+        XCTAssertEqual(small.height, 720)
+
+        options.resolution = .p2160
+        let large = options.canvas(from: landscape)
+        XCTAssertEqual(large.width, 3840)
+        XCTAssertEqual(large.height, 2160)
+
+        // Portrait and an awkward aspect must still come out even.
+        options.resolution = .p1080
+        let portrait = options.canvas(from: CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(portrait.height, 1920)
+        XCTAssertEqual(Int(portrait.width) % 2, 0)
+
+        let odd = options.canvas(from: CGSize(width: 1001, height: 667))
+        XCTAssertEqual(Int(odd.width) % 2, 0)
+        XCTAssertEqual(Int(odd.height) % 2, 0)
+        XCTAssertEqual(Double(odd.width / odd.height), 1001.0 / 667.0, accuracy: 0.01)
+    }
+
+    /// A project written before custom backgrounds and export options existed
+    /// must still decode, defaulting rather than failing.
+    func testProjectWithoutNewFieldsStillDecodes() throws {
+        let legacy = """
+        {"videoPath":"/tmp/a.mp4","segments":[],"background":"ocean","ratio":"16:9",
+         "padding":7,"cornerRadius":18,"shadow":20,"cursorSize":1,"clickEffects":true}
+        """
+        let document = try JSONDecoder().decode(ProjectDocument.self, from: Data(legacy.utf8))
+        XCTAssertNil(document.customBackground)
+        XCTAssertNil(document.exportOptions)
+        XCTAssertEqual(document.background, .ocean)
+
+        // And a round trip with them set must preserve them.
+        var written = document
+        written.customBackground = CustomBackground(kind: .gradient, top: RGBColor(r: 0.2, g: 0.4, b: 0.6), angle: 90)
+        written.exportOptions = ExportOptions(format: .mov, resolution: .p1440, frameRate: .fps60)
+        let restored = try JSONDecoder().decode(ProjectDocument.self, from: JSONEncoder().encode(written))
+        XCTAssertEqual(restored.customBackground, written.customBackground)
+        XCTAssertEqual(restored.exportOptions, written.exportOptions)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

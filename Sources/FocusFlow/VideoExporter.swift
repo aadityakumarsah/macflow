@@ -37,6 +37,8 @@ struct ExportSettings {
     var motion = MotionAppearance()
     var cursor = CursorAppearance()
     var cursorPointScale: Double = 1
+    var customBackground = CustomBackground()
+    var exportOptions = ExportOptions()
 }
 
 enum ExportError: LocalizedError {
@@ -86,7 +88,7 @@ enum VideoExporter {
         edit.scaleTimeRange(CMTimeRange(start: .zero, duration: duration), toDuration: CMTimeMultiplyByFloat64(duration, multiplier: 1 / rate))
         let composition = AVMutableVideoComposition()
         composition.renderSize = settings.canvasSize
-        composition.frameDuration = CMTime(value: 1, timescale: 60)
+        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(settings.exportOptions.frameRate.rawValue))
         composition.customVideoCompositorClass = FocusFlowCompositor.self
         composition.instructions = [CompositionInstruction(timeRange: CMTimeRange(start: .zero, duration: edit.duration), settings: settings, screenTrackID: screen.trackID, cameraTrackID: cameraID, screenTransform: screenTransform, cameraTransform: cameraTransform)]
         return (edit, composition)
@@ -99,10 +101,15 @@ enum VideoExporter {
         }
         let (asset, composition) = try await composition(source: source, settings: settings)
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { throw ExportError.unavailable }
-        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".focusflow-export-\(UUID().uuidString).mp4")
+        let options = settings.exportOptions
+        let temporary = destination.deletingLastPathComponent()
+            .appendingPathComponent(".focusflow-export-\(UUID().uuidString).\(options.format.fileExtension)")
         defer { try? FileManager.default.removeItem(at: temporary) }
         session.outputURL = temporary
-        session.outputFileType = .mp4
+        // Resolution is carried by the composition's renderSize, which the
+        // highest-quality preset passes through untouched; the smaller presets
+        // impose their own dimensions and would fight it.
+        session.outputFileType = options.format == .mp4 ? .mp4 : .mov
         session.videoComposition = composition
         session.shouldOptimizeForNetworkUse = true
         let start = max(0, settings.trimStart / settings.playbackRate)
@@ -249,7 +256,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             source = opacity(source.transformed(by: transform), progress)
         }
         if motion.fadeOut { source = opacity(source, MotionCurve.smooth.value((settings.trimEnd - time) / max(0.1, motion.duration))) }
-        var result = source.composited(over: makeBackground(style: settings.background, extent: canvas)).cropped(to: canvas)
+        var result = source.composited(over: makeBackground(settings: settings, source: original, extent: canvas)).cropped(to: canvas)
         if settings.showKeystrokes, let key = settings.keystrokes.last(where: { time >= $0.time && time - $0.time < 1.25 }), let badge = keyBadge(key.text, canvas: canvas) {
             result = badge.composited(over: result)
         }
@@ -339,21 +346,108 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         return badge.transformed(by: CGAffineTransform(translationX: canvas.midX - width / 2, y: canvas.minY + 42))
     }
 
-    private func makeBackground(style: BackgroundStyle, extent: CGRect) -> CIImage {
-        let colors: (CIColor, CIColor)
+    private func presetColors(_ style: BackgroundStyle) -> (CIColor, CIColor) {
         switch style {
-        case .aurora: colors = (CIColor(red: 0.35, green: 0.12, blue: 0.82), CIColor(red: 1, green: 0.38, blue: 0.20))
-        case .sunset: colors = (CIColor(red: 1, green: 0.19, blue: 0.13), CIColor(red: 0.43, green: 0.09, blue: 0.72))
-        case .ocean: colors = (CIColor(red: 0.02, green: 0.72, blue: 0.80), CIColor(red: 0.06, green: 0.12, blue: 0.42))
-        case .graphite: colors = (CIColor(red: 0.18, green: 0.23, blue: 0.31), CIColor(red: 0.03, green: 0.05, blue: 0.09))
-        case .cream: colors = (CIColor(red: 1, green: 0.96, blue: 0.87), CIColor(red: 0.98, green: 0.72, blue: 0.28))
-        case .none: colors = (.black, .black)
+        case .aurora: (CIColor(red: 0.35, green: 0.12, blue: 0.82), CIColor(red: 1, green: 0.38, blue: 0.20))
+        case .sunset: (CIColor(red: 1, green: 0.19, blue: 0.13), CIColor(red: 0.43, green: 0.09, blue: 0.72))
+        case .ocean: (CIColor(red: 0.02, green: 0.72, blue: 0.80), CIColor(red: 0.06, green: 0.12, blue: 0.42))
+        case .graphite: (CIColor(red: 0.18, green: 0.23, blue: 0.31), CIColor(red: 0.03, green: 0.05, blue: 0.09))
+        case .cream: (CIColor(red: 1, green: 0.96, blue: 0.87), CIColor(red: 0.98, green: 0.72, blue: 0.28))
+        case .none: (.black, .black)
         }
+    }
+
+    private func gradient(_ from: CIColor, _ to: CIColor, angle: Double, extent: CGRect) -> CIImage {
+        // Run the gradient across the canvas along `angle`, measured from the
+        // centre so the full sweep stays inside the frame at any aspect.
+        let radians: CGFloat = CGFloat(angle) * .pi / 180
+        let dx: CGFloat = cos(radians)
+        let dy: CGFloat = sin(radians)
+        let span: CGFloat = abs(dx) * extent.width + abs(dy) * extent.height
+        let reach: CGFloat = span / 2
+        let midX: CGFloat = extent.midX
+        let midY: CGFloat = extent.midY
         let filter = CIFilter.linearGradient()
-        filter.point0 = CGPoint(x: extent.minX, y: extent.maxY)
-        filter.point1 = CGPoint(x: extent.maxX, y: extent.minY)
-        filter.color0 = colors.0
-        filter.color1 = colors.1
-        return filter.outputImage?.cropped(to: extent) ?? CIImage(color: colors.0).cropped(to: extent)
+        filter.point0 = CGPoint(x: midX - dx * reach, y: midY - dy * reach)
+        filter.point1 = CGPoint(x: midX + dx * reach, y: midY + dy * reach)
+        filter.color0 = from
+        filter.color1 = to
+        return filter.outputImage?.cropped(to: extent) ?? CIImage(color: from).cropped(to: extent)
+    }
+
+    /// Scales an image to cover (or fit inside) the canvas and centres it.
+    private func lay(_ image: CIImage, in extent: CGRect, fills: Bool) -> CIImage {
+        let size = image.extent.size
+        guard size.width > 0, size.height > 0 else { return CIImage(color: .black).cropped(to: extent) }
+        let sx = extent.width / size.width, sy = extent.height / size.height
+        let scale = fills ? max(sx, sy) : min(sx, sy)
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let centred = scaled.transformed(by: CGAffineTransform(
+            translationX: extent.midX - scaled.extent.midX,
+            y: extent.midY - scaled.extent.midY))
+        // `fit` leaves bars, so put something behind them rather than alpha.
+        return centred.cropped(to: extent).composited(over: CIImage(color: .black).cropped(to: extent))
+    }
+
+    private func dimmed(_ image: CIImage, by amount: Double, extent: CGRect) -> CIImage {
+        guard amount > 0 else { return image }
+        let veil = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: min(0.9, amount))).cropped(to: extent)
+        return veil.composited(over: image)
+    }
+
+    private func makeBackground(settings: ExportSettings, source: CIImage, extent: CGRect) -> CIImage {
+        let custom = settings.customBackground
+        switch custom.kind {
+        case .preset:
+            let colors = presetColors(settings.background)
+            return gradient(colors.0, colors.1, angle: 135, extent: extent)
+
+        case .solid:
+            return CIImage(color: CIColor(red: custom.top.r, green: custom.top.g, blue: custom.top.b)).cropped(to: extent)
+
+        case .gradient:
+            return gradient(CIColor(red: custom.top.r, green: custom.top.g, blue: custom.top.b),
+                            CIColor(red: custom.bottom.r, green: custom.bottom.g, blue: custom.bottom.b),
+                            angle: custom.angle, extent: extent)
+
+        case .image:
+            guard let path = custom.imagePath, let image = VideoExporter.backgroundImage(at: path) else {
+                // Missing file: fall back to the gradient rather than a black
+                // frame, so a moved image does not look like a broken render.
+                return gradient(CIColor(red: custom.top.r, green: custom.top.g, blue: custom.top.b),
+                                CIColor(red: custom.bottom.r, green: custom.bottom.g, blue: custom.bottom.b),
+                                angle: custom.angle, extent: extent)
+            }
+            return dimmed(lay(image, in: extent, fills: custom.imageFills), by: custom.dim, extent: extent)
+
+        case .blur:
+            let filled = lay(normalized(source), in: extent, fills: true)
+            // Clamp first, or the blur samples transparent edges and vignettes.
+            let blurred = filled.clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(1, custom.blurRadius)])
+                .cropped(to: extent)
+            return dimmed(blurred, by: custom.dim, extent: extent)
+        }
+    }
+}
+
+extension VideoExporter {
+    /// Decoding a background image per frame is far too slow for playback, so
+    /// the last one stays cached. Keyed by path and modification date so an
+    /// edited file is picked up without restarting the app.
+    private static let imageCacheLock = NSLock()
+    nonisolated(unsafe) private static var imageCacheKey = ""
+    nonisolated(unsafe) private static var imageCacheValue: CIImage?
+
+    static func backgroundImage(at path: String) -> CIImage? {
+        let stamp = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)??.timeIntervalSince1970 ?? 0
+        let key = "\(path)|\(stamp)"
+        imageCacheLock.lock()
+        defer { imageCacheLock.unlock() }
+        if key == imageCacheKey { return imageCacheValue }
+        let image = CIImage(contentsOf: URL(fileURLWithPath: path))
+        imageCacheKey = key
+        imageCacheValue = image
+        return image
     }
 }

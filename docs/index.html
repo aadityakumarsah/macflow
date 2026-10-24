@@ -586,10 +586,99 @@ footer .legal {
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s var(--ease), transform 0.7s var(--ease); }
 .reveal.in { opacity: 1; transform: none; }
 
+/* Scroll position, as a hairline across the top. */
+.progress {
+  position: fixed;
+  inset: 0 auto auto 0;
+  z-index: 100;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  will-change: width;
+}
+
+/* Cards and steps arrive in sequence rather than all at once. */
+.cards.in .card,
+.steps.in .step,
+.ink.in .ink-cell {
+  animation: rise 0.68s var(--ease) both;
+}
+
+.cards.in .card:nth-child(1), .steps.in .step:nth-child(1) { animation-delay: 0.00s; }
+.cards.in .card:nth-child(2), .steps.in .step:nth-child(2) { animation-delay: 0.07s; }
+.cards.in .card:nth-child(3), .steps.in .step:nth-child(3) { animation-delay: 0.14s; }
+.cards.in .card:nth-child(4), .steps.in .step:nth-child(4) { animation-delay: 0.21s; }
+
+.ink.in .ink-cell:nth-child(1) { animation-delay: 0.04s; }
+.ink.in .ink-cell:nth-child(2) { animation-delay: 0.12s; }
+.ink.in .ink-cell:nth-child(3) { animation-delay: 0.20s; }
+.ink.in .ink-cell:nth-child(4) { animation-delay: 0.28s; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---- motion graphics inside the feature plates ----
+   Each starts only once its row is on screen, so the page is still when you
+   are not looking at it. */
+
+.feature-art .draw {
+  stroke-dasharray: var(--len, 420);
+  stroke-dashoffset: var(--len, 420);
+}
+
+.feature.in .feature-art .draw { animation: draw 1.7s var(--ease) 0.15s forwards; }
+
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+.feature.in .feature-art .pointer   { animation: travel 4.6s var(--ease) infinite alternate; }
+.feature.in .feature-art .ripple    { animation: ripple 2.6s var(--ease) infinite; transform-origin: 150px 136px; }
+.feature.in .feature-art .ripple-2  { animation-delay: 0.5s; }
+.feature.in .feature-art .badge     { animation: badge 4.6s var(--ease) infinite alternate; }
+.feature.in .feature-art .playhead  { animation: sweep 5s var(--ease) infinite alternate; }
+.feature.in .feature-art .zoombox   { animation: breathe 3.6s var(--ease) infinite; transform-origin: 214px 152px; }
+.feature.in .feature-art .dash      { animation: march 2.4s linear infinite; }
+
+@keyframes travel {
+  from { transform: translate(0, 0); }
+  to   { transform: translate(86px, -56px); }
+}
+
+@keyframes ripple {
+  0%   { opacity: 0.5;  transform: scale(0.55); }
+  70%  { opacity: 0;    transform: scale(1.35); }
+  100% { opacity: 0;    transform: scale(1.35); }
+}
+
+@keyframes badge {
+  0%   { opacity: 0.3; transform: translateY(5px); }
+  30%  { opacity: 1;   transform: none; }
+  100% { opacity: 1;   transform: none; }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-104px); }
+  to   { transform: translateX(104px); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.045); }
+}
+
+@keyframes march { to { stroke-dashoffset: -26; } }
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .caret { animation: none; }
+  .progress { display: none; }
+  .cards.in .card,
+  .steps.in .step,
+  .ink.in .ink-cell,
+  .feature.in .feature-art * { animation: none !important; }
+  .feature-art .draw { stroke-dashoffset: 0; }
 }
 
 /* Narrow screens get the half-size plate — the full one is ~320KB and the
@@ -611,6 +700,8 @@ footer .legal {
 </style>
 </head>
 <body>
+
+<div class="progress" id="scroll-progress" aria-hidden="true"></div>
 
 <header class="top" id="top-bar">
   <div class="frame">
@@ -639,7 +730,7 @@ footer .legal {
   <div class="frame">
     <span class="eyebrow">
       <span class="pip" aria-hidden="true">✓</span>
-      v0.2.0 · free and open source
+      v0.3.0 · free and open source
     </span>
 
     <h1>Record your Mac.<br>The clicks animate <em>themselves</em>.</h1>
@@ -712,13 +803,13 @@ footer .legal {
       </article>
       <article class="card">
         <span class="num">03</span>
-        <h3>Hide what is private</h3>
-        <p>Blur regions with editable size and timing. One button blurs the whole frame, and regions can overlap.</p>
+        <h3>Your background</h3>
+        <p>A colour, a gradient at any angle, your own image, or the recording itself blurred behind the frame.</p>
       </article>
       <article class="card">
         <span class="num">04</span>
-        <h3>Export it</h3>
-        <p>MP4 through a shared Core Image renderer, so the preview you scrub is the frame you ship.</p>
+        <h3>Export it your way</h3>
+        <p>MP4 or MOV, up to 4K, at 30 or 60&nbsp;fps. Switch to 9:16 and the composition re&#8209;fits itself.</p>
       </article>
     </div>
   </div>
@@ -750,7 +841,7 @@ footer .legal {
           <circle cx="66" cy="37" r="4.6" fill="#a6ceb2"/>
           <rect x="40" y="70" width="150" height="9" rx="4.5" fill="#e6e9e7"/>
           <rect x="40" y="88" width="104" height="9" rx="4.5" fill="#edf0ee"/>
-          <rect x="150" y="112" width="128" height="80" rx="11" fill="none" stroke="#19784f" stroke-width="2.2" stroke-dasharray="7 6"/>
+          <g class="zoombox"><rect x="150" y="112" width="128" height="80" rx="11" fill="none" stroke="#19784f" stroke-width="2.2" stroke-dasharray="7 6" class="dash"/></g>
           <circle cx="214" cy="152" r="21" fill="#19784f" opacity="0.1"/>
           <path d="M207 145l16 7-7 3-3 7z" fill="#19784f"/>
           <rect x="40" y="168" width="84" height="9" rx="4.5" fill="#edf0ee"/>
@@ -770,12 +861,48 @@ footer .legal {
       </div>
       <div class="feature-art">
         <svg viewBox="0 0 320 240" role="img" aria-label="A cursor path with a click ripple and a keyboard shortcut badge">
-          <path d="M34 190C78 150 104 176 150 136s52-70 112-92" fill="none" stroke="#cfd9d7" stroke-width="2.4" stroke-dasharray="6 7" stroke-linecap="round"/>
-          <circle cx="150" cy="136" r="34" fill="#19784f" opacity="0.07"/>
-          <circle cx="150" cy="136" r="22" fill="#19784f" opacity="0.11"/>
-          <path d="M142 122l30 13-13 5-5 13z" fill="#15323a" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
-          <rect x="186" y="150" width="86" height="30" rx="9" fill="#15323a"/>
-          <text x="229" y="170" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="13" fill="#eaf3f2">⌘ ⇧ 4</text>
+          <path class="draw" style="--len:360" d="M34 190C78 150 104 176 150 136s52-70 112-92" fill="none" stroke="#cfd9d7" stroke-width="2.4" stroke-linecap="round"/>
+          <g class="pointer">
+            <circle class="ripple" cx="150" cy="136" r="34" fill="#19784f" opacity="0.07"/>
+            <circle class="ripple ripple-2" cx="150" cy="136" r="22" fill="#19784f" opacity="0.11"/>
+            <path d="M142 122l30 13-13 5-5 13z" fill="#15323a" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
+          </g>
+          <g class="badge">
+            <rect x="186" y="150" width="86" height="30" rx="9" fill="#15323a"/>
+            <text x="229" y="170" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="13" fill="#eaf3f2">⌘ ⇧ 4</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="feature flip reveal">
+      <div>
+        <h3>One recording, every aspect ratio</h3>
+        <p>Pick 16:9, 9:16, 1:1 or 4:3 and the composition re-fits itself — padding tightens as the aspects diverge, and the camera moves into the space that opens up instead of sitting on your content.</p>
+        <ul>
+          <li>Background: colour, gradient, image, or the blurred recording</li>
+          <li>MP4 or MOV, source to 4K, 30 or 60 fps</li>
+          <li>The preview you scrub is the frame that exports</li>
+        </ul>
+      </div>
+      <div class="feature-art">
+        <svg viewBox="0 0 320 240" role="img" aria-label="One recording re-fitted into landscape, portrait and square canvases">
+          <rect x="14" y="74" width="132" height="76" rx="9" fill="#fff" stroke="#d4dcdb"/>
+          <rect x="24" y="84" width="112" height="56" rx="5" fill="#19784f" opacity="0.26"/>
+          <text x="80" y="166" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5f7176">16:9</text>
+
+          <rect x="166" y="40" width="64" height="114" rx="9" fill="#fff" stroke="#d4dcdb"/>
+          <rect x="172" y="76" width="52" height="30" rx="5" fill="#19784f" opacity="0.4"/>
+          <circle cx="198" cy="58" r="11" fill="#2d6b78" opacity="0.5"/>
+          <text x="198" y="170" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5f7176">9:16</text>
+
+          <rect x="246" y="66" width="60" height="60" rx="9" fill="#fff" stroke="#d4dcdb"/>
+          <rect x="252" y="82" width="48" height="28" rx="5" fill="#19784f" opacity="0.33"/>
+          <text x="276" y="170" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5f7176">1:1</text>
+
+          <path class="draw" style="--len:150" d="M150 112 H160 M234 100 H242" fill="none" stroke="#9bacb0" stroke-width="2" stroke-linecap="round"/>
+          <rect x="14" y="196" width="292" height="26" rx="8" fill="#19784f" opacity="0.1"/>
+          <text x="160" y="213" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="#1b2b2f">padding and camera re-fit automatically</text>
         </svg>
       </div>
     </div>
@@ -797,11 +924,11 @@ footer .legal {
           <rect x="130" y="52" width="72" height="36" rx="9" fill="#19784f" opacity="0.5"/>
           <rect x="208" y="52" width="92" height="36" rx="9" fill="#19784f" opacity="0.66"/>
           <rect x="20" y="104" width="280" height="22" rx="7" fill="#eef1ef"/>
-          <path d="M20 118c26 0 26-11 52-11s26 11 52 11 26-9 52-9 26 9 52 9 26-5 52-5" fill="none" stroke="#2d6b78" stroke-width="2.4"/>
+          <path class="draw" style="--len:300" d="M20 118c26 0 26-11 52-11s26 11 52 11 26-9 52-9 26 9 52 9 26-5 52-5" fill="none" stroke="#2d6b78" stroke-width="2.4"/>
           <rect x="20" y="142" width="176" height="18" rx="6" fill="#eef1ef"/>
           <rect x="20" y="170" width="118" height="18" rx="6" fill="#f3f5f3"/>
-          <line x1="166" y1="40" x2="166" y2="200" stroke="#15323a" stroke-width="2.4"/>
-          <circle cx="166" cy="40" r="6" fill="#15323a"/>
+          <g class="playhead"><line x1="166" y1="40" x2="166" y2="200" stroke="#15323a" stroke-width="2.4"/>
+          <circle cx="166" cy="40" r="6" fill="#15323a"/></g>
         </svg>
       </div>
     </div>
@@ -1092,7 +1219,7 @@ footer .legal {
       .then(function () { return spinner("Resolving the latest release", 900, token); })
       .then(function () {
         if (token !== runToken) return;
-        replace(ok("Release resolved", "v0.2.0"));
+        replace(ok("Release resolved", "v0.3.0"));
         return wait(260);
       })
       .then(function () { return download(token); })
@@ -1161,14 +1288,44 @@ footer .legal {
     Array.prototype.forEach.call(document.querySelectorAll(".reveal"), function (el) { el.classList.add("in"); });
   }
 
-  /* -------------------------------------------------------- header */
+  /* ------------------------------------------------- scroll motion */
 
   var topBar = document.getElementById("top-bar");
-  function onScroll() {
-    if (topBar) topBar.classList.toggle("stuck", window.scrollY > 8);
+  var progress = document.getElementById("scroll-progress");
+  var plate = document.querySelector(".hero-plate");
+  var ticking = false;
+
+  function frame() {
+    ticking = false;
+    var y = window.scrollY || window.pageYOffset || 0;
+
+    if (topBar) topBar.classList.toggle("stuck", y > 8);
+
+    if (progress) {
+      // scrollHeight - innerHeight is 0 on a page shorter than the viewport.
+      var scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      var pct = scrollable > 0 ? Math.min(1, y / scrollable) : 0;
+      progress.style.width = (pct * 100).toFixed(2) + "%";
+    }
+
+    // Parallax: the plate drifts at a fraction of the scroll, which reads as
+    // depth against the content moving at full speed. Capped so the bottom
+    // edge never lifts clear of the section.
+    if (plate && !reduced) {
+      var drift = Math.min(y * 0.18, 90);
+      plate.style.transform = "translate3d(0," + drift.toFixed(1) + "px,0)";
+    }
   }
+
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(frame);
+  }
+
   window.addEventListener("scroll", onScroll, { passive: true });
-  onScroll();
+  window.addEventListener("resize", onScroll, { passive: true });
+  frame();
 })();
 </script>
 

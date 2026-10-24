@@ -30,10 +30,14 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             print("Checking undo and browser bridge…")
             await tests.testUndoRedoAndSegmentBounds()
             try await tests.testBrowserBridgeRejectsUntrustedWritesAndServesResources()
+            print("Checking backgrounds, export options, and project compatibility…")
+            try tests.testCustomBackgroundKindsRenderDistinctly()
+            tests.testExportResolutionScalesCanvasKeepingAspect()
+            try tests.testProjectWithoutNewFieldsStillDecodes()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }
-        if failures.isEmpty { print("PASS: 7 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, real MP4 export.") }
+        if failures.isEmpty { print("PASS: 8 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, real MP4 export.") }
         else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
     }
 }

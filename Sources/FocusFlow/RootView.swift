@@ -239,19 +239,14 @@ struct CanvasInspector: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            InspectorSection(title: "BACKGROUND") {
-                LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
-                    ForEach(BackgroundStyle.allCases) { style in
-                        Button { model.background = style } label: {
-                            BackgroundGradient(style: style).frame(height: 42).clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(model.background == style ? AppTheme.green : .white.opacity(0.1), lineWidth: 2))
-                        }.buttonStyle(.plain).help(style.title)
-                    }
-                }
-            }
+            BackgroundInspector()
             InspectorSection(title: "FORMAT") {
                 Picker("Ratio", selection: $model.ratio) { ForEach(CanvasRatio.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden()
+                Toggle("Re-fit when the ratio changes", isOn: $model.autoAdjustCanvas)
+                    .font(.caption)
+                    .help("Pulls in the padding and moves the camera into the free area after switching aspect.")
             }
+            ExportInspector()
             WindowAppearanceInspector()
             MotionAppearanceInspector()
             InspectorSlider(title: "Padding", value: $model.padding, range: 0...18, suffix: "%")

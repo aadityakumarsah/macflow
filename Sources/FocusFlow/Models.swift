@@ -62,6 +62,90 @@ enum BackgroundStyle: String, CaseIterable, Identifiable, Codable {
     var title: String { rawValue.capitalized }
 }
 
+/// A plain sRGB triple so custom colours survive a project round trip without
+/// depending on AppKit or SwiftUI types in the document format.
+struct RGBColor: Codable, Equatable, Hashable {
+    var r: Double, g: Double, b: Double
+
+    static let forest = RGBColor(r: 0.10, g: 0.47, b: 0.31)
+    static let ink = RGBColor(r: 0.04, g: 0.16, b: 0.20)
+}
+
+enum BackgroundKind: String, CaseIterable, Identifiable, Codable {
+    case preset, solid, gradient, image, blur
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .preset: "Preset"
+        case .solid: "Colour"
+        case .gradient: "Gradient"
+        case .image: "Image"
+        case .blur: "Blurred video"
+        }
+    }
+}
+
+/// Background options layered on top of `BackgroundStyle`.
+///
+/// `BackgroundStyle` stays the stored preset so existing projects keep
+/// decoding; `kind` decides whether that preset is what actually gets drawn.
+struct CustomBackground: Codable, Equatable {
+    var kind: BackgroundKind = .preset
+    var top = RGBColor.forest
+    var bottom = RGBColor.ink
+    /// Gradient direction in degrees, 0 = left to right, 90 = bottom to top.
+    var angle: Double = 135
+    var imagePath: String?
+    /// Fill the canvas and crop, rather than fitting the whole image inside it.
+    var imageFills = true
+    var blurRadius: Double = 48
+    /// Darkens an image or blurred backdrop so the recording stays dominant.
+    var dim: Double = 0.18
+}
+
+enum ExportFormat: String, CaseIterable, Identifiable, Codable {
+    case mp4 = "MP4", mov = "MOV"
+    var id: String { rawValue }
+    var fileExtension: String { self == .mp4 ? "mp4" : "mov" }
+}
+
+enum ExportResolution: String, CaseIterable, Identifiable, Codable {
+    case source = "Source", p720 = "720p", p1080 = "1080p", p1440 = "1440p", p2160 = "4K"
+    var id: String { rawValue }
+
+    /// The longest edge to render at, or nil to keep the canvas as composed.
+    var longestEdge: CGFloat? {
+        switch self {
+        case .source: nil
+        case .p720: 1280
+        case .p1080: 1920
+        case .p1440: 2560
+        case .p2160: 3840
+        }
+    }
+}
+
+enum ExportFrameRate: Int, CaseIterable, Identifiable, Codable {
+    case fps30 = 30, fps60 = 60
+    var id: Int { rawValue }
+    var title: String { "\(rawValue) fps" }
+}
+
+struct ExportOptions: Codable, Equatable {
+    var format: ExportFormat = .mp4
+    var resolution: ExportResolution = .source
+    var frameRate: ExportFrameRate = .fps30
+
+    /// Scales a composed canvas to the chosen resolution, keeping its aspect
+    /// and even dimensions (H.264 rejects odd ones).
+    func canvas(from size: CGSize) -> CGSize {
+        guard let edge = resolution.longestEdge, size.width > 0, size.height > 0 else { return size }
+        let scale = edge / max(size.width, size.height)
+        return CGSize(width: max(2, (size.width * scale / 2).rounded() * 2),
+                      height: max(2, (size.height * scale / 2).rounded() * 2))
+    }
+}
+
 enum CameraShape: String, CaseIterable, Identifiable, Codable {
     case roundedRectangle = "Rounded"
     case circle = "Circle"
@@ -97,6 +181,8 @@ struct ProjectDocument: Codable {
     var frameAppearance: FrameAppearance? = nil
     var motionAppearance: MotionAppearance? = nil
     var cursorAppearance: CursorAppearance? = nil
+    var customBackground: CustomBackground? = nil
+    var exportOptions: ExportOptions? = nil
 }
 
 struct RecordedClick: Codable {

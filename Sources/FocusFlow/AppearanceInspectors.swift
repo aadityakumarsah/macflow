@@ -122,3 +122,112 @@ struct EditableFocusOverlay: View {
         }
     }
 }
+
+struct BackgroundInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    var body: some View {
+        InspectorSection(title: "BACKGROUND") {
+            Picker("Source", selection: $model.customBackground.kind) {
+                ForEach(BackgroundKind.allCases) { Text($0.title).tag($0) }
+            }.labelsHidden()
+
+            switch model.customBackground.kind {
+            case .preset:
+                LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
+                    ForEach(BackgroundStyle.allCases) { style in
+                        Button { model.background = style } label: {
+                            BackgroundGradient(style: style)
+                                .frame(height: 42)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8)
+                                    .stroke(model.background == style ? AppTheme.green : .white.opacity(0.1), lineWidth: 2))
+                        }.buttonStyle(.plain).help(style.title)
+                    }
+                }
+
+            case .solid:
+                ColorPicker("Colour", selection: colorBinding(\.top), supportsOpacity: false)
+
+            case .gradient:
+                ColorPicker("From", selection: colorBinding(\.top), supportsOpacity: false)
+                ColorPicker("To", selection: colorBinding(\.bottom), supportsOpacity: false)
+                InspectorSlider(title: "Angle", value: $model.customBackground.angle, range: 0...360, suffix: "°")
+
+            case .image:
+                HStack {
+                    Button("Choose image…") { chooseImage() }
+                    if model.customBackground.imagePath != nil {
+                        Button("Clear") { model.customBackground.imagePath = nil }
+                    }
+                }.font(.caption)
+                if let path = model.customBackground.imagePath {
+                    Text((path as NSString).lastPathComponent)
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    if !FileManager.default.fileExists(atPath: path) {
+                        Text("This file has moved — the gradient is drawn instead.")
+                            .font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+                Picker("Fit", selection: $model.customBackground.imageFills) {
+                    Text("Fill").tag(true)
+                    Text("Fit").tag(false)
+                }.pickerStyle(.segmented)
+                InspectorSlider(title: "Dim", value: $model.customBackground.dim, range: 0...0.8, suffix: "")
+
+            case .blur:
+                InspectorSlider(title: "Blur", value: $model.customBackground.blurRadius, range: 4...120, suffix: "")
+                InspectorSlider(title: "Dim", value: $model.customBackground.dim, range: 0...0.8, suffix: "")
+            }
+        }
+    }
+
+    /// Bridges the stored sRGB triple to SwiftUI's Color for the picker.
+    private func colorBinding(_ path: WritableKeyPath<CustomBackground, RGBColor>) -> Binding<Color> {
+        Binding(
+            get: {
+                let c = model.customBackground[keyPath: path]
+                return Color(red: c.r, green: c.g, blue: c.b)
+            },
+            set: { newValue in
+                let resolved = NSColor(newValue).usingColorSpace(.sRGB) ?? .black
+                model.customBackground[keyPath: path] = RGBColor(
+                    r: Double(resolved.redComponent),
+                    g: Double(resolved.greenComponent),
+                    b: Double(resolved.blueComponent))
+            })
+    }
+
+    private func chooseImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.customBackground.imagePath = url.path
+    }
+}
+
+struct ExportInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    var body: some View {
+        InspectorSection(title: "EXPORT") {
+            Picker("Format", selection: $model.exportOptions.format) {
+                ForEach(ExportFormat.allCases) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+
+            Picker("Resolution", selection: $model.exportOptions.resolution) {
+                ForEach(ExportResolution.allCases) { Text($0.rawValue).tag($0) }
+            }.labelsHidden()
+
+            Picker("Frame rate", selection: $model.exportOptions.frameRate) {
+                ForEach(ExportFrameRate.allCases) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented)
+
+            let size = model.canvasSize
+            Text("\(Int(size.width)) × \(Int(size.height)) · \(model.exportOptions.frameRate.rawValue) fps")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+}

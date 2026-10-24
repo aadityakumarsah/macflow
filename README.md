@@ -61,7 +61,9 @@ Grant Screen Recording permission to FocusFlow for native capture. Camera and mi
 - Timeline scrubbing, segment move/edge resize, duplicate, split at playhead, delete, undo, and redo.
 - Non-destructive trim in/out markers, playback/export speed, and audio mute.
 - Separate camera layer with position, size, rounded/circular shape, mirroring, and show/hide. Drag the camera directly in the preview.
-- Source, landscape, portrait, square, and 4:3 canvas formats; six original background presets.
+- Source, landscape, portrait, square, and 4:3 canvas formats. Changing the ratio re-fits the composition: padding tightens as the content and canvas aspects diverge, and the camera moves into the area that opens up. Turn this off with **Re-fit when the ratio changes**.
+- Backgrounds: six gradient presets, a solid colour, a custom two-colour gradient at any angle, an image file (fill or fit, with an adjustable dim), or the recording itself blurred behind the frame. A missing image file falls back to the gradient rather than rendering black.
+- Export settings: MP4 or MOV, Source/720p/1080p/1440p/4K, and 30 or 60 fps. Resolution scales the composed canvas and keeps even dimensions.
 - Recording library and recoverable deletion through macOS Trash. Deleting the open recording also clears the editor.
 - Automatic local edit saving plus **Save Project** and **Open video or project**. Camera, cursor, trim, speed, appearance, effects, and recording metadata are preserved.
 
@@ -93,7 +95,7 @@ Earlier live UI validation covered native window recording → stop → edit →
 
 The installed Cursorful recorder/editor was inspected through its interface to understand its capture-to-edit workflow, cursor controls, timeline operations, and layout. FocusFlow keeps its own implementation and visual assets. No REA tool or asset source called “Do” was identified in this workspace; those references need a concrete name/path to integrate.
 
-The implementation is not full Cursorful feature parity. Speech-to-text captions, multi-clip assembly, motion blur, cloud collaboration, custom background images, and native capture pause/resume are not implemented. Chrome capture supports pause/resume. Changing the selected native capture source starts a new recording.
+The implementation is not full Cursorful feature parity. Speech-to-text captions, multi-clip assembly, motion blur, cloud collaboration, AI titles or summaries, and native capture pause/resume are not implemented. Chrome capture supports pause/resume. Changing the selected native capture source starts a new recording.
 
 Implementation references: [Chrome sharing controls](https://developer.chrome.com/docs/web-platform/screen-sharing-controls), [Chrome MediaRecorder](https://developer.chrome.com/blog/mediarecorder), [Apple SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager).
 
