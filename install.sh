@@ -118,7 +118,7 @@ trap cleanup EXIT
 
 # ---------------------------------------------------------------- resolve
 
-curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" > "$work/release.json" 2>/dev/null &
+curl -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$REPO/releases/latest" > "$work/release.json" 2>/dev/null &
 spin $! "Resolving the latest release" || die "Could not reach the GitHub releases API."
 
 asset=$(grep -o 'https://[^"]*\.dmg' "$work/release.json" | head -n 1 || true)
@@ -132,11 +132,21 @@ step "Release resolved${tag:+          $DIM$tag$RESET}"
 # curl's own --progress-bar writes a '#' bar to stderr that cannot be parsed
 # back into a percentage, so ask for the size up front, let curl run quietly in
 # the background, and draw the bar from the file as it lands.
-total=$(curl -fsSLI "$asset" \
-    | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub(/\r/,""); print $2}' \
-    | tail -n1)
+#
+# The size is only used to draw that bar, so the extra request is skipped
+# entirely when there is no terminal to draw it on. It is also capped: release
+# assets redirect to signed storage URLs, and a slow HEAD there would otherwise
+# stall the install before the download has even started.
+total=""
+if [[ "$TTY" == 1 ]]; then
+    total=$(curl -fsSLI --connect-timeout 10 --max-time 25 "$asset" 2>/dev/null \
+        | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub(/\r/,""); print $2}' \
+        | tail -n1) || true
+fi
 
-curl -fL --silent --show-error --output "$work/focusflow.dmg" "$asset" &
+curl -fL --silent --show-error \
+     --connect-timeout 20 --retry 2 --retry-delay 2 \
+     --output "$work/focusflow.dmg" "$asset" &
 dl_pid=$!
 
 if [[ "$TTY" == 1 && -n "${total:-}" && "$total" -gt 0 ]]; then
