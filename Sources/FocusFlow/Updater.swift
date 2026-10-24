@@ -95,6 +95,9 @@ final class Updater: ObservableObject {
     /// next launch or an explicit check.
     @Published var dismissed = false
 
+    /// How long to wait before looking again while the app stays open.
+    static let recheckInterval: Double = 6 * 60 * 60
+
     private let feedURL = URL(string: "https://api.github.com/repos/aadityakumarsah/macflow/releases/latest")!
     private let bundleID = "app.focusflow.recorder"
     private var session: URLSession { .shared }
@@ -129,6 +132,8 @@ final class Updater: ObservableObject {
 
     func check(userInitiated: Bool) async {
         if isBusy { return }
+        // A background re-check must not clear a banner already on screen.
+        if !userInitiated, case .available = state { return }
         if userInitiated { dismissed = false }
         state = .checking
         do {

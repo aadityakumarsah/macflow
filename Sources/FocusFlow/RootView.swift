@@ -30,9 +30,15 @@ struct RootView: View {
             Button("OK") { model.message = nil }
         } message: { Text(model.message ?? "") }
         .task {
-            // A quiet check at launch; it reports nothing unless there is
-            // actually a newer build.
+            // A quiet check at launch, then every few hours, so a window left
+            // open for days still learns about a release. Reports nothing
+            // unless there is actually a newer build.
             await updater.check(userInitiated: false)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Updater.recheckInterval))
+                if Task.isCancelled { break }
+                await updater.check(userInitiated: false)
+            }
         }
     }
 }
