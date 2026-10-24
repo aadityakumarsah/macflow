@@ -11,3 +11,4 @@ swiftc -swift-version 5 -whole-module-optimization -parse-as-library -o .build/q
 node --check Sources/FocusFlow/BrowserRecorder/recorder.js
 
 node Tests/FocusFlowTests/browser-capture.test.js
+node Tests/FocusFlowTests/web-studio.test.js
