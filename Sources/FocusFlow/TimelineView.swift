@@ -3,14 +3,20 @@ import SwiftUI
 struct TimelineView: View {
     @EnvironmentObject private var model: EditorModel
     private let labelWidth: CGFloat = 76
+    private var visibleKinds: [SegmentKind] {
+        SegmentKind.availableCases.filter { kind in model.segments.contains { $0.kind == kind } }
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Text("TIMELINE").font(.system(size: 10, weight: .semibold)).tracking(1).foregroundStyle(.secondary)
                 Text("\(model.segments.count) effects").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
-                Button { model.addSegment(.zoom) } label: { Label("Zoom", systemImage: "plus.magnifyingglass") }
-                Button { model.addSegment(.blur) } label: { Label("Blur", systemImage: "drop") }
+                Menu {
+                    ForEach(SegmentKind.availableCases) { kind in
+                        Button { model.addSegment(kind) } label: { Label(kind.title, systemImage: kind.symbol) }
+                    }
+                } label: { Label("Add effect", systemImage: "plus") }.menuStyle(.borderlessButton).fixedSize()
                 Divider().frame(height: 14)
                 Button { model.duplicateSelected() } label: { Image(systemName: "plus.square.on.square") }.disabled(model.selectedSegment == nil).help("Duplicate selected segment")
                 Button { model.splitSelected() } label: { Image(systemName: "scissors") }
@@ -42,14 +48,14 @@ struct TimelineView: View {
                             .contentShape(Rectangle())
                             .gesture(DragGesture(minimumDistance: 0).onChanged { model.seek(to: Double($0.location.x / width) * model.duration) })
                     }
-                    ForEach(SegmentKind.availableCases) { kind in row(kind: kind, width: width) }
+                    ForEach(visibleKinds) { kind in row(kind: kind, width: width) }
                 }
                 .padding(.horizontal, 9)
                 .overlay(alignment: .topLeading) {
                     if model.duration > 0 {
                         VStack(spacing: 0) {
                             RoundedRectangle(cornerRadius: 2).fill(AppTheme.green).frame(width: 8, height: 10)
-                            Rectangle().fill(AppTheme.green).frame(width: 1, height: 215)
+                            Rectangle().fill(AppTheme.green).frame(width: 1, height: CGFloat(62 + visibleKinds.count * 33))
                         }.offset(x: 9 + labelWidth + width * model.playhead / model.duration - 4, y: 3).allowsHitTesting(false)
                     }
                 }
@@ -62,7 +68,7 @@ struct TimelineView: View {
                 Button("Set out") { model.setTrimEnd() }
                 Button("Reset trim") { model.resetTrim() }
             }.font(.caption2).buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 12).disabled(model.videoURL == nil)
-        }.frame(height: 310).background(AppTheme.panel)
+        }.frame(height: CGFloat(146 + visibleKinds.count * 33)).background(AppTheme.panel)
         .onDeleteCommand { model.deleteSelected() }
     }
     func ruler(width: CGFloat) -> some View {

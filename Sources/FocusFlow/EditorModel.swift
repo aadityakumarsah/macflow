@@ -42,7 +42,7 @@ final class EditorModel: ObservableObject {
     @Published var padding: Double = 7 { willSet { remember() } didSet { changed() } }
     @Published var cornerRadius: Double = 18 { willSet { remember() } didSet { changed() } }
     @Published var shadow: Double = 30 { willSet { remember() } didSet { changed() } }
-    @Published var cursorSize: Double = 1 { willSet { remember() } didSet { changed() } }
+    @Published var cursorSize: Double = 2 { willSet { remember() } didSet { changed() } }
     @Published var clickEffects = true { willSet { remember() } didSet { changed() } }
     @Published var showCursor = true { willSet { remember() } didSet { changed() } }
     @Published var smoothCursor = true { willSet { remember() } didSet { changed() } }
@@ -114,6 +114,17 @@ final class EditorModel: ObservableObject {
     var selectedSegment: EditSegment? { segments.first { $0.id == selectedSegmentID } }
     var outputDuration: Double { max(0, trimEnd - trimStart) / playbackRate }
 
+    func resetCursorSettings() {
+        lastHistory = .distantPast
+        remember()
+        restoring = true
+        cursorSize = 2; showCursor = true; smoothCursor = true
+        cursorShadow = true; clickEffects = true; showKeystrokes = false
+        cursorAppearance = CursorAppearance()
+        restoring = false
+        changed()
+    }
+
     var contentSize: CGSize {
         let crop = frameAppearance.crop.rect(in: sourceSize)
         return crop.size
@@ -165,7 +176,7 @@ final class EditorModel: ObservableObject {
         videoURL = url; self.metadata = project?.metadata ?? metadata
         playhead = 0; duration = 0; segments = []; selectedSegmentID = nil; inspectorTab = "Canvas"
         background = .aurora; ratio = .source; padding = 7; cornerRadius = 18; shadow = 30
-        cursorSize = 1; clickEffects = true; showCursor = true; smoothCursor = true; cursorShadow = true
+        cursorSize = 2; clickEffects = true; showCursor = true; smoothCursor = true; cursorShadow = true
         showKeystrokes = false; showCamera = true; cameraSize = 0.24; cameraX = 0.82; cameraY = 0.78
         cameraCornerRadius = 14; cameraShape = .roundedRectangle; cameraMirrored = false
         trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false

@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum AppTheme {
-    static let green = Color(hex: 0x19784F)
+    static let green = Color(hex: 0x405DE6)
     static let panel = Color.white
-    static let elevated = Color(hex: 0xF5F7F2)
-    static let workspace = Color(hex: 0xEDF1E9)
-    static let line = Color.black.opacity(0.10)
+    static let elevated = Color(hex: 0xF5F6F9)
+    static let workspace = Color(hex: 0xECEEF3)
+    static let line = Color(hex: 0xDDE1E9)
 }
 
 extension View {

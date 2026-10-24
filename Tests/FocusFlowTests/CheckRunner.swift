@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // Standalone assertions keep the checks runnable with Apple's Command Line Tools,
 // where the XCTest framework is not installed.
@@ -19,10 +20,14 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
 
 @main struct CheckRunner {
     static func main() async {
+        // System cursor artwork requires an initialized AppKit application.
+        _ = NSApplication.shared
         let tests = FocusFlowTests()
         do {
             print("Checking cursor and compatibility…")
             tests.testCursorStaysWithinBoundsAndDisappearsAcrossGaps()
+            try tests.testEditableCursorSizeHighlightAndClickRendering()
+            await tests.testCursorResetIsUndoable()
             try tests.testLegacyProjectAndCaptureMetadataStillDecode()
             print("Checking crop, motion, and editable appearance…")
             try tests.testCropGeometryMotionAndPresentationRoundTrip()

@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreImage
 
 struct WindowAppearanceInspector: View {
     @EnvironmentObject private var model: EditorModel
@@ -41,10 +42,10 @@ struct MotionAppearanceInspector: View {
 
             // A greyed-out button with no explanation reads as broken.
             if model.recordedClicks.isEmpty && model.videoURL != nil {
-                Text("No clicks were recorded with this video, so zooms cannot be generated. Add Zoom or Pan from the left rail instead.")
+                Text("No clicks were recorded with this video, so zooms cannot be generated. Add Zoom or Pan in the Motion panel instead.")
                     .font(.caption2).foregroundStyle(.secondary)
             } else {
-                Text("Add Zoom or Pan from the left rail. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
+                Text("Add Zoom or Pan in the Motion panel. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
@@ -53,28 +54,131 @@ struct MotionAppearanceInspector: View {
 struct CursorAppearanceInspector: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
-        InspectorSection(title: "CURSOR & CLICKS") {
+        VStack(alignment: .leading, spacing: 24) {
             if model.pointerSamples.isEmpty {
-                Text("This video has no separate cursor track. Styled cursors and recorded click effects are available with native Window or Display capture.").font(.caption2).foregroundStyle(.secondary)
+                Label("No editable cursor track", systemImage: "info.circle").font(.system(size: 12, weight: .semibold))
+                Text("Record a Window or Display in FocusFlow to resize the cursor after recording. A cursor already inside a video cannot be resized separately.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                CursorStylePreview(size: model.cursorSize, appearance: model.cursorAppearance,
+                                   visible: model.showCursor, shadow: model.cursorShadow,
+                                   clicks: model.clickEffects && !model.recordedClicks.isEmpty).equatable()
+                Text("Changes appear in your video and export. Your original recording stays untouched.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 9) {
-                Toggle("Show cursor", isOn: $model.showCursor)
-                Picker("Style", selection: $model.cursorAppearance.style) { ForEach(PointerStyle.allCases) { Text($0.rawValue).tag($0) } }
-                Picker("Shape", selection: Binding(get: { model.cursorAppearance.shape ?? .automatic }, set: { model.cursorAppearance.shape = $0 })) {
-                    ForEach(PointerShape.allCases) { Text($0.rawValue).tag($0) }
+            VStack(alignment: .leading, spacing: 24) {
+                InspectorSection(title: "Cursor") {
+                    Toggle("Show cursor", isOn: $model.showCursor)
+                    InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...6, suffix: "×")
+                    HStack(spacing: 6) {
+                        ForEach([1.0, 2, 3, 4], id: \.self) { size in
+                            Button { model.cursorSize = size } label: {
+                                Text("\(Int(size))×").font(.system(size: 11, weight: .semibold))
+                                    .frame(maxWidth: .infinity).padding(.vertical, 7)
+                                    .background(abs(model.cursorSize - size) < 0.01 ? AppTheme.green.opacity(0.1) : AppTheme.elevated, in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(abs(model.cursorSize - size) < 0.01 ? AppTheme.green : .secondary)
+                            }.buttonStyle(.plain).accessibilityLabel("Cursor size \(Int(size)) times")
+                        }
+                    }
+                    Picker("Style", selection: $model.cursorAppearance.style) { ForEach(PointerStyle.allCases) { Text($0.rawValue).tag($0) } }
+                    Picker("Shape", selection: Binding(get: { model.cursorAppearance.shape ?? .automatic }, set: { model.cursorAppearance.shape = $0 })) {
+                        ForEach(PointerShape.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Text("Automatic follows recorded arrow and text cursor changes.").font(.caption2).foregroundStyle(.secondary)
+                    Toggle("Smooth movement", isOn: $model.smoothCursor)
+                    Toggle("Cursor shadow", isOn: $model.cursorShadow)
                 }
-                Text("1× uses the Mac’s original cursor size. Automatic follows recorded arrow/text changes; choose Text to override.").font(.caption2).foregroundStyle(.secondary)
-                Picker("Accent", selection: $model.cursorAppearance.accent) { ForEach(EffectAccent.allCases) { Text($0.rawValue).tag($0) } }
-                Toggle("Smooth movement", isOn: $model.smoothCursor)
-                Toggle("Gentle tilt", isOn: $model.cursorAppearance.sway)
-                Toggle("Cursor shadow", isOn: $model.cursorShadow)
-                Toggle("Click effects", isOn: $model.clickEffects)
-                if model.clickEffects { Picker("Click", selection: $model.cursorAppearance.clickStyle) { ForEach(ClickStyle.allCases) { Text($0.rawValue).tag($0) } } }
-                InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...6, suffix: "×")
-                InspectorSlider(title: "Text cursor", value: $model.cursorAppearance.textScale, range: 0.5...6, suffix: "×")
+                Divider()
+                InspectorSection(title: "Click effects") {
+                    Toggle("Animate clicks", isOn: $model.clickEffects).disabled(model.recordedClicks.isEmpty)
+                    if model.recordedClicks.isEmpty {
+                        Text("No clicks were recorded in this video.").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if model.clickEffects {
+                        Picker("Animation", selection: $model.cursorAppearance.clickStyle) {
+                            ForEach(ClickStyle.allCases) { Text($0.rawValue).tag($0) }
+                        }.disabled(model.recordedClicks.isEmpty)
+                        if model.cursorAppearance.clickStyle != .press {
+                            InspectorSlider(title: "Effect size", value: optional(\.clickScale, fallback: 1), range: 0.5...3, suffix: "×")
+                                .disabled(model.recordedClicks.isEmpty)
+                        }
+                    }
+                    ColorPicker("Effect color", selection: Binding(get: {
+                        let c = model.cursorAppearance.accentRGB
+                        return Color(red: c.0, green: c.1, blue: c.2)
+                    }, set: { value in
+                        guard let c = NSColor(value).usingColorSpace(.deviceRGB) else { return }
+                        model.cursorAppearance.customAccent = RGBColor(r: c.redComponent, g: c.greenComponent, b: c.blueComponent)
+                    }), supportsOpacity: false)
+                    HStack(spacing: 10) {
+                        ForEach(EffectAccent.allCases) { accent in
+                            Button {
+                                var appearance = model.cursorAppearance
+                                appearance.accent = accent; appearance.customAccent = nil
+                                model.cursorAppearance = appearance
+                            } label: {
+                                Circle().fill(Color(cgColor: accent.cgColor)).frame(width: 22, height: 22)
+                                    .padding(3).overlay(Circle().stroke(model.cursorAppearance.customAccent == nil && model.cursorAppearance.accent == accent ? AppTheme.green : .clear, lineWidth: 1.5))
+                            }.buttonStyle(.plain).help(accent.rawValue).accessibilityLabel(accent.rawValue)
+                        }
+                        Spacer()
+                    }
+                }
+                Divider()
+                InspectorSection(title: "Pointer highlight") {
+                    Toggle("Follow with a soft glow", isOn: Binding(get: { model.cursorAppearance.highlight ?? false }, set: { model.cursorAppearance.highlight = $0 }))
+                    if model.cursorAppearance.highlight == true {
+                        InspectorSlider(title: "Spread", value: optional(\.highlightSize, fallback: 3.4), range: 0.4...5, suffix: "×")
+                        InspectorSlider(title: "Opacity", value: optional(\.highlightOpacity, fallback: 0.22), range: 0.05...0.8, suffix: "")
+                    }
+                }
+                DisclosureGroup("Advanced") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Toggle("Gentle tilt", isOn: $model.cursorAppearance.sway)
+                        InspectorSlider(title: "Text cursor scale", value: $model.cursorAppearance.textScale, range: 0.5...6, suffix: "×")
+                        InspectorSlider(title: "Cursor opacity", value: optional(\.opacity, fallback: 1), range: 0...1, suffix: "")
+                    }.padding(.top, 12)
+                }.font(.caption)
             }.disabled(model.pointerSamples.isEmpty)
-            Toggle("Shortcut badges", isOn: $model.showKeystrokes).disabled(model.keystrokes.isEmpty)
+            Toggle("Show keyboard shortcuts", isOn: $model.showKeystrokes).disabled(model.keystrokes.isEmpty)
+            Button("Reset cursor settings") { model.resetCursorSettings() }
+                .buttonStyle(.borderless).disabled(model.pointerSamples.isEmpty)
         }
+    }
+    private func optional(_ path: WritableKeyPath<CursorAppearance, Double?>, fallback: Double) -> Binding<Double> {
+        Binding(get: { model.cursorAppearance[keyPath: path] ?? fallback }, set: { model.cursorAppearance[keyPath: path] = $0 })
+    }
+}
+
+/// Uses the export compositor, so the style swatch shows the actual cursor artwork.
+struct CursorStylePreview: View, Equatable {
+    let size: Double
+    let appearance: CursorAppearance
+    let visible: Bool
+    let shadow: Bool
+    let clicks: Bool
+    private static let context = CIContext()
+    private static let compositor = FocusFlowCompositor()
+    private var preview: CGImage? {
+        let rect = CGRect(x: 0, y: 0, width: 960, height: 480)
+        let source = CIImage(color: CIColor(red: 0.94, green: 0.95, blue: 0.98)).cropped(to: rect)
+        var settings = ExportSettings(background: .graphite, canvasSize: rect.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: size, clickEffects: clicks, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle, showCursor: visible, smoothCursor: true, cursorShadow: shadow, frame: FrameAppearance(chrome: .none), cursor: appearance)
+        settings.pointerSamples = [PointerSample(time: 0.95, x: 0.47, y: 0.46, shape: .arrow), PointerSample(time: 1.05, x: 0.47, y: 0.46, shape: .arrow)]
+        settings.clicks = clicks ? [RecordedClick(time: 0.85, x: 0.47, y: 0.46)] : []
+        let detail = CGRect(x: rect.width * 0.47 - 130, y: rect.height * 0.54 - 65, width: 260, height: 130)
+        return Self.context.createCGImage(Self.compositor.renderFrame(source: source, time: 1, settings: settings), from: detail)
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            if let preview { Image(decorative: preview, scale: 2).resizable().scaledToFit() }
+            HStack {
+                Text("STYLE PREVIEW").font(.system(size: 9, weight: .medium)).tracking(1)
+                Spacer()
+                Text("\(size, specifier: "%.1f")×").font(.system(size: 10, weight: .semibold, design: .monospaced))
+            }.foregroundStyle(.secondary).padding(12)
+        }.background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.line))
     }
 }
 

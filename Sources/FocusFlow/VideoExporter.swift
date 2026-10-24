@@ -216,7 +216,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
         for label in settings.segments where label.kind == .callout {
             let strength = MotionEngine.envelope(label, time: time)
-            guard strength > 0, let badge = RenderAssets.callout(text: label.text ?? "Look here", unit: source.extent.width / 1920 * min(3, max(0.5, label.intensity)), accent: settings.cursor.accent) else { continue }
+            guard strength > 0, let badge = RenderAssets.callout(text: label.text ?? "Look here", unit: source.extent.width / 1920 * min(3, max(0.5, label.intensity)), accent: settings.cursor.accentColor, key: settings.cursor.accentKey) else { continue }
             let x = min(source.extent.width - badge.extent.width, max(0, source.extent.width * label.x - badge.extent.width / 2))
             let y = min(source.extent.height - badge.extent.height, max(0, source.extent.height * (1 - label.y) - badge.extent.height / 2))
             source = opacity(badge, strength).transformed(by: CGAffineTransform(translationX: x, y: y - (1 - strength) * 16)).composited(over: source)
@@ -297,13 +297,28 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         var result = image
         let click = settings.clicks.last(where: { time >= $0.time && time - $0.time < 0.65 })
         if settings.clickEffects, let click, settings.cursor.clickStyle != .press,
-           let ring = RenderAssets.click(accent: settings.cursor.accent, style: settings.cursor.clickStyle) {
+           let ring = RenderAssets.click(accent: settings.cursor.accentColor, key: settings.cursor.accentKey, style: settings.cursor.clickStyle) {
             let progress = (time - click.time) / 0.65
             let unit = target.width / 1920
-            let diameter = (24 + 90 * (1 - pow(1 - progress, 3))) * unit
+            let clickScale = max(0.2, settings.cursor.clickScale ?? 1)
+            let grown: Double = 24 + 90 * (1 - pow(1 - progress, 3))
+            let diameter = grown * unit * clickScale
             let placed = ring.transformed(by: CGAffineTransform(scaleX: diameter / ring.extent.width, y: diameter / ring.extent.height))
                 .transformed(by: CGAffineTransform(translationX: click.x * target.width - diameter / 2, y: (1 - click.y) * target.height - diameter / 2))
             result = opacity(placed, pow(1 - progress, 2)).composited(over: result)
+        }
+        // Drawn before the pointer so the pointer sits on top of it.
+        if settings.showCursor, settings.cursor.highlight == true,
+           let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor),
+           let glow = RenderAssets.highlight(accent: settings.cursor.accentColor, key: settings.cursor.accentKey) {
+            let unit = target.width / 1920
+            let size = 120 * unit * max(0.4, settings.cursor.highlightSize ?? 3.4) * settings.cursorSize
+            let x = pointer.x * target.width - size / 2
+            let y = (1 - pointer.y) * target.height - size / 2
+            let placed = glow
+                .transformed(by: CGAffineTransform(scaleX: size / glow.extent.width, y: size / glow.extent.height))
+                .transformed(by: CGAffineTransform(translationX: x, y: y))
+            result = opacity(placed, max(0, min(1, settings.cursor.highlightOpacity ?? 0.22))).composited(over: result)
         }
         if settings.showCursor, let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor), let cursor = RenderAssets.cursor(settings.cursor, shape: settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!) {
             let resolvedShape = settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!
@@ -324,7 +339,10 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 angle = max(-0.14, min(0.14, -(after.x - before.x) * 2))
             }
             let transform = CGAffineTransform(translationX: pointer.x * target.width, y: (1 - pointer.y) * target.height).rotated(by: angle).scaledBy(x: scale, y: scale)
-            let placed = cursor.transformed(by: transform)
+            var placed = cursor.transformed(by: transform)
+            // Fades the pointer without touching its highlight or clicks.
+            let pointerOpacity = max(0, min(1, settings.cursor.opacity ?? 1))
+            if pointerOpacity < 1 { placed = opacity(placed, pointerOpacity) }
             if settings.cursorShadow {
                 let shadow = opacity(placed.applyingFilter("CIColorMatrix", parameters: ["inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0)]), 0.45)
                     .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: target.width / 1920 * 3])

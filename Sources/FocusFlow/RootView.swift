@@ -19,18 +19,19 @@ struct RootView: View {
                 }
                 VStack(spacing: 0) {
                     PreviewArea()
-                    if !model.theatreMode {
+                    if !model.theatreMode && model.videoURL != nil {
                         Divider().overlay(AppTheme.line)
                         TimelineView()
                     }
                 }
-                if !model.theatreMode {
+                if !model.theatreMode && model.videoURL != nil {
                     Divider().overlay(AppTheme.line)
                     InspectorView()
                 }
             }
         }
         .background(model.theatreMode ? Color.black : AppTheme.workspace)
+        .tint(AppTheme.green)
         .sheet(isPresented: $model.showCropEditor) { CropEditor() }
         .sheet(isPresented: $model.showRecorder) { RecorderView() }
         .sheet(isPresented: $model.showLibrary) { RecordingLibraryView(library: model.library) }
@@ -144,32 +145,35 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 14) {
             AppIconMark(size: 27)
-            Text("FocusFlow").font(.system(size: 15, weight: .bold))
+            Text("FocusFlow").font(.system(size: 15, weight: .semibold))
+            Divider().frame(height: 22).padding(.horizontal, 4)
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.videoURL?.deletingPathExtension().lastPathComponent ?? "Your next great demo").font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Text(model.videoURL == nil ? "Record · refine · share" : model.saveStatus).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(model.videoURL?.deletingPathExtension().lastPathComponent ?? "Studio").font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.videoURL == nil ? "Your screen, beautifully presented" : model.saveStatus).font(.system(size: 10)).foregroundStyle(.secondary)
             }
             Spacer()
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!model.canUndo).help("Undo ⌘Z")
             Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!model.canRedo).help("Redo ⇧⌘Z")
-            Button { confirmDelete = true } label: { Image(systemName: "trash") }
-                .help("Move this recording to Trash")
-                .disabled(!model.library.recordings.contains(where: { $0.url == model.videoURL }))
+            Menu {
+                Button("Save project…") { model.saveProject() }.disabled(model.videoURL == nil)
+                Button("Move recording to Trash…", role: .destructive) { confirmDelete = true }
+                    .disabled(!model.library.recordings.contains(where: { $0.url == model.videoURL }))
+            } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).fixedSize().help("Project actions")
             Button { model.toggleTheatreMode() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .help("Full screen preview ⌃⌘F")
                 .disabled(model.videoURL == nil)
-            Button { model.saveProject() } label: { Label("Save", systemImage: "square.and.arrow.down") }
-                .buttonStyle(.plain).foregroundStyle(.secondary).disabled(model.videoURL == nil)
             Button { model.export() } label: {
                 if let progress = model.exportProgress {
                     HStack(spacing: 7) { ProgressView(value: progress).frame(width: 58); Text("\(Int(progress * 100))%") }
-                } else { Label("Export", systemImage: "arrow.up.right") }
+                } else { Label("Export video", systemImage: "square.and.arrow.up") }
             }
             .buttonStyle(.plain).padding(.horizontal, 13).padding(.vertical, 8)
             .background(AppTheme.green.opacity(model.videoURL == nil ? 0.4 : 1), in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white).fontWeight(.semibold)
             .disabled(model.exportProgress != nil || model.videoURL == nil)
         }
-        .padding(.horizontal, 16).frame(height: 52).background(AppTheme.panel)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 20).frame(height: 64).background(AppTheme.panel)
         .alert("Move this recording to Trash?", isPresented: $confirmDelete) {
             Button("Cancel", role: .cancel) {}
             Button("Move to Trash", role: .destructive) {
@@ -182,37 +186,49 @@ struct TopBar: View {
 
 struct ToolRail: View {
     @EnvironmentObject private var model: EditorModel
+    private let sections: [(String, String)] = [
+        ("Canvas", "rectangle.on.rectangle"), ("Cursor", "cursorarrow"),
+        ("Motion", "sparkles"), ("Camera", "video"), ("Audio", "speaker.wave.2"),
+        ("Export", "square.and.arrow.up")
+    ]
     var body: some View {
-        VStack(spacing: 9) {
-            RailButton(title: "Record", icon: "record.circle", active: true) { model.showRecorder = true }
-            RailButton(title: "Library", icon: "film.stack", active: false) {
+        VStack(alignment: .leading, spacing: 6) {
+            RailButton(title: "Record", icon: "record.circle", active: false) { model.showRecorder = true }
+            RailButton(title: "Recordings", icon: "film.stack", active: false) {
                 Task { await model.library.refresh(); model.showLibrary = true }
             }
-            RailButton(title: "Import", icon: "square.and.arrow.down", active: false) { model.importVideo() }
-            Divider().overlay(AppTheme.line).padding(.vertical, 4)
-            ForEach(SegmentKind.availableCases) { kind in
-                RailButton(title: kind.title, icon: kind.symbol, active: false) { model.addSegment(kind) }.disabled(model.videoURL == nil)
+            RailButton(title: "Open file", icon: "folder", active: false) { model.importVideo() }
+            Divider().padding(.vertical, 14)
+            Text("STUDIO").font(.system(size: 9, weight: .semibold)).tracking(1.5)
+                .foregroundStyle(.tertiary).padding(.horizontal, 12).padding(.bottom, 6)
+            ForEach(sections, id: \.0) { title, icon in
+                RailButton(title: title, icon: icon, active: model.inspectorTab == title && model.videoURL != nil) {
+                    model.inspectorTab = title
+                }.disabled(model.videoURL == nil)
             }
             Spacer()
-            RailButton(title: "Delete", icon: "trash", active: false) { model.deleteSelected() }
-                .disabled(model.selectedSegmentID == nil)
+            Label("Saved on this Mac", systemImage: "internaldrive")
+                .font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
         }
-        .padding(10).frame(width: 86).background(AppTheme.panel)
+        .padding(12).padding(.top, 8).frame(width: 164).background(AppTheme.panel)
     }
 }
 
 struct RailButton: View {
     let title: String, icon: String, active: Bool, action: () -> Void
+    @State private var hovered = false
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 17, weight: .medium))
-                Text(title).font(.system(size: 10, weight: .medium))
+            HStack(spacing: 11) {
+                Image(systemName: icon).font(.system(size: 14, weight: .medium)).frame(width: 18)
+                Text(title).font(.system(size: 12, weight: active ? .semibold : .medium))
+                Spacer(minLength: 0)
             }
-            .foregroundStyle(active ? AppTheme.green : .secondary)
-            .frame(maxWidth: .infinity).padding(.vertical, 9)
-            .background(active ? AppTheme.green.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 9))
-        }.buttonStyle(.plain)
+            .foregroundStyle(active ? AppTheme.green : Color.primary.opacity(0.75))
+            .padding(.horizontal, 12).frame(height: 38)
+            .background(active ? AppTheme.green.opacity(0.09) : hovered ? AppTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain).onHover { hovered = $0 }
     }
 }
 
@@ -221,6 +237,9 @@ struct PreviewArea: View {
     var body: some View {
         GeometryReader { proxy in
             let canvas = canvasSize(in: proxy.size)
+            if model.videoURL == nil {
+                EmptyCanvas().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             VStack(spacing: 14) {
                 HStack {
                     if model.theatreMode {
@@ -261,7 +280,8 @@ struct PreviewArea: View {
                 PlaybackControls()
                 Spacer(minLength: 10)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        }.background(AppTheme.workspace)
+            }
+        }.background(model.theatreMode ? Color.black : AppTheme.workspace)
     }
     func canvasSize(in available: CGSize) -> CGSize {
         let render = model.canvasSize, ratio = render.width / render.height
@@ -318,18 +338,39 @@ struct NativeVideoPlayer: NSViewRepresentable {
 struct EmptyCanvas: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [Color(hex: 0xE2EBDC), Color(hex: 0xD5E8D8), Color(hex: 0xEEF0DE)], startPoint: .topLeading, endPoint: .bottomTrailing)
-            VStack(spacing: 14) {
-                Image(systemName: "rectangle.inset.filled.and.cursorarrow").font(.system(size: 44, weight: .light)).foregroundStyle(AppTheme.green)
-                Text("A little focus. A better story.").font(.system(size: 24, weight: .semibold))
-                Text("Record your screen. Make every detail count.").foregroundStyle(.secondary).font(.subheadline)
-                HStack(spacing: 10) {
-                    Button { model.showRecorder = true } label: { Label("New recording", systemImage: "record.circle") }.buttonStyle(.plain).padding(.horizontal, 14).padding(.vertical, 8).background(AppTheme.green, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white)
-                    Button("Open video or project") { model.importVideo() }
-                }.padding(.top, 10)
-            }.padding(20)
-        }
+        VStack(spacing: 28) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24).fill(AppTheme.green.opacity(0.06)).frame(width: 100, height: 100)
+                Image(systemName: "rectangle.inset.filled.and.cursorarrow")
+                    .font(.system(size: 42, weight: .light)).foregroundStyle(AppTheme.green)
+            }
+            VStack(spacing: 12) {
+                Text("Good recordings start here.").font(.system(size: 30, weight: .semibold)).tracking(-0.8)
+                Text("Capture your screen. Give every detail a little polish.")
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                Button { model.showRecorder = true } label: {
+                    Label("New recording", systemImage: "record.circle").padding(.horizontal, 20).frame(height: 42)
+                }.buttonStyle(.plain).background(AppTheme.green, in: RoundedRectangle(cornerRadius: 10)).foregroundStyle(.white)
+                Button { model.importVideo() } label: {
+                    Label("Open video", systemImage: "folder").padding(.horizontal, 20).frame(height: 42)
+                }.buttonStyle(.plain).panelStyle(radius: 10)
+            }.font(.system(size: 13, weight: .semibold))
+            HStack(alignment: .top, spacing: 24) {
+                feature("cursorarrow", "A clearer cursor", "Resize it after recording.")
+                feature("sparkles", "A little movement", "Zoom in on what matters.")
+                feature("rectangle.on.rectangle", "Your finishing touch", "Frame it. Export it. Share it.")
+            }.padding(24).panelStyle(radius: 14).padding(.top, 18)
+            Text("Local recording. No account needed.").font(.system(size: 11)).foregroundStyle(.tertiary)
+        }.padding(36)
+    }
+    private func feature(_ icon: String, _ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Image(systemName: icon).font(.system(size: 17)).foregroundStyle(AppTheme.green)
+            Text(title).font(.system(size: 12, weight: .semibold))
+            Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+        }.frame(width: 160, alignment: .leading)
     }
 }
 
@@ -354,15 +395,30 @@ struct InspectorView: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Picker("Inspector", selection: $model.inspectorTab) {
-                Text("Canvas").tag("Canvas"); Text("Segment").tag("Segment")
-            }.pickerStyle(.segmented).padding(14)
-            Divider().overlay(AppTheme.line)
+            HStack {
+                Text(model.inspectorTab == "Segment" ? "Edit effect" : model.inspectorTab).font(.system(size: 15, weight: .semibold))
+                Spacer()
+                if model.inspectorTab == "Segment" {
+                    Button { model.inspectorTab = "Motion" } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).help("Back to motion")
+                }
+            }.padding(20)
+            Divider()
             ScrollView {
-                if model.inspectorTab == "Canvas" { CanvasInspector() }
-                else { SegmentInspector() }
+                Group {
+                    switch model.inspectorTab {
+                    case "Cursor": CursorAppearanceInspector().padding(18)
+                    case "Motion": MotionPanel().padding(18)
+                    case "Camera": CameraPanel().padding(18)
+                    case "Audio": AudioPanel().padding(18)
+                    case "Export": ExportPanel().padding(18)
+                    case "Segment": SegmentInspector()
+                    default: CanvasInspector()
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-        }.frame(width: 280).background(AppTheme.panel)
+        }.frame(width: 292).background(AppTheme.panel)
+        .toggleStyle(.switch).controlSize(.small)
     }
 }
 
@@ -402,42 +458,11 @@ struct CanvasInspector: View {
                     .font(.caption)
                     .help("Pulls in the padding and moves the camera into the free area after switching aspect.")
             }
-            ExportInspector()
             WindowAppearanceInspector()
-            MotionAppearanceInspector()
             InspectorSlider(title: "Padding", value: $model.padding, range: 0...18, suffix: "%")
             InspectorSlider(title: "Corners", value: $model.cornerRadius, range: 0...40, suffix: "")
             InspectorSlider(title: "Shadow", value: $model.shadow, range: 0...50, suffix: "")
-            CursorAppearanceInspector()
-            InspectorSection(title: "EDIT & AUDIO") {
-                Picker("Speed", selection: $model.playbackRate) {
-                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { Text("\($0, specifier: "%.2g")×").tag($0) }
-                }
-                Toggle("Mute audio", isOn: $model.muted)
-                HStack {
-                    Button("Set in") { model.setTrimStart() }.help("Trim start to playhead")
-                    Button("Set out") { model.setTrimEnd() }.help("Trim end to playhead")
-                    Button("Reset") { model.resetTrim() }
-                }.font(.caption)
-                Text("Export: \(model.outputDuration, specifier: "%.1f") s").font(.caption).foregroundStyle(.secondary)
-            }
-            if model.cameraURL != nil {
-                InspectorSection(title: "CAMERA") {
-                    Toggle("Mirror camera", isOn: $model.cameraMirrored)
-                    Toggle("Include camera", isOn: Binding(get: { model.showCamera }, set: { model.setCameraVisible($0) }))
-                    Picker("Shape", selection: $model.cameraShape) {
-                        ForEach(CameraShape.allCases) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented)
-                    InspectorSlider(title: "Size", value: $model.cameraSize, range: 0.12...0.48, suffix: "")
-                    InspectorSlider(title: "Position X", value: $model.cameraX, range: 0.08...0.92, suffix: "")
-                    InspectorSlider(title: "Position Y", value: $model.cameraY, range: 0.08...0.92, suffix: "")
-                    if model.cameraShape == .roundedRectangle {
-                        InspectorSlider(title: "Corners", value: $model.cameraCornerRadius, range: 0...40, suffix: "")
-                    }
-                    Text("Drag the green camera frame directly on the preview to reposition it.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+
         }.padding(16)
     }
 }
@@ -476,7 +501,7 @@ struct SegmentInspector: View {
 
 struct InspectorSection<Content: View>: View {
     let title: String; @ViewBuilder let content: Content
-    var body: some View { VStack(alignment: .leading, spacing: 9) { Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(.tertiary); content } }
+    var body: some View { VStack(alignment: .leading, spacing: 9) { Text(title.localizedCapitalized).font(.system(size: 12, weight: .semibold)).foregroundStyle(.primary); content } }
 }
 
 struct InspectorSlider: View {

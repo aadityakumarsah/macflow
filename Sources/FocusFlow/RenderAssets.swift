@@ -26,7 +26,7 @@ enum RenderAssets {
                 .transformed(by: CGAffineTransform(translationX: -native.hotSpot.x, y: native.hotSpot.y - native.image.size.height))
             cache.setObject(image, forKey: key); return image
         }
-        let image = bitmap(key: "cursor-\(appearance.style)-\(appearance.accent)", width: 120, height: 150) { context in
+        let image = bitmap(key: "cursor-\(appearance.style)-\(appearance.accentKey)", width: 120, height: 150) { context in
             context.translateBy(x: 12, y: 138); context.scaleBy(x: 3, y: -3)
             let path = CGMutablePath()
             path.move(to: .zero)
@@ -38,7 +38,7 @@ enum RenderAssets {
             path.addLine(to: CGPoint(x: 18, y: 22.3)); path.addLine(to: CGPoint(x: 27.5, y: 21.5))
             path.addQuadCurve(to: CGPoint(x: 28.5, y: 18.4), control: CGPoint(x: 31, y: 21.2))
             path.addLine(to: CGPoint(x: 2.7, y: -1)); path.addQuadCurve(to: .zero, control: CGPoint(x: 0, y: -3)); path.closeSubpath()
-            let fill: CGColor = appearance.style == .light ? CGColor(gray: 0.98, alpha: 1) : appearance.style == .dark ? CGColor(gray: 0.08, alpha: 1) : appearance.accent.cgColor
+            let fill: CGColor = appearance.style == .light ? CGColor(gray: 0.98, alpha: 1) : appearance.style == .dark ? CGColor(gray: 0.08, alpha: 1) : appearance.accentColor
             context.setFillColor(fill)
             context.setStrokeColor(CGColor(gray: appearance.style == .light ? 0.16 : 1, alpha: 0.95))
             context.setLineWidth(1.3); context.setLineJoin(.round); context.addPath(path); context.drawPath(using: .fillStroke)
@@ -46,12 +46,26 @@ enum RenderAssets {
         // The tip is exactly (0,0), independent of the transparent antialiasing margin.
         return image?.transformed(by: CGAffineTransform(translationX: -12, y: -138))
     }
-    static func click(accent: EffectAccent, style: ClickStyle) -> CIImage? {
-        bitmap(key: "click-\(accent)-\(style)", width: 160, height: 160) { context in
+    static func click(accent: CGColor, key: String, style: ClickStyle) -> CIImage? {
+        bitmap(key: "click-\(key)-\(style)", width: 160, height: 160) { context in
             let rect = CGRect(x: 6, y: 6, width: 148, height: 148)
-            context.setFillColor(accent.cgColor.copy(alpha: style == .pulse ? 0.2 : 0.08)!)
+            context.setFillColor(accent.copy(alpha: style == .pulse ? 0.2 : 0.08)!)
             context.fillEllipse(in: rect)
-            if style == .ripple { context.setStrokeColor(accent.cgColor.copy(alpha: 0.9)!); context.setLineWidth(5); context.strokeEllipse(in: rect) }
+            if style == .ripple { context.setStrokeColor(accent.copy(alpha: 0.9)!); context.setLineWidth(5); context.strokeEllipse(in: rect) }
+        }
+    }
+
+    /// A soft disc that rides under the pointer, brightest at its centre.
+    static func highlight(accent: CGColor, key: String) -> CIImage? {
+        bitmap(key: "highlight-\(key)", width: 256, height: 256) { context in
+            let centre = CGPoint(x: 128, y: 128)
+            guard let space = accent.colorSpace,
+                  let gradient = CGGradient(colorsSpace: space,
+                                            colors: [accent.copy(alpha: 1)!, accent.copy(alpha: 0)!] as CFArray,
+                                            locations: [0, 1]) else { return }
+            context.drawRadialGradient(gradient, startCenter: centre, startRadius: 0,
+                                       endCenter: centre, endRadius: 124,
+                                       options: [.drawsAfterEndLocation])
         }
     }
     static func header(_ frame: FrameAppearance, rect: CGRect) -> CIImage? {
@@ -81,16 +95,16 @@ enum RenderAssets {
             CTLineDraw(line, context); context.restoreGState()
         }?.transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
     }
-    static func callout(text: String, unit: Double, accent: EffectAccent) -> CIImage? {
+    static func callout(text: String, unit: Double, accent: CGColor, key: String) -> CIImage? {
         let text = String(text.prefix(80))
         let font = CTFontCreateWithName(".AppleSystemUIFont" as CFString, 26 * unit, nil)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: CGColor(gray: 1, alpha: 1)]))
         let bounds = CTLineGetBoundsWithOptions(line, [])
         let w = min(1000 * unit, max(100 * unit, bounds.width + 42 * unit)), h = 62 * unit
-        return bitmap(key: "label-\(text)-\(unit)-\(accent)", width: Int(ceil(w)), height: Int(ceil(h))) { context in
+        return bitmap(key: "label-\(text)-\(unit)-\(key)", width: Int(ceil(w)), height: Int(ceil(h))) { context in
             context.setFillColor(CGColor(gray: 0.07, alpha: 0.94))
             context.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: w, height: h), cornerWidth: 16 * unit, cornerHeight: 16 * unit, transform: nil)); context.fillPath()
-            context.setFillColor(accent.cgColor); context.fill(CGRect(x: 0, y: 12 * unit, width: 4 * unit, height: h - 24 * unit))
+            context.setFillColor(accent); context.fill(CGRect(x: 0, y: 12 * unit, width: 4 * unit, height: h - 24 * unit))
             context.textPosition = CGPoint(x: max(16 * unit, (w - bounds.width) / 2), y: (h - bounds.height) / 2 - bounds.minY)
             CTLineDraw(line, context)
         }

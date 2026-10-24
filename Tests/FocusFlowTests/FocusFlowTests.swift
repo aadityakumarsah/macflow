@@ -190,6 +190,74 @@ final class FocusFlowTests {
         try NSBitmapImageRep(cgImage: cursorImage).representation(using: .png, properties: [:])!.write(to: qa.appendingPathComponent("cursor-render.png"))
     }
 
+    func testEditableCursorSizeHighlightAndClickRendering() throws {
+        let compositor = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 960, height: 540)
+        let source = CIImage(color: CIColor(red: 0.2, green: 0.25, blue: 0.3)).cropped(to: canvas)
+        func settings(size: Double = 2, clicks: Bool = false) -> ExportSettings {
+            ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [PointerSample(time: 0.95, x: 0.5, y: 0.5), PointerSample(time: 1.05, x: 0.5, y: 0.5)], clicks: [RecordedClick(time: 0.85, x: 0.5, y: 0.5)], keystrokes: [], cursorSize: size, clickEffects: clicks, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle, cursorShadow: false)
+        }
+        func render(_ value: ExportSettings) throws -> [UInt8] {
+            pixels(try XCTUnwrap(context.createCGImage(compositor.renderFrame(source: source, time: 1, settings: value), from: canvas)))
+        }
+        var hidden = settings(); hidden.showCursor = false
+        let clean = try render(hidden)
+        func changedPixels(_ image: [UInt8]) -> Int {
+            var count = 0
+            for i in stride(from: 0, to: image.count, by: 4) {
+                let red = abs(Int(image[i]) - Int(clean[i]))
+                let green = abs(Int(image[i + 1]) - Int(clean[i + 1]))
+                let blue = abs(Int(image[i + 2]) - Int(clean[i + 2]))
+                if red + green + blue > 12 { count += 1 }
+            }
+            return count
+        }
+        let small = try render(settings(size: 1)), large = try render(settings(size: 3))
+        XCTAssertGreaterThan(changedPixels(large), changedPixels(small) * 4)
+        var glow = settings(); glow.cursor.highlight = true
+        glow.cursor.customAccent = RGBColor(r: 0.8, g: 0.2, b: 0.1)
+        XCTAssertGreaterThan(changedPixels(try render(glow)), changedPixels(large))
+        var transparent = settings(); transparent.cursor.opacity = 0
+        XCTAssertEqual(try render(transparent), clean)
+        let click = settings(clicks: true)
+        var bigClick = click; bigClick.cursor.clickScale = 3
+        XCTAssertGreaterThan(changedPixels(try render(bigClick)), changedPixels(try render(click)))
+        for style in ClickStyle.allCases {
+            var styled = click; styled.cursor.clickStyle = style
+            XCTAssertTrue(try render(styled) != render(settings()))
+        }
+        var custom = glow.cursor
+        custom.highlightSize = 2.5; custom.highlightOpacity = 0.4; custom.clickScale = 1.7; custom.opacity = 0.6
+        XCTAssertEqual(try JSONDecoder().decode(CursorAppearance.self, from: JSONEncoder().encode(custom)), custom)
+        let legacy = Data(#"{"textScale":1.6,"style":"macOS","accent":"Blue","clickStyle":"Ripple","sway":false}"#.utf8)
+        let restored = try JSONDecoder().decode(CursorAppearance.self, from: legacy)
+        XCTAssertNil(restored.customAccent)
+        XCTAssertEqual(restored.highlight ?? false, false)
+        XCTAssertEqual(restored.opacity ?? 1, 1)
+    }
+
+    @MainActor func testCursorResetIsUndoable() {
+        let model = EditorModel(restoreLatest: false)
+        XCTAssertEqual(model.cursorSize, 2)
+        model.videoURL = URL(fileURLWithPath: "/tmp/nonexistent-focusflow-cursor-test.mp4")
+        model.duration = 2
+        model.cursorSize = 4; model.showCursor = false
+        model.cursorAppearance.highlight = true
+        model.resetCursorSettings()
+        XCTAssertEqual(model.cursorSize, 2)
+        XCTAssertTrue(model.showCursor)
+        XCTAssertEqual(model.cursorAppearance.highlight, false)
+        model.undo()
+        XCTAssertEqual(model.cursorSize, 4)
+        XCTAssertEqual(model.showCursor, false)
+        XCTAssertEqual(model.cursorAppearance.highlight, true)
+        model.redo()
+        XCTAssertEqual(model.cursorSize, 2)
+        XCTAssertTrue(model.showCursor)
+        // Cancel pending preview work for the intentionally nonexistent test video.
+        model.videoURL = nil
+    }
+
     private func frame(_ url: URL) async throws -> CGImage {
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url)); generator.appliesPreferredTrackTransform = true
         return try await generator.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)).image

@@ -88,6 +88,41 @@ struct CursorAppearance: Codable, Equatable {
     var clickStyle: ClickStyle = .ripple
     var sway = false
     var shape: PointerShape? = .automatic
+
+    /// Any colour, rather than the four presets. Optional so projects written
+    /// before it keep decoding and keep their preset.
+    var customAccent: RGBColor?
+
+    /// A soft disc that travels with the pointer. The cursor is a few dozen
+    /// pixels in a frame that may be watched at a fraction of its size, and a
+    /// highlight reads when the arrow alone does not.
+    var highlight: Bool? = false
+    var highlightSize: Double? = 3.4
+    var highlightOpacity: Double? = 0.22
+
+    /// Scales the click effect independently of the pointer.
+    var clickScale: Double? = 1
+    /// Fades the pointer itself without touching its effects.
+    var opacity: Double? = 1
+
+    /// The colour every cursor effect draws with.
+    var accentRGB: (Double, Double, Double) {
+        if let custom = customAccent { return (custom.r, custom.g, custom.b) }
+        return accent.rgb
+    }
+
+    var accentColor: CGColor {
+        let c = accentRGB
+        return CGColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
+    }
+
+    /// Distinguishes cached artwork drawn with a custom colour from the preset.
+    var accentKey: String {
+        if let custom = customAccent {
+            return String(format: "c%.3f-%.3f-%.3f", custom.r, custom.g, custom.b)
+        }
+        return accent.rawValue
+    }
 }
 
 struct FrameLayout {

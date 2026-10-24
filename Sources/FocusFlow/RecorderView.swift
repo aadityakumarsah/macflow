@@ -219,7 +219,7 @@ struct RecorderView: View {
 
     private func livePreview(image: CGImage?) -> some View {
         ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x15261E))
+            RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x191D2B))
             if let image {
                 Image(decorative: image, scale: 1).resizable().scaledToFit().padding(6).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

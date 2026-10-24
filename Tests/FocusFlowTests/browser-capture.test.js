@@ -12,7 +12,7 @@ const context = vm.createContext({
   document:{getElementById:node}, location:{hash:'#test-token'},history:{replaceState(){}},
   navigator:{mediaDevices:{enumerateDevices:async()=>[], getDisplayMedia:async value=>{options=value;return nextStream;}}},
   MediaRecorder:{isTypeSupported:()=>true},Option:function(){},
-  window:{MediaRecorder:true,addEventListener(){}},console
+  window:{MediaRecorder:true,addEventListener(){}},console,URLSearchParams
 });
 vm.runInContext(fs.readFileSync('Sources/FocusFlow/BrowserRecorder/recorder.js','utf8'),context);
 function stream(surface) {

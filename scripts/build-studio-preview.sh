@@ -62,14 +62,14 @@ cat > "$OUTPUT/preview.css" <<'EOF'
     align-items: center;
     gap: 10px 18px;
     padding: 13px 5%;
-    background: #10351f;
+    background: #252e54;
 }
 
 .preview-notice p {
     flex: 1;
     min-width: 260px;
     margin: 0;
-    color: #cfe5d6;
+    color: #dbe1f7;
     font-size: 12.5px;
     line-height: 1.6;
 }
@@ -79,14 +79,14 @@ cat > "$OUTPUT/preview.css" <<'EOF'
 .preview-notice a {
     padding: 8px 15px;
     border-radius: 7px;
-    background: #2ea06a;
-    color: #04150c;
+    background: #e3e8ff;
+    color: #253b93;
     font-weight: 650;
     text-decoration: none;
     white-space: nowrap;
 }
 
-.preview-notice a:hover { background: #3dbb7e; }
+.preview-notice a:hover { background: #ffffff; }
 
 EOF
 
