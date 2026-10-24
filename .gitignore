@@ -1,0 +1,9 @@
+# Swift build output
+.build/
+*.dSYM/
+
+# Packaged artifacts (published as release assets)
+dist/
+
+# macOS
+.DS_Store

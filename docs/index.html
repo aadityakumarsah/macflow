@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FocusFlow</title>
+<meta name="description" content="Native macOS screen recorder and motion editor. Record your screen or a single Chrome tab, then turn clicks into animated zooms. Everything stays on your Mac.">
+<link rel="icon" href="icon.png" type="image/png">
+
+<meta property="og:title" content="FocusFlow — record your Mac, animate the clicks">
+<meta property="og:description" content="Native macOS screen recorder and motion editor. Records your screen or a single Chrome tab, then turns clicks into animated zooms. Everything stays on your Mac.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://aadityakumarsah.github.io/focusflow/logo.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<style>
+  :root {
+    color-scheme: light dark;
+
+    --bg: #ffffff;
+    --surface: #f7f8f5;
+    --surface-2: #edf1e9;
+    --text: #11150f;
+    --text-dim: #5d6358;
+    --line: rgba(17, 21, 15, 0.10);
+    --line-strong: rgba(17, 21, 15, 0.18);
+    --accent: #19784F;
+    --accent-text: #ffffff;
+    --code-bg: #10150f;
+    --code-text: #e8f0e4;
+    --code-dim: #8fa386;
+
+    --aura-1: #ec4899;
+    --aura-2: #fb923c;
+    --aura-3: #06b6d4;
+
+    --radius: 14px;
+    --maxw: 940px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0e0a;
+      --surface: #141811;
+      --surface-2: #1b2017;
+      --text: #f2f5ef;
+      --text-dim: #a3ab9b;
+      --line: rgba(242, 245, 239, 0.12);
+      --line-strong: rgba(242, 245, 239, 0.22);
+      --accent: #3fae79;
+      --accent-text: #06120c;
+      --code-bg: #050804;
+      --code-text: #e8f0e4;
+      --code-dim: #7d8f74;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0e0a;
+    --surface: #141811;
+    --surface-2: #1b2017;
+    --text: #f2f5ef;
+    --text-dim: #a3ab9b;
+    --line: rgba(242, 245, 239, 0.12);
+    --line-strong: rgba(242, 245, 239, 0.22);
+    --accent: #3fae79;
+    --accent-text: #06120c;
+    --code-bg: #050804;
+    --code-text: #e8f0e4;
+    --code-dim: #7d8f74;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+
+  a { color: inherit; }
+
+  /* ---------- hero ---------- */
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 72px 0 56px;
+    text-align: center;
+  }
+
+  .aura {
+    position: absolute;
+    top: -180px;
+    left: 50%;
+    width: 760px;
+    height: 460px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    background:
+      radial-gradient(42% 52% at 32% 42%, var(--aura-1) 0%, transparent 70%),
+      radial-gradient(40% 50% at 60% 30%, var(--aura-2) 0%, transparent 70%),
+      radial-gradient(46% 56% at 70% 62%, var(--aura-3) 0%, transparent 72%);
+    opacity: 0.22;
+    filter: blur(44px);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .aura { opacity: 0.30; }
+  }
+
+  :root[data-theme="dark"] .aura { opacity: 0.30; }
+
+  .hero .wrap { position: relative; }
+
+  .logo {
+    width: 104px;
+    height: 104px;
+    display: block;
+    margin: 0 auto 22px;
+    border-radius: 24px;
+  }
+
+  h1 {
+    margin: 0 0 10px;
+    font-size: clamp(2.3rem, 7vw, 3.4rem);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 680;
+  }
+
+  .tagline {
+    margin: 0 auto 8px;
+    max-width: 30ch;
+    font-size: clamp(1.05rem, 3.2vw, 1.3rem);
+    color: var(--text-dim);
+  }
+
+  .platform {
+    margin: 0 0 30px;
+    font-size: 0.88rem;
+    color: var(--text-dim);
+    letter-spacing: 0.01em;
+  }
+
+  .platform .dot { opacity: 0.45; margin: 0 7px; }
+
+  /* ---------- install command ---------- */
+
+  .cmd {
+    position: relative;
+    display: block;
+    margin: 0 auto 14px;
+    padding: 16px 54px 16px 18px;
+    background: var(--code-bg);
+    border-radius: var(--radius);
+    text-align: left;
+  }
+
+  .cmd code {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.79rem;
+    line-height: 1.75;
+    color: var(--code-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .cmd .prompt { color: var(--code-dim); user-select: none; }
+
+  .copy {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--code-text);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .copy:hover { background: rgba(255, 255, 255, 0.14); }
+  .copy:focus-visible { outline: 2px solid var(--aura-3); outline-offset: 2px; }
+  .copy svg { width: 15px; height: 15px; display: block; }
+  .copy .check { display: none; }
+  .copy.done .check { display: block; }
+  .copy.done .clip { display: none; }
+
+  .cmd-plain { padding-right: 18px; }
+
+  .cmd-note {
+    margin: 0 0 32px;
+    font-size: 0.83rem;
+    color: var(--text-dim);
+  }
+
+  /* ---------- buttons ---------- */
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 20px;
+    border: 1px solid var(--line-strong);
+    border-radius: 11px;
+    font-size: 0.94rem;
+    font-weight: 560;
+    text-decoration: none;
+    transition: transform 0.12s ease, background 0.15s ease;
+  }
+
+  .btn:hover { transform: translateY(-1px); }
+
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+  }
+
+  .btn-ghost { background: transparent; }
+  .btn-ghost:hover { background: var(--surface); }
+
+  /* ---------- sections ---------- */
+
+  section { padding: 54px 0; }
+
+  .section-line { border-top: 1px solid var(--line); }
+
+  h2 {
+    margin: 0 0 6px;
+    font-size: 1.45rem;
+    letter-spacing: -0.02em;
+    font-weight: 640;
+  }
+
+  .sub {
+    margin: 0 0 28px;
+    color: var(--text-dim);
+    font-size: 0.97rem;
+  }
+
+  /* ---------- features ---------- */
+
+  .grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
+  }
+
+  .card {
+    padding: 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .card h3 {
+    margin: 0 0 7px;
+    font-size: 1.02rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .card p {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--text-dim);
+  }
+
+  .card .mark {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin-bottom: 13px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    font-size: 0.95rem;
+  }
+
+  /* ---------- steps ---------- */
+
+  ol.steps {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+
+  ol.steps li {
+    position: relative;
+    counter-increment: step;
+    padding: 0 0 20px 42px;
+    font-size: 0.95rem;
+    color: var(--text-dim);
+  }
+
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  ol.steps strong { color: var(--text); font-weight: 580; }
+
+  ol.steps > li > strong:first-child { display: block; }
+
+  ol.steps code,
+  .prose code {
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: var(--surface-2);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    color: var(--text);
+  }
+
+  /* ---------- notice ---------- */
+
+  .notice {
+    padding: 20px 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+  }
+
+  .notice h3 {
+    margin: 0 0 7px;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .notice p {
+    margin: 0 0 10px;
+    font-size: 0.92rem;
+    color: var(--text-dim);
+  }
+
+  .notice p:last-child { margin-bottom: 0; }
+
+  .prose p {
+    font-size: 0.95rem;
+    color: var(--text-dim);
+  }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    padding: 34px 0 48px;
+    border-top: 1px solid var(--line);
+    font-size: 0.87rem;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  footer a { text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+  footer a:hover { color: var(--text); }
+  footer .links { margin-bottom: 10px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+
+  @media (max-width: 560px) {
+    body { font-size: 16px; }
+    .hero { padding: 52px 0 42px; }
+    section { padding: 42px 0; }
+    .cmd {
+      display: flex;
+      flex-direction: column-reverse;
+      padding: 14px;
+    }
+    .copy { position: static; align-self: flex-end; margin-top: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="aura" aria-hidden="true"></div>
+  <div class="wrap">
+    <img class="logo" src="logo.png" alt="FocusFlow icon: a cursor with a click ripple">
+    <h1>FocusFlow</h1>
+    <p class="tagline">Record your Mac. Let the clicks animate themselves.</p>
+    <p class="platform">
+      macOS 14+<span class="dot">·</span>Apple&nbsp;silicon<span class="dot">·</span>Free and open source
+    </p>
+
+    <div class="cmd">
+      <button class="copy" type="button" aria-label="Copy install command">
+        <svg class="clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="12" height="12" rx="2"></rect>
+          <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+        </svg>
+        <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 6 9 17l-5-5"></path>
+        </svg>
+      </button>
+      <code id="install-cmd"><span class="prompt">$ </span>curl -L -o ~/Downloads/focusflow.dmg https://github.com/aadityakumarsah/focusflow/releases/download/v0.2.0/FocusFlow-0.2.0.dmg && xattr -c ~/Downloads/focusflow.dmg && open ~/Downloads/focusflow.dmg</code>
+    </div>
+    <p class="cmd-note">Paste into Terminal. The disk image opens — drag FocusFlow to Applications.</p>
+
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/aadityakumarsah/focusflow/releases/download/v0.2.0/FocusFlow-0.2.0.dmg">Download&nbsp;.dmg</a>
+      <a class="btn btn-ghost" href="https://github.com/aadityakumarsah/focusflow">View source</a>
+    </div>
+  </div>
+</header>
+
+<section class="section-line">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="sub">A recorder and a motion editor in one window.</p>
+
+    <div class="grid">
+      <article class="card">
+        <div class="mark" aria-hidden="true">◉</div>
+        <h3>Record what you choose</h3>
+        <p>A window, a display, or a single Chrome tab. Drag out a region to keep one pane and leave the toolbar out of frame.</p>
+      </article>
+
+      <article class="card">
+        <div class="mark" aria-hidden="true">⤢</div>
+        <h3>Clicks become zooms</h3>
+        <p>Click activity is grouped into smooth, eased zooms automatically. Adjust the timing, or let the camera follow the cursor.</p>
+      </article>
+
+      <article class="card">
+        <div class="mark" aria-hidden="true">▣</div>
+        <h3>A real window frame</h3>
+        <p>An editable light or dark macOS frame with working traffic lights. It holds still while the content zooms underneath.</p>
+      </article>
+
+      <article class="card">
+        <div class="mark" aria-hidden="true">✦</div>
+        <h3>Cursor you can style</h3>
+        <p>Bounded smooth interpolation, outlined styles, movement tilt, ripple and press effects, and keyboard shortcut badges.</p>
+      </article>
+
+      <article class="card">
+        <div class="mark" aria-hidden="true">◍</div>
+        <h3>Blur and spotlight</h3>
+        <p>Blur regions with editable size and timing to hide anything private. Add timed spotlights and text callouts on top.</p>
+      </article>
+
+      <article class="card">
+        <div class="mark" aria-hidden="true">⌂</div>
+        <h3>Stays on your Mac</h3>
+        <p>Recordings are written to <code>~/Movies/FocusFlow</code>. No account, no upload, no external service.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section-line">
+  <div class="wrap">
+    <h2>First run</h2>
+    <p class="sub">FocusFlow is signed ad&#8209;hoc rather than with a paid Developer ID, so macOS asks once.</p>
+
+    <ol class="steps">
+      <li><strong>Move it to Applications</strong>Drag FocusFlow from the opened disk image into your Applications folder.</li>
+      <li><strong>Open it</strong>The install command above already clears the download quarantine flag, so it launches normally. If you downloaded the <code>.dmg</code> from the button instead, right&#8209;click the app and choose <strong>Open</strong> the first time.</li>
+      <li><strong>Allow Screen Recording</strong>macOS asks on your first recording. FocusFlow appears under System Settings → Privacy &amp; Security → Screen Recording.</li>
+      <li><strong>Camera, microphone, Input Monitoring</strong>Requested only if you turn those on. Input Monitoring is what draws the shortcut badges; ordinary typed text is never collected.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="section-line">
+  <div class="wrap">
+    <div class="notice">
+      <h3>Good to know</h3>
+      <p>Native microphone recording needs macOS 15+. Browser tab capture needs Chrome, and FocusFlow has to stay open while it records — the companion runs on <code>127.0.0.1</code> with a per&#8209;session token and writes every chunk locally.</p>
+      <p>Not yet implemented: captions, multi&#8209;clip assembly, motion blur, custom background images, and pause/resume for native capture. Chrome capture does support pause and resume.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section-line">
+  <div class="wrap prose">
+    <h2>Build it yourself</h2>
+    <p class="sub">Requires macOS 14+ and the Apple Command Line Tools.</p>
+    <div class="cmd cmd-plain">
+      <code><span class="prompt">$ </span>git clone https://github.com/aadityakumarsah/focusflow.git
+<span class="prompt">$ </span>cd focusflow
+<span class="prompt">$ </span>./build-app.sh && open dist/FocusFlow.app</code>
+    </div>
+    <p>Run <code>./check.sh</code> for the test suite, or <code>./scripts/make-dmg.sh</code> to package your own disk image.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/aadityakumarsah/focusflow">GitHub</a>
+      <a href="https://github.com/aadityakumarsah/focusflow/releases">Releases</a>
+      <a href="https://github.com/aadityakumarsah/focusflow/issues">Report an issue</a>
+    </div>
+    <p>FocusFlow v0.2.0 — built with SwiftUI, ScreenCaptureKit, AVFoundation and Core Image.</p>
+  </div>
+</footer>
+
+<script>
+  document.querySelector(".copy").addEventListener("click", function () {
+    var button = this;
+    var node = document.getElementById("install-cmd").cloneNode(true);
+    var prompt = node.querySelector(".prompt");
+    if (prompt) prompt.remove();
+
+    var write = navigator.clipboard && navigator.clipboard.writeText
+      ? navigator.clipboard.writeText(node.textContent.trim())
+      : Promise.reject();
+
+    write.catch(function () {
+      var area = document.createElement("textarea");
+      area.value = node.textContent.trim();
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(area);
+    }).then(function () {
+      button.classList.add("done");
+      setTimeout(function () { button.classList.remove("done"); }, 1800);
+    });
+  });
+</script>
+
+</body>
+</html>
