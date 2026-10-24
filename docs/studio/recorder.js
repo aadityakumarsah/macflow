@@ -66,11 +66,13 @@ async function choose() {
   finally { $('choose').disabled = false; $('change').disabled = !display; }
 }
 function openApp() {
-  status('Opening FocusFlow. In the connected studio that opens, choose a Chrome tab and record. If the app does not open, install FocusFlow 0.9 or choose “Record without app”.');
+  $('connection-help').hidden = false;
+  status('Opening FocusFlow. Continue in the connected studio that opens. If nothing happens, update the Mac app to version 0.9.0 or later.');
   location.href = 'focusflow://record-tab';
 }
 function recordLocally() {
   standalone = true;
+  $('connection-help').hidden = true;
   $('choose').innerHTML = 'Choose a Chrome tab <span>↗</span>';
   $('stop').textContent = '■ Stop recording';
   $('preview-notice')?.remove();

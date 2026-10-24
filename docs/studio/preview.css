@@ -31,4 +31,7 @@
 .preview-notice button.quiet { background: transparent; border-color: #9eaad8; color: #e3e8ff; }
 .preview-notice button.quiet:hover { background: #35406b; }
 .preview-notice a.quiet { color: #e3e8ff; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+#connection-help { flex-basis: 100%; max-width: 600px; padding: 12px 15px; border: 1px solid #cbd4fb; border-radius: 9px; background: #fff; color: #4d5879; font-size: 12px; line-height: 1.5; text-align: left; box-shadow: 0 8px 22px #2b3d8d13; }
+#connection-help strong { display: block; color: #2b3453; margin-bottom: 3px; }
+#connection-help a { color: #405de6; font-weight: 650; }
 

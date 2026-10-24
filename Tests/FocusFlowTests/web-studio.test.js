@@ -17,6 +17,7 @@ function studio(hash) {
     });
     return nodes.get(id);
   };
+  node('connection-help').hidden = true;
   const track = {
     stopped: false,
     getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, cursor: 'never' }),
@@ -76,8 +77,10 @@ function studio(hash) {
   assert.equal(direct.node('choose').disabled, false);
   await vm.runInContext('choose()', direct.context);
   assert.equal(direct.context.location.href, 'focusflow://record-tab');
+  assert.equal(direct.node('connection-help').hidden, false);
   assert.match(direct.node('status').textContent, /Opening FocusFlow/);
   direct.node('record-locally').click();
+  assert.equal(direct.node('connection-help').hidden, true);
   await vm.runInContext('choose()', direct.context);
   assert.equal(direct.node('record').disabled, false);
   await vm.runInContext('start()', direct.context);
