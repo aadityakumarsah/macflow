@@ -4,6 +4,7 @@
   "installCommand": null,
   "outputDirectory": "docs",
   "cleanUrls": true,
+  "trailingSlash": true,
   "headers": [
     {
       "source": "/(.*)\\.(png|icns|dmg)",
