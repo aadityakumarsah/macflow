@@ -67,7 +67,7 @@ async function choose() {
 }
 function openApp() {
   $('connection-help').hidden = false;
-  status('Opening FocusFlow. Continue in the connected studio that opens. If nothing happens, update the Mac app to version 0.9.0 or later.');
+  status('Opening FocusFlow. Continue in the local Studio tab that opens in Chrome. If nothing happens, update the Mac app to version 0.9.1 or later.');
   location.href = 'focusflow://record-tab';
 }
 function recordLocally() {

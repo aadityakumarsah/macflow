@@ -119,7 +119,7 @@ Videos without a separate pointer track show an explanation instead of editable 
 - Recording library and recoverable deletion through macOS Trash. Deleting the open recording also clears the editor.
 - Automatic local edit saving plus **Save Project** and **Open video or project**. Camera, cursor, trim, speed, appearance, effects, and recording metadata are preserved.
 
-Native camera start time is aligned to the screen video. Chrome camera framing is carried into the editor. Open the hosted tab studio from FocusFlow, or click **Open FocusFlow** on the site with version 0.9 or later installed, to connect the capture. Stopping the recording saves it locally and brings it into the editor with click zooms generated from the pointer track when available. Chrome may still bake its cursor into the video; in that case, the original pixels cannot be removed or independently resized. Direct browser-only recording offers an MP4 download.
+Native camera start time is aligned to the screen video. Chrome camera framing is carried into the editor. Open the hosted tab studio from FocusFlow, or click **Open FocusFlow** on the site with version 0.9.1 or later installed, to open the bundled local studio in Chrome and connect the capture without granting the website local-network access. Stopping the recording saves it locally and brings it into the editor with click zooms generated from the pointer track when available. Chrome may still bake its cursor into the video; in that case, the original pixels cannot be removed or independently resized. Direct browser-only recording offers an MP4 download.
 
 ## Files
 

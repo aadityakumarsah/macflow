@@ -39,7 +39,10 @@ struct RootView: View {
             guard url.scheme == "focusflow", url.host == "record-tab", url.path.isEmpty else { return }
             model.showRecorder = false
             Task {
-                do { try await model.browserRecorder.launch(hosted: true) }
+                // A public web page posting video to loopback triggers Chrome's
+                // local-network permission. Use the identical bundled studio
+                // on the loopback origin for this web-to-app handoff instead.
+                do { try await model.browserRecorder.launch(hosted: false) }
                 catch { model.message = "Could not open the tab studio: \(error.localizedDescription)" }
             }
         }

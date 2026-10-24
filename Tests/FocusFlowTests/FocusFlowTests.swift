@@ -634,6 +634,15 @@ final class FocusFlowTests {
         XCTAssertTrue((webURL.fragment ?? "").contains("port="))
         XCTAssertTrue((webURL.fragment ?? "").hasPrefix(token))
         XCTAssertNil(webURL.query)
+        // The public site's URL handoff must force the bundled loopback
+        // studio even when the user normally prefers the hosted version.
+        let previousPreference = BrowserRecorderBridge.usesWebStudio
+        BrowserRecorderBridge.usesWebStudio = true
+        defer { BrowserRecorderBridge.usesWebStudio = previousPreference }
+        try await bridge.launch(openInBrowser: false, hosted: false)
+        let handoffURL = try XCTUnwrap(bridge.sessionURL)
+        XCTAssertTrue(handoffURL.absoluteString.hasPrefix("http://127.0.0.1:"))
+        XCTAssertTrue(!(handoffURL.fragment ?? "").contains("port="))
     }
 
     /// Keys go to the Keychain, so the round trip and the shape checks that

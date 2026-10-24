@@ -44,9 +44,9 @@ final class BrowserRecorderBridge: ObservableObject {
             ? URL(string: "\(BrowserRecorderBridge.webStudioURL)#\(token)&port=\(port)")
             : URL(string: "http://127.0.0.1:\(port)/#\(token)")
     }
-    func launch(openInBrowser: Bool = true, hosted: Bool = false) async throws {
+    func launch(openInBrowser: Bool = true, hosted: Bool? = nil) async throws {
         if didFinish { stop() }
-        sessionHosted = hosted || BrowserRecorderBridge.usesWebStudio
+        sessionHosted = hosted ?? BrowserRecorderBridge.usesWebStudio
         guard !isActive else { if openInBrowser { openBrowser() }; return }
         token = UUID().uuidString; didFinish = false; isFinalizing = false; captureID = nil
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-\(UUID().uuidString)", isDirectory: true)
