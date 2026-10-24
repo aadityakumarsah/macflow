@@ -10,12 +10,13 @@ const bridgePort = new URLSearchParams(fragment.slice(fragment.indexOf('&') + 1)
 // A hosted page opened directly has no bridge session. It can still record
 // locally; only an app-launched page sends its media to FocusFlow.
 const connected = Boolean(token) && (/^\d+$/.test(bridgePort || '') || location.hostname === '127.0.0.1');
+let standalone = false;
 const api = bridgePort && /^\d+$/.test(bridgePort) ? `http://127.0.0.1:${bridgePort}` : '';
 history.replaceState(null, '', location.pathname);
 let display, camera, microphone, audioContext, screenRecorder, cameraRecorder;
 let state = 'setup', screenChunks = [], cameraChunks = [], uploads = Promise.resolve(), uploadError;
 let started = 0, pausedAt = 0, pausedDuration = 0, timer, heartbeat, totalBytes = 0, cameraDrag, captureID;
-let screenBlob, cameraBlob, cameraPresentation, sourceName = 'Chrome tab';
+let screenBlob, cameraBlob, cameraPresentation, sourceName = 'Chrome tab', cursorIncluded = true;
 const status = text => { $('status').textContent = text; };
 function release(stream) { stream?.getTracks().forEach(track => track.stop()); }
 function devices() {
@@ -36,11 +37,16 @@ function mp4Type(withAudio) {
 }
 async function choose() {
   if (state !== 'setup') return;
+  if (!connected && !standalone) { openApp(); return; }
   $('choose').disabled = $('change').disabled = true;
   try {
     mp4Type(true);
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: {displaySurface:'browser',frameRate:{ideal:60,max:60}}, audio:$('audio').checked, selfBrowserSurface:'exclude',surfaceSwitching:'exclude',monitorTypeSurfaces:'exclude',systemAudio:'exclude' });
-    const track = stream.getVideoTracks()[0], settings = track.getSettings();
+    const track = stream.getVideoTracks()[0];
+    // Ask Chrome to omit the baked-in cursor so the app can draw a larger, editable one.
+    try { await track.applyConstraints({cursor:'never'}); } catch {}
+    const settings = track.getSettings();
+    cursorIncluded = settings.cursor !== 'never';
     if (settings.displaySurface !== 'browser') {
       release(stream);
       throw new Error('Select a tab in the “Chrome Tab” section. Window and screen sharing are not recorded in tab mode.');
@@ -58,6 +64,17 @@ async function choose() {
     });
   } catch (error) { status(error.name === 'NotAllowedError' ? 'Selection cancelled. Choose a tab when you’re ready.' : error.message); }
   finally { $('choose').disabled = false; $('change').disabled = !display; }
+}
+function openApp() {
+  status('Opening FocusFlow. In the connected studio that opens, choose a Chrome tab and record. If the app does not open, install FocusFlow 0.9 or choose “Record without app”.');
+  location.href = 'focusflow://record-tab';
+}
+function recordLocally() {
+  standalone = true;
+  $('choose').innerHTML = 'Choose a Chrome tab <span>↗</span>';
+  $('stop').textContent = '■ Stop recording';
+  $('preview-notice')?.remove();
+  status('Browser-only mode. Choose a Chrome tab, then download the MP4 after recording.');
 }
 async function configureCamera() {
   if (state !== 'setup') return;
@@ -177,7 +194,7 @@ async function save() {
   }
   try {
     if (uploadError) throw uploadError;
-    await post('/finish',JSON.stringify({sourceName,cameraPresentation})); state = 'done'; $('badge').textContent = 'SAVED';
+    await post('/finish',JSON.stringify({sourceName,cameraPresentation,cursorIncluded})); state = 'done'; $('badge').textContent = 'SAVED';
     status('Saved on your Mac. Switching to FocusFlow, where it is open and ready to edit.'); $('stop').hidden = true;
     // The app raises itself on handoff; this is the browser's half of it.
     document.body.classList.add('handed-off');
@@ -193,6 +210,8 @@ function download(blob, name) {
   document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href),60000);
 }
 $('choose').onclick = $('change').onclick = choose; $('record').onclick = start; $('pause').onclick = pause; $('stop').onclick = stop; $('retry').onclick = save;
+$('open-app')?.addEventListener('click', openApp);
+$('record-locally')?.addEventListener('click', recordLocally);
 $('cam').onchange = $('cameras').onchange = configureCamera;
 $('round').onchange = () => { $('camera').style.borderRadius = $('round').checked ? '50%' : '14px'; $('camera').style.aspectRatio = $('round').checked ? '1' : '1.45'; };
 $('mirror').onchange = () => $('camera').style.transform = $('mirror').checked ? 'scaleX(-1)' : 'none';
@@ -209,6 +228,6 @@ $('camera').onpointermove = event => {
 $('camera').onpointerup = $('camera').onpointercancel = () => { cameraDrag = null; };
 window.addEventListener('beforeunload', event => { if (['starting','recording','paused','saving','recovery'].includes(state)) { event.preventDefault(); event.returnValue = ''; } });
 if (!navigator.mediaDevices?.getDisplayMedia || !window.MediaRecorder) { $('choose').disabled = true; status('Open this page in a current version of Chrome.'); }
-else { devices(); if (!connected) { $('stop').textContent = '■ Stop recording'; status('Choose a Chrome tab to record locally. To send it straight to FocusFlow, open this studio from the Mac app.'); } }
+else { devices(); if (!connected) { $('choose').innerHTML = 'Open FocusFlow to record <span>↗</span>'; status('Open FocusFlow to record and edit automatically, or choose “Record without app” above for an MP4 download.'); } }
 
 window.addEventListener('pagehide', () => { if (connected && captureID && state !== 'done') { fetch(api + '/release',{method:'POST',headers:{'X-FocusFlow-Token':token,'X-FocusFlow-Capture':captureID},body:'',keepalive:true}).catch(() => {}); } });

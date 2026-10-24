@@ -18,15 +18,17 @@
 
 .preview-notice strong { color: #fff; font-weight: 650; }
 
-.preview-notice a {
+.preview-notice button {
     padding: 8px 15px;
     border-radius: 7px;
     background: #e3e8ff;
     color: #253b93;
     font-weight: 650;
-    text-decoration: none;
     white-space: nowrap;
 }
 
-.preview-notice a:hover { background: #ffffff; }
+.preview-notice button:hover { background: #ffffff; }
+.preview-notice button.quiet { background: transparent; border-color: #9eaad8; color: #e3e8ff; }
+.preview-notice button.quiet:hover { background: #35406b; }
+.preview-notice a.quiet { color: #e3e8ff; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 

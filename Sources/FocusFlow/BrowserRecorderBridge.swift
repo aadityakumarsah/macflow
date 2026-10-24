@@ -28,6 +28,7 @@ final class BrowserRecorderBridge: ObservableObject {
     private var token = UUID().uuidString
     private var directory: URL?
     private var port: UInt16 = 0
+    private var sessionHosted = false
     private var didFinish = false
     private var isFinalizing = false
     private var captureID: String?
@@ -39,12 +40,13 @@ final class BrowserRecorderBridge: ObservableObject {
     private var studioURL: URL? {
         // The hosted page needs the port too, since it cannot infer it from
         // its own origin the way the locally served copy can.
-        BrowserRecorderBridge.usesWebStudio
+        sessionHosted
             ? URL(string: "\(BrowserRecorderBridge.webStudioURL)#\(token)&port=\(port)")
             : URL(string: "http://127.0.0.1:\(port)/#\(token)")
     }
-    func launch(openInBrowser: Bool = true) async throws {
+    func launch(openInBrowser: Bool = true, hosted: Bool = false) async throws {
         if didFinish { stop() }
+        sessionHosted = hosted || BrowserRecorderBridge.usesWebStudio
         guard !isActive else { if openInBrowser { openBrowser() }; return }
         token = UUID().uuidString; didFinish = false; isFinalizing = false; captureID = nil
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-\(UUID().uuidString)", isDirectory: true)
@@ -216,7 +218,8 @@ final class BrowserRecorderBridge: ObservableObject {
                     presentation = value
                 }
                 pointer.stop()
-                let metadata = RecordingMetadata(clicks: pointer.clicks, pointerSamples: pointer.samples, keystrokes: [], sourceWidth: size.width, sourceHeight: size.height, sourceName: String((info["sourceName"] as? String ?? "Chrome tab").prefix(200)), cameraFileName: cameraName, cameraPresentation: presentation)
+                var metadata = RecordingMetadata(clicks: pointer.clicks, pointerSamples: pointer.samples, keystrokes: [], sourceWidth: size.width, sourceHeight: size.height, sourceName: String((info["sourceName"] as? String ?? "Chrome tab").prefix(200)), cameraFileName: cameraName, cameraPresentation: presentation)
+                metadata.embeddedCursor = info["cursorIncluded"] as? Bool
                 didFinish = true; status = "Saved to your library. Ready to edit."
                 respond(200, "text/plain", Data("Saved to FocusFlow".utf8)); onFinish?(video, metadata)
             } else { respond(404, "text/plain", Data()) }

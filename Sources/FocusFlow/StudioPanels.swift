@@ -53,15 +53,35 @@ struct MotionPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             InspectorSection(title: "Add an effect") {
-                Text("Direct attention to the details that matter.").font(.caption).foregroundStyle(.secondary)
-                ForEach(SegmentKind.availableCases) { kind in
-                    Button { model.addSegment(kind) } label: {
-                        HStack { Label(kind.title, systemImage: kind.symbol); Spacer(); Image(systemName: "plus") }
-                            .padding(12).background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain)
-                }
+                Text("Choose an effect, then place and resize it on the timeline.").font(.caption).foregroundStyle(.secondary)
+                effectGroup("MOVEMENT", kinds: [.zoom, .pan])
+                effectGroup("ATTENTION", kinds: [.spotlight, .outline, .callout])
+                effectGroup("PRIVACY", kinds: [.blur, .pixelate])
             }
             MotionAppearanceInspector()
+        }
+    }
+
+    private func effectGroup(_ title: String, kinds: [SegmentKind]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.system(size: 9, weight: .semibold)).tracking(1.1).foregroundStyle(.secondary)
+                .padding(.top, 8)
+            ForEach(kinds) { kind in
+                Button { model.addSegment(kind) } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: kind.symbol).font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppTheme.green).frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(kind.title).font(.system(size: 12, weight: .semibold))
+                            Text(kind.detail).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "plus").font(.caption).foregroundStyle(AppTheme.green)
+                    }
+                    .padding(11).background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 9))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.line))
+                }.buttonStyle(.plain).accessibilityLabel("Add \(kind.title) effect")
+            }
         }
     }
 }

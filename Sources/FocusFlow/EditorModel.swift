@@ -86,6 +86,7 @@ final class EditorModel: ObservableObject {
     private var previewTask: Task<Void, Never>?
     private var openTask: Task<Void, Never>?
     private var metadata = RecordingMetadata.empty
+    var recordingMetadata: RecordingMetadata { metadata }
 
     init(restoreLatest: Bool = true) {
         Task {
@@ -176,7 +177,7 @@ final class EditorModel: ObservableObject {
         videoURL = url; self.metadata = project?.metadata ?? metadata
         playhead = 0; duration = 0; segments = []; selectedSegmentID = nil; inspectorTab = "Canvas"
         background = .aurora; ratio = .source; padding = 7; cornerRadius = 18; shadow = 30
-        cursorSize = 2; clickEffects = true; showCursor = true; smoothCursor = true; cursorShadow = true
+        cursorSize = 2; clickEffects = true; showCursor = self.metadata.embeddedCursor != true; smoothCursor = true; cursorShadow = true
         showKeystrokes = false; showCamera = true; cameraSize = 0.24; cameraX = 0.82; cameraY = 0.78
         cameraCornerRadius = 14; cameraShape = .roundedRectangle; cameraMirrored = false
         trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false
@@ -247,7 +248,7 @@ final class EditorModel: ObservableObject {
         lastHistory = .distantPast
         let start = min(playhead, max(0, duration - 0.2))
         let crop = frameAppearance.crop.bounded
-        let segment = EditSegment(kind: kind, start: start, duration: min(kind == .pan ? 4 : 2.5, duration - start), intensity: kind == .zoom || kind == .pan ? 1.65 : kind == .callout ? 1 : 2, x: crop.x + crop.width * 0.5, y: crop.y + crop.height * 0.5, transition: 0.7, curve: .smooth, endX: crop.x + crop.width * 0.75, endY: crop.y + crop.height * 0.5, text: kind == .callout ? "Look here" : nil)
+        let segment = EditSegment(kind: kind, start: start, duration: min(kind == .pan ? 4 : 2.5, duration - start), intensity: kind == .zoom || kind == .pan ? 1.65 : kind == .callout ? 1 : 2, x: crop.x + crop.width * 0.5, y: crop.y + crop.height * 0.5, width: kind == .outline ? 0.35 : nil, height: kind == .outline ? 0.25 : nil, transition: 0.7, curve: .smooth, endX: crop.x + crop.width * 0.75, endY: crop.y + crop.height * 0.5, text: kind == .callout ? "Look here" : nil)
         segments.append(segment); selectedSegmentID = segment.id; inspectorTab = "Segment"
     }
     func deleteSelected() {

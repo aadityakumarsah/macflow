@@ -236,6 +236,32 @@ final class FocusFlowTests {
         XCTAssertEqual(restored.opacity ?? 1, 1)
     }
 
+    func testPixelateAndOutlineRenderInsideSelectedRegion() throws {
+        let canvas = CGRect(x: 0, y: 0, width: 640, height: 360)
+        var source = CIImage(color: CIColor(red: 0.12, green: 0.16, blue: 0.24)).cropped(to: canvas)
+        for x in stride(from: 0, to: 640, by: 12) {
+            let stripe = CIImage(color: CIColor(red: 0.9, green: 0.75, blue: 0.2))
+                .cropped(to: CGRect(x: x, y: 0, width: 6, height: 360))
+            source = stripe.composited(over: source)
+        }
+        let compositor = FocusFlowCompositor(), context = CIContext()
+        var settings = ExportSettings(background: .none, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 2, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.frame = FrameAppearance(chrome: .none)
+        func render() throws -> [UInt8] {
+            pixels(try XCTUnwrap(context.createCGImage(compositor.renderFrame(source: source, time: 1, settings: settings), from: canvas)))
+        }
+        let clean = try render()
+        settings.segments = [EditSegment(kind: .pixelate, start: 0, duration: 2, intensity: 3, x: 0.5, y: 0.5)]
+        let pixelated = try render()
+        XCTAssertTrue(pixelated != clean)
+        settings.segments = [EditSegment(kind: .outline, start: 0, duration: 2, intensity: 2, x: 0.5, y: 0.5)]
+        let outlined = try render()
+        XCTAssertTrue(outlined != clean)
+        XCTAssertTrue(outlined != pixelated)
+        let encoded = try JSONEncoder().encode(settings.segments)
+        XCTAssertEqual(try JSONDecoder().decode([EditSegment].self, from: encoded), settings.segments)
+    }
+
     @MainActor func testCursorResetIsUndoable() {
         let model = EditorModel(restoreLatest: false)
         XCTAssertEqual(model.cursorSize, 2)
@@ -602,9 +628,7 @@ final class FocusFlowTests {
         XCTAssertTrue(localURL.absoluteString.hasPrefix("http://127.0.0.1:"))
         XCTAssertTrue(!(localURL.fragment ?? "").contains("port="))
 
-        let previous = BrowserRecorderBridge.usesWebStudio
-        BrowserRecorderBridge.usesWebStudio = true
-        defer { BrowserRecorderBridge.usesWebStudio = previous }
+        try await bridge.launch(openInBrowser: false, hosted: true)
         let webURL = try XCTUnwrap(bridge.sessionURL)
         XCTAssertTrue(webURL.absoluteString.hasPrefix(BrowserRecorderBridge.webStudioURL))
         XCTAssertTrue((webURL.fragment ?? "").contains("port="))

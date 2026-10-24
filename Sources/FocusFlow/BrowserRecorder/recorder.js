@@ -14,7 +14,7 @@ history.replaceState(null, '', location.pathname);
 let display, camera, microphone, audioContext, screenRecorder, cameraRecorder;
 let state = 'setup', screenChunks = [], cameraChunks = [], uploads = Promise.resolve(), uploadError;
 let started = 0, pausedAt = 0, pausedDuration = 0, timer, heartbeat, totalBytes = 0, cameraDrag, captureID;
-let screenBlob, cameraBlob, cameraPresentation, sourceName = 'Chrome tab';
+let screenBlob, cameraBlob, cameraPresentation, sourceName = 'Chrome tab', cursorIncluded = true;
 const status = text => { $('status').textContent = text; };
 function release(stream) { stream?.getTracks().forEach(track => track.stop()); }
 function devices() {
@@ -40,7 +40,11 @@ async function choose() {
     if (!token) throw new Error('Open Tab studio from the FocusFlow app to connect this recording.');
     mp4Type(true);
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: {displaySurface:'browser',frameRate:{ideal:60,max:60}}, audio:$('audio').checked, selfBrowserSurface:'exclude',surfaceSwitching:'exclude',monitorTypeSurfaces:'exclude',systemAudio:'exclude' });
-    const track = stream.getVideoTracks()[0], settings = track.getSettings();
+    const track = stream.getVideoTracks()[0];
+    // Ask Chrome to omit the baked-in cursor so the app can draw a larger, editable one.
+    try { await track.applyConstraints({cursor:'never'}); } catch {}
+    const settings = track.getSettings();
+    cursorIncluded = settings.cursor !== 'never';
     if (settings.displaySurface !== 'browser') {
       release(stream);
       throw new Error('Select a tab in the “Chrome Tab” section. Window and screen sharing are not recorded in tab mode.');
@@ -169,7 +173,7 @@ async function save() {
   $('retry').hidden = true;
   try {
     if (uploadError) throw uploadError;
-    await post('/finish',JSON.stringify({sourceName,cameraPresentation})); state = 'done'; $('badge').textContent = 'SAVED';
+    await post('/finish',JSON.stringify({sourceName,cameraPresentation,cursorIncluded})); state = 'done'; $('badge').textContent = 'SAVED';
     status('Saved on your Mac. Switching to FocusFlow, where it is open and ready to edit.'); $('stop').hidden = true;
     // The app raises itself on handoff; this is the browser's half of it.
     document.body.classList.add('handed-off');

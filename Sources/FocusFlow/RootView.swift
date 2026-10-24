@@ -35,6 +35,14 @@ struct RootView: View {
         .sheet(isPresented: $model.showCropEditor) { CropEditor() }
         .sheet(isPresented: $model.showRecorder) { RecorderView() }
         .sheet(isPresented: $model.showLibrary) { RecordingLibraryView(library: model.library) }
+        .onOpenURL { url in
+            guard url.scheme == "focusflow", url.host == "record-tab", url.path.isEmpty else { return }
+            model.showRecorder = false
+            Task {
+                do { try await model.browserRecorder.launch(hosted: true) }
+                catch { model.message = "Could not open the tab studio: \(error.localizedDescription)" }
+            }
+        }
         .alert("FocusFlow", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
             Button("OK") { model.message = nil }
         } message: { Text(model.message ?? "") }
@@ -234,6 +242,7 @@ struct RailButton: View {
 
 struct PreviewArea: View {
     @EnvironmentObject private var model: EditorModel
+    @State private var showCustomRatio = false
     var body: some View {
         GeometryReader { proxy in
             let canvas = canvasSize(in: proxy.size)
@@ -258,8 +267,33 @@ struct PreviewArea: View {
                         Label("PREVIEW", systemImage: "viewfinder").font(.system(size: 10, weight: .semibold)).tracking(1)
                     }
                     Spacer()
-                    Text(model.ratio.rawValue).font(.caption)
-                    if model.videoURL != nil { Text("\(Int(model.sourceSize.width)) × \(Int(model.sourceSize.height))").font(.caption.monospacedDigit()) }
+                    if model.theatreMode {
+                        Text(model.ratio.rawValue).font(.caption)
+                    } else {
+                        Button {
+                            model.ratio = .custom
+                            showCustomRatio = true
+                        } label: {
+                            Label("Custom ratio", systemImage: "aspectratio")
+                                .font(.system(size: 11, weight: .medium))
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(AppTheme.green)
+                        .help("Set a custom width and height for your video")
+                        .popover(isPresented: $showCustomRatio, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                AspectRatioInspector()
+                                HStack {
+                                    Spacer()
+                                    Button("Done") { showCustomRatio = false }
+                                        .buttonStyle(.borderedProminent)
+                                }
+                            }.padding(20).frame(width: 320).tint(AppTheme.green)
+                        }
+                    }
+                    Text("\(Int(model.canvasSize.width)) × \(Int(model.canvasSize.height))")
+                        .font(.caption.monospacedDigit()).help("Output canvas size")
                 }
                 .foregroundStyle(model.theatreMode ? .white.opacity(0.65) : .secondary)
                 .padding(.horizontal, 30).padding(.top, 18)
@@ -426,44 +460,72 @@ struct CanvasInspector: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            AspectRatioInspector()
+            Divider()
             BackgroundInspector()
-            InspectorSection(title: "FORMAT") {
-                Picker("Ratio", selection: $model.ratio) { ForEach(CanvasRatio.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden()
-
-                if model.ratio == .custom {
-                    HStack(spacing: 6) {
-                        RatioField(value: $model.customRatio.width)
-                        Text(":").foregroundStyle(.secondary)
-                        RatioField(value: $model.customRatio.height)
-                        Spacer()
-                        Button {
-                            // Swapping is the common case — the same shape the
-                            // other way up for a vertical cut.
-                            model.customRatio = CGSize(width: model.customRatio.height, height: model.customRatio.width)
-                        } label: { Image(systemName: "arrow.left.arrow.right") }
-                            .buttonStyle(.borderless)
-                            .help("Swap width and height")
-                    }
-                    HStack(spacing: 6) {
-                        ForEach(CanvasPreset.all) { preset in
-                            Button(preset.label) { model.customRatio = preset.size }
-                                .buttonStyle(.borderless).font(.caption2)
-                        }
-                    }
-                    let size = model.canvasSize
-                    Text("\(Int(size.width)) × \(Int(size.height))")
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Toggle("Re-fit when the ratio changes", isOn: $model.autoAdjustCanvas)
-                    .font(.caption)
-                    .help("Pulls in the padding and moves the camera into the free area after switching aspect.")
-            }
             WindowAppearanceInspector()
             InspectorSlider(title: "Padding", value: $model.padding, range: 0...18, suffix: "%")
             InspectorSlider(title: "Corners", value: $model.cornerRadius, range: 0...40, suffix: "")
             InspectorSlider(title: "Shadow", value: $model.shadow, range: 0...50, suffix: "")
 
         }.padding(16)
+    }
+}
+
+/// Shared by the always-visible preview shortcut and the top of the Canvas panel.
+struct AspectRatioInspector: View {
+    @EnvironmentObject private var model: EditorModel
+    var body: some View {
+        InspectorSection(title: "Aspect ratio") {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(CanvasRatio.allCases) { ratio in
+                    Button { model.ratio = ratio } label: {
+                        Text(ratio.rawValue).font(.system(size: 11, weight: .medium))
+                            .frame(maxWidth: .infinity).frame(height: 32)
+                            .foregroundStyle(model.ratio == ratio ? AppTheme.green : .primary)
+                            .background(model.ratio == ratio ? AppTheme.green.opacity(0.1) : AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.ratio == ratio ? AppTheme.green.opacity(0.4) : .clear))
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(ratio == .custom ? "Custom aspect ratio" : "Aspect ratio \(ratio.rawValue)")
+                        .accessibilityAddTraits(model.ratio == ratio ? .isSelected : [])
+                }
+            }
+            if model.ratio == .custom {
+                HStack(alignment: .bottom, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Width").font(.caption2).foregroundStyle(.secondary)
+                        RatioField(value: $model.customRatio.width).accessibilityLabel("Aspect ratio width")
+                    }
+                    Text(":").foregroundStyle(.secondary).padding(.bottom, 4)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Height").font(.caption2).foregroundStyle(.secondary)
+                        RatioField(value: $model.customRatio.height).accessibilityLabel("Aspect ratio height")
+                    }
+                    Spacer()
+                    Button {
+                        model.customRatio = CGSize(width: model.customRatio.height, height: model.customRatio.width)
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right").frame(width: 28, height: 26)
+                    }.buttonStyle(.borderless).help("Swap width and height")
+                        .accessibilityLabel("Swap aspect ratio width and height")
+                }.padding(.top, 5)
+                Text("Use proportions, like 16 : 10 or 2.39 : 1.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(CanvasPreset.all) { preset in
+                        Button(preset.label) { model.customRatio = preset.size }
+                            .buttonStyle(.borderless).font(.caption2)
+                            .frame(maxWidth: .infinity).padding(.vertical, 5)
+                            .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                }
+            }
+            Text("Output: \(Int(model.canvasSize.width)) × \(Int(model.canvasSize.height))")
+                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            Toggle("Re-fit when the ratio changes", isOn: $model.autoAdjustCanvas)
+                .font(.caption).toggleStyle(.switch).controlSize(.small)
+                .help("Pulls in the padding and moves the camera into the free area after switching aspect.")
+        }
     }
 }
 
@@ -481,11 +543,11 @@ struct SegmentInspector: View {
                     InspectorSlider(title: "Focus Y", value: Binding(get: { segment.y }, set: { v in model.updateSelected { $0.y = v } }), range: 0...1, suffix: "")
                 }
                 SegmentMotionInspector(segment: segment)
-                if segment.kind == .blur || segment.kind == .spotlight {
+                if [.blur, .spotlight, .pixelate, .outline].contains(segment.kind) {
                     InspectorSlider(title: "Region width", value: Binding(get: { segment.regionWidth }, set: { v in model.updateSelected { $0.width = v } }), range: 0.02...1, suffix: "")
                     InspectorSlider(title: "Region height", value: Binding(get: { segment.regionHeight }, set: { v in model.updateSelected { $0.height = v } }), range: 0.02...1, suffix: "")
                     if segment.kind == .blur { Button("Blur full frame") { model.updateSelected { $0.width = 1; $0.height = 1; $0.x = 0.5; $0.y = 0.5 } }
-                    Text("Blur is applied in source coordinates before zoom. Scrub inside this segment to inspect the result.").font(.caption2).foregroundStyle(.secondary) }
+                    Text("This region follows the recording before zoom. Scrub inside the segment to inspect it.").font(.caption2).foregroundStyle(.secondary) }
                 }
                 HStack {
                     Button("Duplicate") { model.duplicateSelected() }

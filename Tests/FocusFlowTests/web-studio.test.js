@@ -13,13 +13,14 @@ function studio(hash) {
   const node = id => {
     if (!nodes.has(id)) nodes.set(id, {
       checked: false, disabled: false, hidden: false, value: '', textContent: '',
-      style: {}, play: async () => {}, replaceChildren() {}, add() {},
+      style: {}, play: async () => {}, replaceChildren() {}, add() {}, remove() {}, addEventListener(name, callback) { this[name] = callback; },
     });
     return nodes.get(id);
   };
   const track = {
     stopped: false,
-    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720 }),
+    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, cursor: 'never' }),
+    applyConstraints: async () => {},
     stop() { this.stopped = true; },
     addEventListener() {},
   };
@@ -74,6 +75,10 @@ function studio(hash) {
   const direct = studio('');
   assert.equal(direct.node('choose').disabled, false);
   await vm.runInContext('choose()', direct.context);
+  assert.equal(direct.context.location.href, 'focusflow://record-tab');
+  assert.match(direct.node('status').textContent, /Opening FocusFlow/);
+  direct.node('record-locally').click();
+  await vm.runInContext('choose()', direct.context);
   assert.equal(direct.node('record').disabled, false);
   await vm.runInContext('start()', direct.context);
   await vm.runInContext('stop()', direct.context);
@@ -94,7 +99,8 @@ function studio(hash) {
     'http://127.0.0.1:4321/finish',
   ]);
   assert.equal(connected.node('badge').textContent, 'SAVED');
+  assert.equal(JSON.parse(connected.requests.at(-1).options.body).cursorIncluded, false);
   assert.match(connected.node('status').textContent, /Switching to FocusFlow/);
   assert.deepEqual(connected.classes, ['handed-off']);
-  console.log('PASS: direct tab recording downloads locally; app-connected recording finishes through the bridge.');
+  console.log('PASS: direct studio opens FocusFlow; browser-only mode downloads locally; connected recording hands off cursor metadata.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

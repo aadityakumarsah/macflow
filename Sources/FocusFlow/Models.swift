@@ -2,12 +2,25 @@ import Foundation
 import CoreGraphics
 
 enum SegmentKind: String, Codable, CaseIterable, Identifiable {
-    case zoom, speed, blur, camera, pan, spotlight, callout
+    case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline
     var id: String { rawValue }
-    static let availableCases: [SegmentKind] = [.zoom, .pan, .blur, .spotlight, .callout]
+    static let availableCases: [SegmentKind] = [.zoom, .pan, .spotlight, .outline, .callout, .blur, .pixelate]
     var title: String { rawValue.capitalized }
     var symbol: String {
-        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble" }
+        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled" }
+    }
+    var detail: String {
+        switch self {
+        case .zoom: "Move closer to a detail"
+        case .pan: "Glide across the frame"
+        case .spotlight: "Dim everything around a detail"
+        case .outline: "Draw an accent frame"
+        case .callout: "Add a short text label"
+        case .blur: "Soften private information"
+        case .pixelate: "Hide details in crisp blocks"
+        case .speed: "Change playback pace"
+        case .camera: "Show the camera track"
+        }
     }
 }
 
@@ -248,6 +261,7 @@ struct RecordingMetadata: Codable {
     var cameraPresentation: CameraPresentation? = nil
     var sourcePointWidth: Double? = nil
     var sourcePointHeight: Double? = nil
+    var embeddedCursor: Bool? = nil
 
     static let empty = RecordingMetadata(clicks: [], pointerSamples: [], keystrokes: [], sourceWidth: 0, sourceHeight: 0, sourceName: "", cameraFileName: nil)
 
@@ -264,7 +278,7 @@ struct RecordingMetadata: Codable {
         self.sourcePointWidth = sourcePointWidth; self.sourcePointHeight = sourcePointHeight
     }
 
-    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight }
+    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight, embeddedCursor }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         clicks = try values.decodeIfPresent([RecordedClick].self, forKey: .clicks) ?? []
@@ -278,5 +292,6 @@ struct RecordingMetadata: Codable {
         cameraPresentation = try values.decodeIfPresent(CameraPresentation.self, forKey: .cameraPresentation)
         sourcePointWidth = try values.decodeIfPresent(Double.self, forKey: .sourcePointWidth)
         sourcePointHeight = try values.decodeIfPresent(Double.self, forKey: .sourcePointHeight)
+        embeddedCursor = try values.decodeIfPresent(Bool.self, forKey: .embeddedCursor)
     }
 }

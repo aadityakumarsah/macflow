@@ -203,6 +203,18 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let hidden = source.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(8, blur.intensity * 16)]).cropped(to: region)
             source = hidden.composited(over: source)
         }
+        for pixelate in settings.segments where pixelate.kind == .pixelate {
+            let strength = MotionEngine.envelope(pixelate, time: time)
+            guard strength > 0 else { continue }
+            let w = source.extent.width * pixelate.regionWidth, h = source.extent.height * pixelate.regionHeight
+            let region = CGRect(x: source.extent.width * pixelate.x - w / 2, y: source.extent.height * (1 - pixelate.y) - h / 2, width: w, height: h).intersection(source.extent)
+            guard !region.isEmpty else { continue }
+            let blocks = source.clampedToExtent().applyingFilter("CIPixellate", parameters: [
+                kCIInputScaleKey: max(10, source.extent.width / 1920 * pixelate.intensity * 24),
+                kCIInputCenterKey: CIVector(x: region.midX, y: region.midY)
+            ]).cropped(to: region)
+            source = opacity(blocks, strength).composited(over: source)
+        }
         for spot in settings.segments where spot.kind == .spotlight {
             let strength = MotionEngine.envelope(spot, time: time)
             guard strength > 0 else { continue }
@@ -214,6 +226,22 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask.outputImage!.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 5])])
         }
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
+        for outline in settings.segments where outline.kind == .outline {
+            let strength = MotionEngine.envelope(outline, time: time)
+            guard strength > 0 else { continue }
+            let w = source.extent.width * outline.regionWidth, h = source.extent.height * outline.regionHeight
+            let region = CGRect(x: source.extent.width * outline.x - w / 2, y: source.extent.height * (1 - outline.y) - h / 2, width: w, height: h).intersection(source.extent)
+            guard !region.isEmpty else { continue }
+            let line = min(region.width / 4, region.height / 4, max(3, source.extent.width / 1920 * outline.intensity * 6))
+            let ink = CIImage(color: CIColor(cgColor: settings.cursor.accentColor.copy(alpha: strength) ?? settings.cursor.accentColor))
+            let edges = [
+                CGRect(x: region.minX, y: region.minY, width: region.width, height: line),
+                CGRect(x: region.minX, y: region.maxY - line, width: region.width, height: line),
+                CGRect(x: region.minX, y: region.minY, width: line, height: region.height),
+                CGRect(x: region.maxX - line, y: region.minY, width: line, height: region.height)
+            ]
+            for edge in edges { source = ink.cropped(to: edge).composited(over: source) }
+        }
         for label in settings.segments where label.kind == .callout {
             let strength = MotionEngine.envelope(label, time: time)
             guard strength > 0, let badge = RenderAssets.callout(text: label.text ?? "Look here", unit: source.extent.width / 1920 * min(3, max(0.5, label.intensity)), accent: settings.cursor.accentColor, key: settings.cursor.accentKey) else { continue }

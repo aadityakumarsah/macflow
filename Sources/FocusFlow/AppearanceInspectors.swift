@@ -60,6 +60,10 @@ struct CursorAppearanceInspector: View {
                 Text("Record a Window or Display in FocusFlow to resize the cursor after recording. A cursor already inside a video cannot be resized separately.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
+                if model.recordingMetadata.embeddedCursor == true {
+                    Text("Chrome included its cursor in the video. FocusFlow can add a larger cursor overlay, but the original cursor may still be visible beneath it.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 CursorStylePreview(size: model.cursorSize, appearance: model.cursorAppearance,
                                    visible: model.showCursor, shadow: model.cursorShadow,
                                    clicks: model.clickEffects && !model.recordedClicks.isEmpty).equatable()
@@ -69,9 +73,9 @@ struct CursorAppearanceInspector: View {
             VStack(alignment: .leading, spacing: 24) {
                 InspectorSection(title: "Cursor") {
                     Toggle("Show cursor", isOn: $model.showCursor)
-                    InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...6, suffix: "×")
+                    InspectorSlider(title: "Size", value: $model.cursorSize, range: 0.5...10, suffix: "×")
                     HStack(spacing: 6) {
-                        ForEach([1.0, 2, 3, 4], id: \.self) { size in
+                        ForEach([1.0, 2, 4, 6, 8], id: \.self) { size in
                             Button { model.cursorSize = size } label: {
                                 Text("\(Int(size))×").font(.system(size: 11, weight: .semibold))
                                     .frame(maxWidth: .infinity).padding(.vertical, 7)
@@ -135,7 +139,7 @@ struct CursorAppearanceInspector: View {
                 DisclosureGroup("Advanced") {
                     VStack(alignment: .leading, spacing: 14) {
                         Toggle("Gentle tilt", isOn: $model.cursorAppearance.sway)
-                        InspectorSlider(title: "Text cursor scale", value: $model.cursorAppearance.textScale, range: 0.5...6, suffix: "×")
+                        InspectorSlider(title: "Text cursor scale", value: $model.cursorAppearance.textScale, range: 0.5...10, suffix: "×")
                         InspectorSlider(title: "Cursor opacity", value: optional(\.opacity, fallback: 1), range: 0...1, suffix: "")
                     }.padding(.top, 12)
                 }.font(.caption)
