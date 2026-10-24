@@ -3,10 +3,12 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: EditorModel
+    @EnvironmentObject private var updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
+            UpdateBanner()
             Divider().overlay(AppTheme.line)
             HStack(spacing: 0) {
                 ToolRail()
@@ -27,6 +29,91 @@ struct RootView: View {
         .alert("FocusFlow", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
             Button("OK") { model.message = nil }
         } message: { Text(model.message ?? "") }
+        .task {
+            // A quiet check at launch; it reports nothing unless there is
+            // actually a newer build.
+            await updater.check(userInitiated: false)
+        }
+    }
+}
+
+/// Sits under the toolbar only when there is something to say.
+struct UpdateBanner: View {
+    @EnvironmentObject private var updater: Updater
+
+    var body: some View {
+        switch updater.state {
+        case let .available(release) where !updater.dismissed:
+            banner {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(AppTheme.green)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("FocusFlow \(release.version.description) is available")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("You are on \(updater.currentVersion.description). Updating takes a few seconds and reopens the app.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let page = release.pageURL {
+                    Button("What's new") { NSWorkspace.shared.open(page) }
+                        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Button("Install and relaunch") { updater.install(release) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(AppTheme.green, in: RoundedRectangle(cornerRadius: 7))
+                    .foregroundStyle(.white)
+                Button { updater.dismissed = true } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Not now")
+            }
+
+        case let .downloading(progress):
+            banner {
+                ProgressView(value: progress).frame(width: 120)
+                Text("Downloading the update… \(Int(progress * 100))%")
+                    .font(.system(size: 12))
+                Spacer()
+            }
+
+        case .installing:
+            banner {
+                ProgressView().controlSize(.small)
+                Text("Installing. FocusFlow will reopen on its own.")
+                    .font(.system(size: 12))
+                Spacer()
+            }
+
+        case let .failed(reason):
+            banner(tint: Color.orange.opacity(0.12)) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(reason).font(.system(size: 12)).lineLimit(2)
+                Spacer()
+                Button("Dismiss") { updater.clearStatus() }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+        case .upToDate where !updater.dismissed:
+            banner {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(AppTheme.green)
+                Text("FocusFlow \(updater.currentVersion.description) is the latest version.")
+                    .font(.system(size: 12))
+                Spacer()
+                Button("Dismiss") { updater.clearStatus() }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func banner<Content: View>(tint: Color = AppTheme.green.opacity(0.08),
+                                       @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 10) { content() }
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .background(tint)
     }
 }
 

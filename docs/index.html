@@ -730,7 +730,7 @@ footer .legal {
   <div class="frame">
     <span class="eyebrow">
       <span class="pip" aria-hidden="true">✓</span>
-      v0.3.0 · free and open source
+      v0.4.0 · free and open source
     </span>
 
     <h1>Record your Mac.<br>The clicks animate <em>themselves</em>.</h1>
@@ -753,7 +753,7 @@ footer .legal {
       </a>
     </div>
 
-    <p class="hero-hint js-hint">macOS 14+ · Apple silicon · 3.5 MB</p>
+    <p class="hero-hint js-hint">macOS 14+ · Apple silicon · 3.6 MB</p>
 
     <div class="term-wrap">
       <div class="term reveal" id="terminal">
@@ -808,8 +808,8 @@ footer .legal {
       </article>
       <article class="card">
         <span class="num">04</span>
-        <h3>Export it your way</h3>
-        <p>MP4 or MOV, up to 4K, at 30 or 60&nbsp;fps. Switch to 9:16 and the composition re&#8209;fits itself.</p>
+        <h3>Keeps itself current</h3>
+        <p>New versions appear in the app. One button downloads, installs and reopens it — no re&#8209;running the installer.</p>
       </article>
     </div>
   </div>
@@ -992,12 +992,19 @@ footer .legal {
       <div class="step">
         <span class="n">03</span>
         <div>
+          <h3>Updates install themselves</h3>
+          <p>From 0.4.0 onward FocusFlow checks GitHub Releases at launch. When there is a newer build a bar appears under the toolbar — press <strong>Install and relaunch</strong> and it downloads, swaps itself out and reopens. There is also <strong>FocusFlow → Check for Updates…</strong>. Nothing installs without you pressing the button.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="n">04</span>
+        <div>
           <h3>Allow Screen Recording</h3>
           <p>macOS asks on your first recording. FocusFlow then appears under System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security → Screen&nbsp;Recording.</p>
         </div>
       </div>
       <div class="step">
-        <span class="n">04</span>
+        <span class="n">05</span>
         <div>
           <h3>Or build it from source</h3>
           <p>Clone the repo and run <code>./build-app.sh</code>. Requires macOS&nbsp;14+ and the Apple Command Line Tools; <code>./check.sh</code> runs the tests.</p>
@@ -1170,7 +1177,7 @@ footer .legal {
   }
 
   function download(token) {
-    var total = 3.5;
+    var total = 3.6;
     var p = 0;
     push("");
     function step() {
@@ -1219,13 +1226,13 @@ footer .legal {
       .then(function () { return spinner("Resolving the latest release", 900, token); })
       .then(function () {
         if (token !== runToken) return;
-        replace(ok("Release resolved", "v0.3.0"));
+        replace(ok("Release resolved", "v0.4.0"));
         return wait(260);
       })
       .then(function () { return download(token); })
       .then(function () {
         if (token !== runToken) return;
-        replace(ok("Downloaded", "3.5 MB"));
+        replace(ok("Downloaded", "3.6 MB"));
         return wait(240);
       })
       .then(function () { return spinner("Mounting the disk image", 620, token); })

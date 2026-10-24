@@ -25,6 +25,22 @@ FocusFlow is signed ad-hoc rather than with a paid Developer ID, so Gatekeeper
 would otherwise refuse the first launch. The install script clears the
 quarantine flag for you; a browser download does not.
 
+## Updating
+
+From 0.4.0 onward FocusFlow checks GitHub Releases on launch and offers any
+newer build in a bar under the toolbar. **Install and relaunch** downloads the
+disk image, verifies it, replaces the app in place and reopens it. There is
+also **FocusFlow → Check for Updates…**. Nothing is installed without a press.
+
+Earlier builds have no updater, so 0.3.0 and older must be updated once by
+hand — rerun the install command, or take the `.dmg` from the latest release.
+
+The app cannot overwrite itself while running, so installation hands off to a
+short script that waits for the process to exit, swaps the bundle and relaunches.
+The old copy is kept until the new one is in place: if the swap fails, the
+previous version is put back rather than leaving no app at all. FocusFlow must
+be somewhere writable — it refuses to update while running from a disk image.
+
 ## Run
 
 Requires macOS 14+ and Apple Command Line Tools. Native microphone recording requires macOS 15+.

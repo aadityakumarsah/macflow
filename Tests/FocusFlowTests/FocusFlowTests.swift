@@ -294,6 +294,168 @@ final class FocusFlowTests {
         XCTAssertEqual(restored.exportOptions, written.exportOptions)
     }
 
+    /// Version ordering decides whether an update is offered at all, so the
+    /// awkward cases matter: a numeric 10 beating 9, equal-but-shorter
+    /// strings, and the "v" that release tags carry but bundles do not.
+    func testReleaseVersionOrdering() throws {
+        func v(_ text: String) throws -> SemanticVersion { try XCTUnwrap(SemanticVersion(text)) }
+
+        XCTAssertTrue(try v("0.4.0") > v("0.3.0"))
+        XCTAssertTrue(try v("v0.4.0") > v("0.3.9"))
+        // Text ordering would put 0.10.0 below 0.9.0; numeric ordering must not.
+        XCTAssertTrue(try v("0.10.0") > v("0.9.0"))
+        XCTAssertTrue(try v("1.0.0") > v("0.99.99"))
+        // A missing field counts as zero, so these are equal, not newer.
+        XCTAssertTrue(try !(v("0.3") > v("0.3.0")))
+        XCTAssertTrue(try !(v("0.3.0") > v("0.3")))
+        // Never offer a downgrade or a re-install of the same build.
+        XCTAssertTrue(try !(v("0.3.0") > v("0.3.0")))
+        XCTAssertTrue(try !(v("0.2.9") > v("0.3.0")))
+
+        XCTAssertNil(SemanticVersion("not-a-version"))
+        XCTAssertNil(SemanticVersion(""))
+        XCTAssertEqual(try v("v1.2.3").description, "1.2.3")
+    }
+
+    /// The updater must take the disk image out of a real release payload, and
+    /// refuse one that points somewhere other than GitHub.
+    func testReleaseParsingAcceptsGitHubDiskImagesOnly() throws {
+        let good = """
+        {"tag_name":"v0.4.0","body":"Notes here","html_url":"https://github.com/a/b/releases/tag/v0.4.0",
+         "assets":[{"name":"notes.txt","browser_download_url":"https://github.com/a/b/x.txt"},
+                   {"name":"FocusFlow-0.4.0.dmg","browser_download_url":"https://github.com/a/b/releases/download/v0.4.0/FocusFlow-0.4.0.dmg"}]}
+        """
+        let release = try XCTUnwrap(AvailableRelease.parse(Data(good.utf8)))
+        XCTAssertEqual(release.version.description, "0.4.0")
+        XCTAssertEqual(release.downloadURL.lastPathComponent, "FocusFlow-0.4.0.dmg")
+        XCTAssertEqual(release.notes, "Notes here")
+
+        // An asset hosted off GitHub must be ignored, leaving nothing to install.
+        let offsite = """
+        {"tag_name":"v0.5.0","assets":[{"name":"FocusFlow.dmg","browser_download_url":"https://elsewhere.example/FocusFlow.dmg"}]}
+        """
+        XCTAssertNil(AvailableRelease.parse(Data(offsite.utf8)))
+
+        // Plain HTTP must be refused too.
+        let insecure = """
+        {"tag_name":"v0.5.0","assets":[{"name":"FocusFlow.dmg","browser_download_url":"http://github.com/a/b/FocusFlow.dmg"}]}
+        """
+        XCTAssertNil(AvailableRelease.parse(Data(insecure.utf8)))
+
+        // A release with no disk image is not installable.
+        let noDMG = """
+        {"tag_name":"v0.5.0","assets":[{"name":"src.zip","browser_download_url":"https://github.com/a/b/src.zip"}]}
+        """
+        XCTAssertNil(AvailableRelease.parse(Data(noDMG.utf8)))
+        XCTAssertNil(AvailableRelease.parse(Data("{}".utf8)))
+    }
+
+    /// The swap helper replaces the user's installed app, so it is run for
+    /// real here against stand-in bundles: it must put the new build in place,
+    /// and — more importantly — must leave the old one working if it cannot.
+    func testUpdateSwapReplacesBundleAndRestoresOnFailure() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("swap-check-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+
+        func makeBundle(at url: URL, marker: String) throws {
+            try fm.createDirectory(at: url.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+            try marker.write(to: url.appendingPathComponent("Contents/marker.txt"), atomically: true, encoding: .utf8)
+        }
+        func marker(_ url: URL) -> String? {
+            try? String(contentsOf: url.appendingPathComponent("Contents/marker.txt"), encoding: .utf8)
+        }
+
+        // --- the ordinary path: new build replaces old ---
+        let work = root.appendingPathComponent("work")
+        let incoming = root.appendingPathComponent("mount/FocusFlow.app")
+        let target = root.appendingPathComponent("Applications/FocusFlow.app")
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        try makeBundle(at: incoming, marker: "new")
+        try makeBundle(at: target, marker: "old")
+
+        // pid 1 is alive and never exits, so use this process's own pid after
+        // it would already have passed: pid 0 is not a real process to wait on.
+        let script = Updater.swapScript(pid: 999999, work: work.path, incoming: incoming.path,
+                                        target: target.path, mount: root.appendingPathComponent("mount").path)
+        let scriptURL = work.appendingPathComponent("swap.sh")
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        // `open` is not meaningful in a test, so neutralise it with a stub
+        // earlier on PATH; everything else runs for real.
+        let stubs = root.appendingPathComponent("stubs")
+        try fm.createDirectory(at: stubs, withIntermediateDirectories: true)
+        for tool in ["open", "hdiutil"] {
+            let stub = stubs.appendingPathComponent(tool)
+            try "#!/bin/bash\nexit 0\n".write(to: stub, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        }
+
+        func runSwap() throws -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [scriptURL.path]
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = stubs.path + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+            process.environment = env
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        }
+
+        XCTAssertEqual(try runSwap(), 0)
+        XCTAssertEqual(marker(target), "new")
+        // The helper cleans up after itself.
+        XCTAssertTrue(!fm.fileExists(atPath: work.path))
+
+        // --- the failure path: staging works, but putting the new bundle
+        // in place does not. This is the branch that must put the old app
+        // back; reaching it needs the second `mv` to fail specifically, so
+        // `mv` is stubbed to fail on its second call.
+        let work2 = root.appendingPathComponent("work2")
+        try fm.createDirectory(at: work2, withIntermediateDirectories: true)
+        try makeBundle(at: target, marker: "old-again")
+
+        let counter = root.appendingPathComponent("mv-calls")
+        let mvStub = stubs.appendingPathComponent("mv")
+        try """
+        #!/bin/bash
+        count=$(cat "\(counter.path)" 2>/dev/null || echo 0)
+        count=$((count + 1))
+        echo "$count" > "\(counter.path)"
+        # Fail only the call that moves the new bundle into place; the
+        # restore that follows it must be allowed to succeed.
+        if [ "$count" -eq 2 ]; then exit 1; fi
+        exec /bin/mv "$@"
+        """.write(to: mvStub, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mvStub.path)
+
+        let script2 = Updater.swapScript(pid: 999999, work: work2.path,
+                                         incoming: incoming.path,
+                                         target: target.path,
+                                         mount: root.appendingPathComponent("mount").path)
+        let scriptURL2 = work2.appendingPathComponent("swap.sh")
+        try script2.write(to: scriptURL2, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL2.path]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = stubs.path + ":" + (env["PATH"] ?? "/usr/bin:/bin")
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+
+        // The installed app must survive a failed update untouched — this is
+        // the whole point: a broken update must not leave the user with no app.
+        XCTAssertTrue(fm.fileExists(atPath: target.path))
+        XCTAssertEqual(marker(target), "old-again")
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in
