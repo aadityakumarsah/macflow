@@ -2,25 +2,28 @@
 
 A native macOS recording and editing app, with a local Chrome tab recording companion. Built with SwiftUI, ScreenCaptureKit, AVFoundation, Core Image, and browser media APIs. Recordings stay on your Mac.
 
-Landing page: <https://aadityakumarsah.github.io/macflow/>
+Landing page: <https://macflow-delta.vercel.app/> (also on <https://aadityakumarsah.github.io/macflow/>)
 
 ## Install
 
 Requires macOS 14+ on Apple silicon.
 
 ```sh
-curl -L -o ~/Downloads/focusflow.dmg https://github.com/aadityakumarsah/macflow/releases/download/v0.2.0/FocusFlow-0.2.0.dmg && xattr -c ~/Downloads/focusflow.dmg && open ~/Downloads/focusflow.dmg
-```
-
-The disk image opens; drag **FocusFlow** into Applications.
-
-To install straight into `/Applications` without the drag step:
-
-```sh
 curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash
 ```
 
-FocusFlow is signed ad-hoc rather than with a paid Developer ID, so Gatekeeper would otherwise refuse the first launch. Both commands above clear the download quarantine flag for you. If you download the `.dmg` from the browser instead, right-click the app and choose **Open** the first time.
+The installer resolves the latest release, shows a live progress bar while it
+downloads, copies **FocusFlow** into `/Applications`, and clears the download
+quarantine flag. Set `FOCUSFLOW_PREFIX` to install somewhere else.
+
+Prefer the disk image? Take it from the
+[latest release](https://github.com/aadityakumarsah/macflow/releases/latest)
+and drag FocusFlow into Applications — then right-click the app and choose
+**Open** the first time.
+
+FocusFlow is signed ad-hoc rather than with a paid Developer ID, so Gatekeeper
+would otherwise refuse the first launch. The install script clears the
+quarantine flag for you; a browser download does not.
 
 ## Run
 

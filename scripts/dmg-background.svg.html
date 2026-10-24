@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<!--
+  The disk image window background, rendered at 2x (1280x880) and tagged
+  144 dpi so Finder lays it out as 640x440 points.
+
+  Icon centres must match the positions set in make-dmg.sh:
+  FocusFlow at (160, 198), Applications at (480, 198) in points.
+-->
+<svg width="1280" height="880" viewBox="0 0 1280 880" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0%"   stop-color="#f3f8f6"/>
+      <stop offset="42%"  stop-color="#e4eeed"/>
+      <stop offset="100%" stop-color="#cfe1e2"/>
+    </linearGradient>
+
+    <radialGradient id="pool" cx="50%" cy="34%" r="58%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" seed="11" result="n"/>
+      <feColorMatrix in="n" type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="1.5" intercept="-0.42"/>
+      </feComponentTransfer>
+    </filter>
+
+    <filter id="haze"><feGaussianBlur stdDeviation="26"/></filter>
+  </defs>
+
+  <rect width="1280" height="880" fill="url(#bg)"/>
+  <rect width="1280" height="880" fill="url(#pool)"/>
+
+  <!-- A breath of the same fog as the landing page, very low contrast. -->
+  <g filter="url(#haze)" opacity="0.5">
+    <ellipse cx="300"  cy="700" rx="460" ry="80" fill="#ffffff" opacity="0.7"/>
+    <ellipse cx="1000" cy="760" rx="520" ry="70" fill="#ffffff" opacity="0.6"/>
+    <ellipse cx="640"  cy="250" rx="560" ry="90" fill="#f4fbf9" opacity="0.55"/>
+  </g>
+
+  <!-- Word mark -->
+  <text x="640" y="128" text-anchor="middle"
+        font-family="'Inter Tight', -apple-system, sans-serif"
+        font-size="46" font-weight="600" letter-spacing="-1.2" fill="#17424e">FocusFlow</text>
+
+  <text x="640" y="172" text-anchor="middle"
+        font-family="Inter, -apple-system, sans-serif"
+        font-size="23" font-weight="400" fill="#5c7f88">Drag the app into your Applications folder</text>
+
+  <!--
+    Arrow between the two icon wells. Icons sit at y=198pt (396 at 2x), so
+    the arrow runs along that line between them.
+  -->
+  <g opacity="0.5">
+    <path d="M520 396 H736" stroke="#5c8f98" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 16"/>
+    <path d="M744 396 L716 378 L716 414 Z" fill="#5c8f98"/>
+  </g>
+
+  <!-- Soft wells so the two icons read as placed, not floating. -->
+  <circle cx="320" cy="396" r="96" fill="#ffffff" opacity="0.4"/>
+  <circle cx="960" cy="396" r="96" fill="#ffffff" opacity="0.4"/>
+
+  <text x="640" y="792" text-anchor="middle"
+        font-family="Inter, -apple-system, sans-serif"
+        font-size="19" fill="#7e9aa0">macOS 14+ · Apple silicon · MIT licensed</text>
+
+  <!-- Matching film grain, lighter than the hero plate. -->
+  <rect width="1280" height="880" filter="url(#grain)" opacity="0.3" style="mix-blend-mode:overlay"/>
+  <rect width="1280" height="880" filter="url(#grain)" opacity="0.1"/>
+</svg>
+</body>
+</html>
