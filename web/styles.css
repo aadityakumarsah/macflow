@@ -27,3 +27,18 @@
 .button{border:1px solid transparent}.button-outline{border-color:#d9d9e1;background:#fff}.header-cta{border:0;cursor:pointer}.main-nav .nav-github{gap:7px;padding:8px 10px;border:1px solid #dddee9;border-radius:8px;background:#fff;color:#343449}.main-nav .nav-github:hover{border-color:#b8c2ff;color:var(--blue)}.copy-toast{position:fixed;z-index:80;left:50%;bottom:24px;display:flex;align-items:center;gap:9px;max-width:calc(100% - 32px);padding:12px 17px;border-radius:10px;background:#29283d;color:#fff;box-shadow:0 18px 35px #28273c3f;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transform:translate(-50%,12px);transition:opacity .2s,transform .2s}.copy-toast.visible{opacity:1;transform:translate(-50%,0)}
 @media(max-width:760px){.main-nav .nav-github{justify-content:flex-start;margin-top:9px;padding:11px 12px}.hero-actions{gap:10px}}
 @media(max-width:520px){.hero-actions .button{width:100%;justify-content:center}.header-cta{white-space:nowrap}.copy-toast{width:max-content;font-size:11px}}
+/* The editor illustration previews the motion treatment used in rendered videos. */
+.demo-screen{background-size:150% 150%;animation:demoCanvasDrift 8s ease-in-out infinite alternate}
+.demo-motion-glow{position:absolute;inset:-25%;pointer-events:none;background:radial-gradient(circle at 20% 65%,#84affb55,transparent 38%);mix-blend-mode:screen;animation:demoGlowDrift 7s ease-in-out infinite alternate}
+.demo-focus-frame{position:absolute;z-index:3;left:47%;top:27%;width:31%;height:27%;border:3px solid #a9d5ff;border-radius:10px;box-shadow:0 0 0 5px #75a8ff38,0 0 24px #9bc8ff88;pointer-events:none;animation:demoFocus 7s ease-in-out infinite}
+.demo-stage-progress{position:absolute;z-index:4;bottom:0;left:0;height:4px;background:linear-gradient(90deg,#90c5ff,#657df0);box-shadow:0 0 12px #9bc8ff;animation:demoProgress 7s linear infinite}
+.demo-cursor{transform-origin:10% 10%;animation:demoCursorPath 7s cubic-bezier(.22,.65,.25,1) infinite}
+.demo-click-ring{animation:demoRipple 7s ease-out infinite}
+.demo-click-ring.second{animation-delay:.14s}
+@keyframes demoCanvasDrift{from{background-position:0% 30%}to{background-position:100% 70%}}
+@keyframes demoGlowDrift{from{transform:translate(-12%,-3%)}to{transform:translate(12%,8%)}}
+@keyframes demoCursorPath{0%,12%{left:31%;top:61%;transform:scale(.94)}24%,39%{left:58%;top:54%;transform:scale(1)}43%{transform:scale(.84)}49%{transform:scale(1.11)}58%,74%{left:71%;top:43%;transform:scale(1)}100%{left:31%;top:61%;transform:scale(.94)}}
+@keyframes demoRipple{0%,37%{opacity:0;transform:scale(.35)}43%{opacity:1;transform:scale(.55)}62%{opacity:0;transform:scale(2.2)}100%{opacity:0;transform:scale(2.2)}}
+@keyframes demoFocus{0%,33%{opacity:0;transform:scale(.9)}43%,64%{opacity:1;transform:scale(1)}76%,100%{opacity:0;transform:scale(1.06)}}
+@keyframes demoProgress{from{width:0}to{width:100%}}
+@media(prefers-reduced-motion:reduce){.demo-screen,.demo-motion-glow,.demo-focus-frame,.demo-stage-progress,.demo-cursor,.demo-click-ring{animation:none!important}.demo-stage-progress{width:55%}.demo-focus-frame{opacity:1}.demo-click-ring{opacity:.45}}

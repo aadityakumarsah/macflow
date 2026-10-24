@@ -101,7 +101,7 @@ After a native Window or Display recording, open **Cursor** to change its size f
 Videos without a separate pointer track show an explanation instead of editable cursor controls. A cursor baked into an imported video cannot be independently resized. For connected Chrome tab capture, FocusFlow asks Chrome to omit its baked-in cursor and records a separate pointer track; support depends on Chrome. If Chrome includes the cursor, the editor leaves its overlay off by default and explains the limitation.
 
 - Shared Core Image renderer for preview and MP4 export, including background, rounded corners, shadows, camera, blur, cursor, and zoom.
-- Automatic click-based zooms with grouped click activity, smoother easing, adjustable transition duration, and optional cursor following. Camera tracking holds its position when the pointer leaves the recorded area.
+- Automatic editing from recorded interactions: grouped click zooms, alternating spotlights/accent frames/callouts, and focus frames around text-selection drags. Larger double click ripples, an animated canvas and progress line, and a larger editable cursor render in preview and export. Automatic editing never adds pans. Motion → **Create automatic edit** rebuilds this sequence.
 - Pan segments with editable start/end focus points, slide-up/slide-in/scale entrances, and optional fade-out.
 - Editable macOS light/dark window frame with red/yellow/green controls, optional title, title-bar height, and control size. The frame stays fixed while the content zooms.
 - Non-destructive **Crop to tab or pane** in the editor, including imported and browser videos. Canvas fitting preserves the selected content instead of filling and clipping the edges.

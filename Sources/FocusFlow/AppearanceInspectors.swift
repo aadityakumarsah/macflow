@@ -29,20 +29,21 @@ struct MotionAppearanceInspector: View {
     @EnvironmentObject private var model: EditorModel
     var body: some View {
         InspectorSection(title: "MOTION") {
+            Toggle("Animated canvas and progress line", isOn: Binding(get: { model.motionAppearance.ambientGraphics != false }, set: { model.motionAppearance.ambientGraphics = $0 }))
             Picker("Entrance", selection: $model.motionAppearance.entrance) { ForEach(EntranceStyle.allCases) { Text($0.rawValue).tag($0) } }
             Toggle("Fade out at end", isOn: $model.motionAppearance.fadeOut)
             if model.motionAppearance.entrance != .none || model.motionAppearance.fadeOut {
                 InspectorSlider(title: "Transition", value: $model.motionAppearance.duration, range: 0.2...2, suffix: "s")
             }
-            Button { model.addAutoZooms() } label: { Label("Rebuild click zooms", systemImage: "sparkles") }
+            Button { model.rebuildAutoEdits() } label: { Label("Create automatic edit", systemImage: "sparkles") }
+                .disabled(model.recordedClicks.isEmpty && model.pointerSamples.isEmpty)
+                .help("Build click zooms, spotlights, accent frames, callouts, pans, and text selection focus from recorded interactions. Replaces timeline effects.")
+            Button { model.addAutoZooms() } label: { Label("Rebuild click zooms only", systemImage: "plus.magnifyingglass") }
                 .disabled(model.recordedClicks.isEmpty)
-                .help(model.recordedClicks.isEmpty
-                      ? "This recording has no click data, so there is nothing to build zooms from."
-                      : "Replaces every zoom with ones generated from \(model.recordedClicks.count) recorded clicks.")
 
             // A greyed-out button with no explanation reads as broken.
             if model.recordedClicks.isEmpty && model.videoURL != nil {
-                Text("No clicks were recorded with this video, so zooms cannot be generated. Add Zoom or Pan in the Motion panel instead.")
+                Text("No clicks were recorded with this video. Text selection effects can still be generated when pointer movement was captured.")
                     .font(.caption2).foregroundStyle(.secondary)
             } else {
                 Text("Add Zoom or Pan in the Motion panel. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)

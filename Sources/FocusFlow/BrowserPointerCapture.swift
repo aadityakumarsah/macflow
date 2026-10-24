@@ -105,8 +105,8 @@ final class BrowserPointerCapture {
         let time = Date().timeIntervalSince(start) - pausedTotal
         guard time >= 0 else { return }
 
-        samples.append(PointerSample(time: time, x: x, y: y, shape: SystemCursorShape.current()))
         let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
+        samples.append(PointerSample(time: time, x: x, y: y, shape: SystemCursorShape.current(), pressed: down))
         if down && !lastButtonDown {
             clicks.append(RecordedClick(time: time, x: x, y: y))
         }

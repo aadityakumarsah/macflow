@@ -4,6 +4,21 @@ import CoreImage
 import CoreText
 
 final class FocusFlowTests {
+    func testAutomaticEditTracksTextSelectionAndVariesEffects() {
+        let clicks = (0..<4).map { RecordedClick(time: Double($0) * 2 + 1, x: 0.3 + Double($0) * 0.1, y: 0.45) }
+        var samples = clicks.map { PointerSample(time: $0.time + 0.8, x: $0.x + 0.08, y: $0.y, shape: .arrow) }
+        samples += (0..<12).map { PointerSample(time: 9 + Double($0) * 0.035, x: 0.2 + Double($0) * 0.025, y: 0.3, shape: .text, pressed: true) }
+        let edits = MotionEngine.autoEdits(clicks: clicks, samples: samples, duration: 12)
+        for kind in [SegmentKind.zoom, .spotlight, .outline, .callout] {
+            XCTAssertTrue(edits.contains { $0.kind == kind })
+        }
+        XCTAssertTrue(edits.allSatisfy { $0.kind != .pan })
+        XCTAssertTrue(edits.contains { $0.kind == .outline && $0.start > 8.8 && $0.regionWidth > 0.25 })
+        XCTAssertTrue(edits.allSatisfy { $0.start >= 0 && $0.end <= 12 })
+        let hover = (0..<12).map { PointerSample(time: 1 + Double($0) * 0.035, x: 0.2 + Double($0) * 0.025, y: 0.3, shape: .text) }
+        XCTAssertTrue(MotionEngine.autoEdits(clicks: [], samples: hover, duration: 3).isEmpty)
+    }
+
     func testCursorStaysWithinBoundsAndDisappearsAcrossGaps() {
         let points = [PointerSample(time: 0, x: 0, y: 0), PointerSample(time: 0.03, x: 1, y: 1), PointerSample(time: 0.06, x: 0, y: 0), PointerSample(time: 1, x: 0.5, y: 0.5)]
         for i in 0..<60 {
@@ -173,10 +188,10 @@ final class FocusFlowTests {
         settings.segments = [EditSegment(kind: .zoom, start: 0, duration: 2, intensity: 1.8, x: 0.72, y: 0.5)]
         let zoomed = pixels(try render(settings))
         XCTAssertEqual(rgb(zoomed, layout.header.maxX - 10, layout.header.midY), header)
-        settings.motion = MotionAppearance(entrance: .rise, duration: 1, fadeOut: true)
+        settings.motion = MotionAppearance(entrance: .rise, duration: 1, fadeOut: true, ambientGraphics: false)
         settings.trimEnd = 2
         let start = pixels(try render(settings, 0)), end = pixels(try render(settings, 2))
-        XCTAssertEqual(start, end)
+        XCTAssertTrue(start == end)
         XCTAssertTrue(start != zoomed)
         settings.motion = MotionAppearance()
         settings.segments = [EditSegment(kind: .spotlight, start: 0, duration: 2, intensity: 2, x: 0.72, y: 0.5, width: 0.2, height: 0.3), EditSegment(kind: .callout, start: 0, duration: 2, intensity: 1, x: 0.75, y: 0.8, text: "Click to explore")]
@@ -264,13 +279,13 @@ final class FocusFlowTests {
 
     @MainActor func testCursorResetIsUndoable() {
         let model = EditorModel(restoreLatest: false)
-        XCTAssertEqual(model.cursorSize, 2)
+        XCTAssertEqual(model.cursorSize, 5)
         model.videoURL = URL(fileURLWithPath: "/tmp/nonexistent-focusflow-cursor-test.mp4")
         model.duration = 2
         model.cursorSize = 4; model.showCursor = false
         model.cursorAppearance.highlight = true
         model.resetCursorSettings()
-        XCTAssertEqual(model.cursorSize, 2)
+        XCTAssertEqual(model.cursorSize, 5)
         XCTAssertTrue(model.showCursor)
         XCTAssertEqual(model.cursorAppearance.highlight, false)
         model.undo()
@@ -278,7 +293,7 @@ final class FocusFlowTests {
         XCTAssertEqual(model.showCursor, false)
         XCTAssertEqual(model.cursorAppearance.highlight, true)
         model.redo()
-        XCTAssertEqual(model.cursorSize, 2)
+        XCTAssertEqual(model.cursorSize, 5)
         XCTAssertTrue(model.showCursor)
         // Cancel pending preview work for the intentionally nonexistent test video.
         model.videoURL = nil

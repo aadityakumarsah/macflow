@@ -58,13 +58,27 @@ enum VideoExporter {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else { throw ExportError.unavailable }
         let edit = AVMutableComposition()
         guard let screen = edit.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw ExportError.unavailable }
-        try screen.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
+        let videoTimeRange = try await video.load(.timeRange)
+        let videoEnd = CMTimeMinimum(duration, videoTimeRange.end)
+        guard videoEnd > .zero else { throw ExportError.unavailable }
+        try screen.insertTimeRange(CMTimeRange(start: .zero, duration: videoEnd), of: video, at: .zero)
+        // Chrome may finish writing its audio after its last video frame. A
+        // composition that runs into that gap asks the compositor for a frame
+        // that does not exist, aborting the entire export. Extend a short
+        // piece of the last video instead, preserving the spoken audio tail.
+        if duration > videoEnd {
+            let finalPiece = CMTimeMinimum(CMTime(seconds: 0.1, preferredTimescale: 600), videoEnd)
+            try screen.insertTimeRange(CMTimeRange(start: videoEnd - finalPiece, duration: finalPiece), of: video, at: videoEnd)
+            screen.scaleTimeRange(CMTimeRange(start: videoEnd, duration: finalPiece), toDuration: duration - videoEnd)
+        }
         let screenTransform = try await video.load(.preferredTransform)
         if !settings.muted {
             for audio in try await asset.loadTracks(withMediaType: .audio) {
                 if let track = edit.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                     let range = try await audio.load(.timeRange)
-                    try track.insertTimeRange(CMTimeRange(start: range.start, duration: CMTimeMinimum(range.duration, duration - range.start)), of: audio, at: range.start)
+                    // Trim audio to match video duration to avoid gaps
+                    let audioDuration = CMTimeMinimum(range.duration, videoEnd)
+                    try track.insertTimeRange(CMTimeRange(start: range.start, duration: audioDuration), of: audio, at: range.start)
                 }
             }
         }
@@ -284,7 +298,14 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             source = opacity(source.transformed(by: transform), progress)
         }
         if motion.fadeOut { source = opacity(source, MotionCurve.smooth.value((settings.trimEnd - time) / max(0.1, motion.duration))) }
-        var result = source.composited(over: makeBackground(settings: settings, source: original, extent: canvas)).cropped(to: canvas)
+        let backdrop = makeBackground(settings: settings, source: original, extent: canvas)
+        var result = source.composited(over: settings.motion.ambientGraphics == false ? backdrop : animatedBackdrop(backdrop, canvas: canvas, time: time, settings: settings)).cropped(to: canvas)
+        if settings.motion.ambientGraphics != false {
+            let progress = max(0, min(1, (time - settings.trimStart) / max(0.01, settings.trimEnd - settings.trimStart)))
+            let line = CGRect(x: canvas.minX, y: canvas.minY, width: canvas.width * progress, height: max(3, canvas.height / 400))
+            let accent = CIImage(color: CIColor(cgColor: settings.cursor.accentColor))
+            result = accent.cropped(to: line).composited(over: result).cropped(to: canvas)
+        }
         if settings.showKeystrokes, let key = settings.keystrokes.last(where: { time >= $0.time && time - $0.time < 1.25 }), let badge = keyBadge(key.text, canvas: canvas) {
             result = badge.composited(over: result)
         }
@@ -297,6 +318,18 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
     private func opacity(_ image: CIImage, _ alpha: Double) -> CIImage {
         image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: max(0, min(1, alpha)))])
+    }
+
+    private func animatedBackdrop(_ base: CIImage, canvas: CGRect, time: Double, settings: ExportSettings) -> CIImage {
+        let phase = time * 0.38
+        let centre = CGPoint(x: canvas.width * (0.48 + 0.27 * sin(phase)), y: canvas.height * (0.5 + 0.24 * cos(phase * 0.8)))
+        let glow = CIFilter.radialGradient()
+        glow.center = centre
+        glow.radius0 = 0
+        glow.radius1 = Float(max(canvas.width, canvas.height) * 0.72)
+        glow.color0 = CIColor(cgColor: settings.cursor.accentColor.copy(alpha: 0.16) ?? settings.cursor.accentColor)
+        glow.color1 = .clear
+        return (glow.outputImage?.cropped(to: canvas) ?? CIImage(color: .clear).cropped(to: canvas)).composited(over: base)
     }
 
     private func applyCamera(_ cameraImage: CIImage, over background: CIImage, settings: ExportSettings, canvas: CGRect) -> CIImage {
@@ -323,17 +356,28 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
     private func applyInteractionEffects(to image: CIImage, at time: Double, target: CGRect, settings: ExportSettings) -> CIImage {
         var result = image
-        let click = settings.clicks.last(where: { time >= $0.time && time - $0.time < 0.65 })
-        if settings.clickEffects, let click, settings.cursor.clickStyle != .press,
+        let click = settings.clicks.last(where: { time >= $0.time && time - $0.time < 0.8 })
+        if settings.clickEffects, let click,
            let ring = RenderAssets.click(accent: settings.cursor.accentColor, key: settings.cursor.accentKey, style: settings.cursor.clickStyle) {
-            let progress = (time - click.time) / 0.65
+            let progress = (time - click.time) / 0.8
             let unit = target.width / 1920
-            let clickScale = max(0.2, settings.cursor.clickScale ?? 1)
-            let grown: Double = 24 + 90 * (1 - pow(1 - progress, 3))
-            let diameter = grown * unit * clickScale
-            let placed = ring.transformed(by: CGAffineTransform(scaleX: diameter / ring.extent.width, y: diameter / ring.extent.height))
-                .transformed(by: CGAffineTransform(translationX: click.x * target.width - diameter / 2, y: (1 - click.y) * target.height - diameter / 2))
-            result = opacity(placed, pow(1 - progress, 2)).composited(over: result)
+            let clickScale = max(0.2, settings.cursor.clickScale ?? 1.4)
+            let baseSize = max(90, settings.cursorSize * 32) * unit * clickScale
+            let center = CGPoint(x: click.x * target.width, y: (1 - click.y) * target.height)
+            if let flash = RenderAssets.highlight(accent: settings.cursor.accentColor, key: settings.cursor.accentKey) {
+                let size = baseSize * (1.1 + progress * 1.3)
+                let placed = flash.transformed(by: CGAffineTransform(scaleX: size / flash.extent.width, y: size / flash.extent.height))
+                    .transformed(by: CGAffineTransform(translationX: center.x - size / 2, y: center.y - size / 2))
+                result = opacity(placed, 0.34 * pow(1 - progress, 2)).composited(over: result)
+            }
+            for delay in [0.0, 0.16] {
+                let phase = (progress - delay) / (1 - delay)
+                guard phase >= 0 else { continue }
+                let diameter = baseSize * (0.45 + 1.35 * (1 - pow(1 - phase, 3)))
+                let placed = ring.transformed(by: CGAffineTransform(scaleX: diameter / ring.extent.width, y: diameter / ring.extent.height))
+                    .transformed(by: CGAffineTransform(translationX: center.x - diameter / 2, y: center.y - diameter / 2))
+                result = opacity(placed, 0.95 * pow(1 - phase, 1.5)).composited(over: result)
+            }
         }
         // Drawn before the pointer so the pointer sits on top of it.
         if settings.showCursor, settings.cursor.highlight == true,
@@ -357,8 +401,8 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let shapeScale = settings.cursorSize * (isText ? max(0.1, settings.cursor.textScale) : 1)
             var scale = isSystem ? settings.cursorPointScale * shapeScale : target.width / 1920 * shapeScale / 3
             if settings.clickEffects, let click {
-                let age = (time - click.time) / 0.3
-                if age < 1 { scale *= 1 - 0.18 * sin(age * .pi) }
+                let age = (time - click.time) / 0.42
+                if age < 1 { scale *= 1 - 0.22 * exp(-age * 10) + 0.15 * sin(age * .pi) }
             }
             var angle = 0.0
             if settings.cursor.sway,

@@ -44,4 +44,58 @@ enum MotionEngine {
         }
         return result
     }
+
+    /// Build a restrained mix of motion from actual interactions. Text drags
+    /// use the recorded I-beam and button state. Legacy captures without a
+    /// button state cannot reliably distinguish a selection from hovering.
+    static func autoEdits(clicks: [RecordedClick], samples: [PointerSample], duration: Double) -> [EditSegment] {
+        guard duration > 0 else { return [] }
+        var result = autoZooms(clicks: clicks, duration: duration)
+        let ordered = samples.sorted { $0.time < $1.time }
+        let validClicks = clicks.filter { $0.time >= 0 && $0.time < duration }.sorted { $0.time < $1.time }
+        for (index, click) in validClicks.enumerated() {
+            let start = max(0, click.time - 0.12)
+            let length = min(duration - start, 1.15)
+            guard length >= 0.2 else { continue }
+            switch index % 3 {
+            case 0:
+                result.append(EditSegment(kind: .spotlight, start: start, duration: length, intensity: 1.3,
+                                          x: click.x, y: click.y, width: 0.30, height: 0.22, transition: 0.28))
+            case 1:
+                result.append(EditSegment(kind: .outline, start: start, duration: length, intensity: 1.2,
+                                          x: click.x, y: click.y, width: 0.22, height: 0.16, transition: 0.24))
+            default:
+                result.append(EditSegment(kind: .callout, start: start, duration: length, intensity: 0.85,
+                                          x: click.x, y: min(0.94, click.y + 0.13), transition: 0.25, text: "Click"))
+            }
+        }
+        var run: [PointerSample] = []
+        func finishRun() {
+            defer { run.removeAll(keepingCapacity: true) }
+            guard let first = run.first, let last = run.last, last.time - first.time >= 0.12,
+                  last.time - first.time <= 2.5 else { return }
+            let minX = run.map(\.x).min()!, maxX = run.map(\.x).max()!
+            let minY = run.map(\.y).min()!, maxY = run.map(\.y).max()!
+            guard maxX - minX > 0.045 || maxY - minY > 0.035 else { return }
+            let start = max(0, first.time - 0.12)
+            let length = min(duration - start, max(0.65, last.time - first.time + 0.7))
+            guard length >= 0.2 else { return }
+            let width = min(0.9, max(0.12, maxX - minX + 0.055))
+            let height = min(0.7, max(0.065, maxY - minY + 0.04))
+            let x = min(1 - width / 2, max(width / 2, (minX + maxX) / 2))
+            let y = min(1 - height / 2, max(height / 2, (minY + maxY) / 2))
+            result.append(EditSegment(kind: .outline, start: start, duration: length, intensity: 1.3,
+                                      x: x, y: y, width: width, height: height, transition: 0.25))
+            result.append(EditSegment(kind: .spotlight, start: start, duration: length, intensity: 0.75,
+                                      x: x, y: y, width: width, height: height, transition: 0.32))
+        }
+        for sample in ordered where sample.time < duration {
+            let isText = sample.shape == .text
+            let active = sample.pressed == true
+            if isText && active && (run.isEmpty || sample.time - run.last!.time < 0.12) { run.append(sample) }
+            else { finishRun(); if isText && active { run = [sample] } }
+        }
+        finishRun()
+        return result.sorted { $0.start < $1.start }
+    }
 }

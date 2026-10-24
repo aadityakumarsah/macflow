@@ -58,6 +58,7 @@ struct MotionAppearance: Codable, Equatable {
     var entrance: EntranceStyle = .none
     var duration: Double = 0.8
     var fadeOut = false
+    var ambientGraphics: Bool? = true
 }
 enum PointerStyle: String, Codable, CaseIterable, Identifiable {
     case macOS = "macOS", light = "Pearl", dark = "Obsidian", accent = "Accent"
@@ -82,8 +83,8 @@ enum PointerShape: String, Codable, CaseIterable, Identifiable {
 struct CursorAppearance: Codable, Equatable {
     /// Extra scale for the I-beam only. It is a thin glyph and reads far
     /// smaller than the arrow at the same size, so it gets its own control.
-    var textScale: Double = 1.6
-    var style: PointerStyle = .macOS
+    var textScale: Double = 2.5
+    var style: PointerStyle = .light
     var accent: EffectAccent = .blue
     var clickStyle: ClickStyle = .ripple
     var sway = false
@@ -101,7 +102,7 @@ struct CursorAppearance: Codable, Equatable {
     var highlightOpacity: Double? = 0.22
 
     /// Scales the click effect independently of the pointer.
-    var clickScale: Double? = 1
+    var clickScale: Double? = 1.4
     /// Fades the pointer itself without touching its effects.
     var opacity: Double? = 1
 

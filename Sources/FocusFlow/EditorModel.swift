@@ -42,7 +42,7 @@ final class EditorModel: ObservableObject {
     @Published var padding: Double = 7 { willSet { remember() } didSet { changed() } }
     @Published var cornerRadius: Double = 18 { willSet { remember() } didSet { changed() } }
     @Published var shadow: Double = 30 { willSet { remember() } didSet { changed() } }
-    @Published var cursorSize: Double = 2 { willSet { remember() } didSet { changed() } }
+    @Published var cursorSize: Double = 5 { willSet { remember() } didSet { changed() } }
     @Published var clickEffects = true { willSet { remember() } didSet { changed() } }
     @Published var showCursor = true { willSet { remember() } didSet { changed() } }
     @Published var smoothCursor = true { willSet { remember() } didSet { changed() } }
@@ -119,7 +119,7 @@ final class EditorModel: ObservableObject {
         lastHistory = .distantPast
         remember()
         restoring = true
-        cursorSize = 2; showCursor = true; smoothCursor = true
+        cursorSize = 5; showCursor = true; smoothCursor = true
         cursorShadow = true; clickEffects = true; showKeystrokes = false
         cursorAppearance = CursorAppearance()
         restoring = false
@@ -177,7 +177,7 @@ final class EditorModel: ObservableObject {
         videoURL = url; self.metadata = project?.metadata ?? metadata
         playhead = 0; duration = 0; segments = []; selectedSegmentID = nil; inspectorTab = "Canvas"
         background = .aurora; ratio = .source; padding = 7; cornerRadius = 18; shadow = 30
-        cursorSize = 2; clickEffects = true; showCursor = self.metadata.embeddedCursor != true; smoothCursor = true; cursorShadow = true
+        cursorSize = 5; clickEffects = true; showCursor = true; smoothCursor = true; cursorShadow = true
         showKeystrokes = false; showCamera = true; cameraSize = 0.24; cameraX = 0.82; cameraY = 0.78
         cameraCornerRadius = 14; cameraShape = .roundedRectangle; cameraMirrored = false
         trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false
@@ -206,7 +206,7 @@ final class EditorModel: ObservableObject {
                 restoring = true
                 duration = seconds; trimEnd = seconds
                 sourceSize = CGSize(width: abs(size.width), height: abs(size.height))
-                segments = Self.zoomSegments(from: self.metadata.clicks, duration: duration)
+                segments = MotionEngine.autoEdits(clicks: self.metadata.clicks, samples: self.metadata.pointerSamples, duration: duration)
                 restoring = false
                 if let saved = project ?? readProject(at: editsURL(for: url)) { restore(saved) }
                 changed()
@@ -413,6 +413,11 @@ final class EditorModel: ObservableObject {
         lastHistory = .distantPast
         segments.removeAll { $0.kind == .zoom }
         segments.append(contentsOf: Self.zoomSegments(from: recordedClicks, duration: duration))
+    }
+    func rebuildAutoEdits() {
+        guard duration > 0 else { return }
+        lastHistory = .distantPast
+        segments = MotionEngine.autoEdits(clicks: recordedClicks, samples: pointerSamples, duration: duration)
     }
     static func zoomSegments(from clicks: [RecordedClick], duration: Double) -> [EditSegment] {
         MotionEngine.autoZooms(clicks: clicks, duration: duration)

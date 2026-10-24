@@ -27,6 +27,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             print("Checking cursor and compatibility…")
             tests.testCursorStaysWithinBoundsAndDisappearsAcrossGaps()
             try tests.testEditableCursorSizeHighlightAndClickRendering()
+            tests.testAutomaticEditTracksTextSelectionAndVariesEffects()
             try tests.testPixelateAndOutlineRenderInsideSelectedRegion()
             await tests.testCursorResetIsUndoable()
             try tests.testLegacyProjectAndCaptureMetadataStillDecode()

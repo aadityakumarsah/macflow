@@ -234,6 +234,7 @@ struct PointerSample: Codable {
     var x: Double
     var y: Double
     var shape: PointerShape? = nil
+    var pressed: Bool? = nil
 }
 
 struct KeystrokeEvent: Codable {

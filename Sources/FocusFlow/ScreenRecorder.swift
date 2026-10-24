@@ -264,8 +264,8 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         let x = min(1, max(0, (location.x - captureFrame.minX) / max(captureFrame.width, 1)))
         let y = min(1, max(0, (location.y - captureFrame.minY) / max(captureFrame.height, 1)))
         let t = Date().timeIntervalSince(recordingStart)
-        pointerSamples.append(PointerSample(time: t, x: x, y: y, shape: SystemCursorShape.current()))
         let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
+        pointerSamples.append(PointerSample(time: t, x: x, y: y, shape: SystemCursorShape.current(), pressed: down))
         if down && !lastLeftButtonDown {
             clicks.append(RecordedClick(time: t, x: x, y: y))
         }
