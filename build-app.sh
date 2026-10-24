@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="${0:A:h}"
-APP_DIR="$ROOT_DIR/dist/FocusFlow.app"
+DIST_APP="$ROOT_DIR/dist/FocusFlow.app"
+WORK=$(mktemp -d)
+APP_DIR="$WORK/FocusFlow.app"
+trap 'rm -rf "$WORK"' EXIT
 
 cd "$ROOT_DIR"
 swift build -c release
@@ -16,6 +19,10 @@ xattr -cr "$APP_DIR"
 codesign --force --deep --sign - \
     --requirements '=designated => identifier "app.focusflow.recorder"' \
     "$APP_DIR"
-xattr -cr "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 
-echo "$APP_DIR"
+mkdir -p "$ROOT_DIR/dist"
+rm -rf "$DIST_APP"
+ditto --norsrc "$APP_DIR" "$DIST_APP"
+
+echo "$DIST_APP"

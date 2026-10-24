@@ -379,8 +379,15 @@ final class FocusFlowTests {
         for artwork in BuiltInBackground.allCases {
             XCTAssertTrue(artwork.url.map { FileManager.default.fileExists(atPath: $0.path) } ?? false)
         }
+        let supplied = try FileManager.default.contentsOfDirectory(atPath: "public")
+            .filter { $0.hasPrefix("bg") && $0.hasSuffix(".png") }
+        XCTAssertEqual(Set(BuiltInBackground.allCases.map { "\($0.rawValue).png" }), Set(supplied))
         let bundled = try corner(CustomBackground(kind: .image, imagePath: BuiltInBackground.bloom.reference))
         XCTAssertTrue(bundled != solid)
+        settings.customBackground = CustomBackground(kind: .preset, imagePath: BuiltInBackground.classic.reference)
+        let imagePreset = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 0, settings: settings), from: canvas))
+        let imagePresetCorner = Array(pixels(imagePreset)[0..<3])
+        XCTAssertTrue(imagePresetCorner != otherSolid)
 
         // The blurred backdrop derives from the frame, which is red here.
         let blurred = try corner(CustomBackground(kind: .blur, blurRadius: 20, dim: 0))

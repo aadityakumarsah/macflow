@@ -261,14 +261,25 @@ struct BackgroundInspector: View {
 
             switch model.customBackground.kind {
             case .preset:
+                Text("Included image backgrounds (\(BuiltInBackground.allCases.count))")
+                    .font(.caption2).foregroundStyle(.secondary)
+                builtInGrid
+                if BuiltInBackground.url(for: model.customBackground.imagePath ?? "") != nil {
+                    Picker("Fit", selection: $model.customBackground.imageFills) {
+                        Text("Fill").tag(true)
+                        Text("Fit").tag(false)
+                    }.pickerStyle(.segmented)
+                    InspectorSlider(title: "Dim", value: $model.customBackground.dim, range: 0...0.8, suffix: "")
+                }
+                Text("Gradient backgrounds").font(.caption2).foregroundStyle(.secondary)
                 LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
                     ForEach(BackgroundStyle.allCases) { style in
-                        Button { model.background = style } label: {
+                        Button { model.background = style; model.customBackground.imagePath = nil } label: {
                             BackgroundGradient(style: style)
                                 .frame(height: 42)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .overlay(RoundedRectangle(cornerRadius: 8)
-                                    .stroke(model.background == style ? AppTheme.green : .white.opacity(0.1), lineWidth: 2))
+                                    .stroke(model.background == style && BuiltInBackground.url(for: model.customBackground.imagePath ?? "") == nil ? AppTheme.green : .white.opacity(0.1), lineWidth: 2))
                         }.buttonStyle(.plain).help(style.title)
                     }
                 }
@@ -282,26 +293,8 @@ struct BackgroundInspector: View {
                 InspectorSlider(title: "Angle", value: $model.customBackground.angle, range: 0...360, suffix: "°")
 
             case .image:
-                Text("Included backgrounds").font(.caption2).foregroundStyle(.secondary)
-                LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
-                    ForEach(BuiltInBackground.allCases) { asset in
-                        Button {
-                            model.customBackground.imagePath = asset.reference
-                            model.customBackground.imageFills = true
-                        } label: {
-                            VStack(spacing: 3) {
-                                if let url = asset.url, let image = NSImage(contentsOf: url) {
-                                    Image(nsImage: image).resizable().scaledToFill()
-                                        .frame(height: 48).frame(maxWidth: .infinity).clipped()
-                                }
-                                Text(asset.title).font(.system(size: 9)).lineLimit(1)
-                            }
-                            .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
-                            .clipShape(RoundedRectangle(cornerRadius: 7))
-                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.customBackground.imagePath == asset.reference ? AppTheme.green : AppTheme.line, lineWidth: 2))
-                        }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
-                    }
-                }
+                Text("Use Presets for included backgrounds, or choose your own image below.")
+                    .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("Choose image…") { chooseImage() }
                     if model.customBackground.imagePath != nil {
@@ -325,6 +318,28 @@ struct BackgroundInspector: View {
             case .blur:
                 InspectorSlider(title: "Blur", value: $model.customBackground.blurRadius, range: 4...120, suffix: "")
                 InspectorSlider(title: "Dim", value: $model.customBackground.dim, range: 0...0.8, suffix: "")
+            }
+        }
+    }
+
+    private var builtInGrid: some View {
+        LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
+            ForEach(BuiltInBackground.allCases) { asset in
+                Button {
+                    model.customBackground.imagePath = asset.reference
+                    model.customBackground.imageFills = true
+                } label: {
+                    VStack(spacing: 3) {
+                        if let url = asset.url, let image = NSImage(contentsOf: url) {
+                            Image(nsImage: image).resizable().scaledToFill()
+                                .frame(height: 54).frame(maxWidth: .infinity).clipped()
+                        }
+                        Text(asset.title).font(.system(size: 9)).lineLimit(1)
+                    }
+                    .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.customBackground.imagePath == asset.reference ? AppTheme.green : AppTheme.line, lineWidth: 2))
+                }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
             }
         }
     }

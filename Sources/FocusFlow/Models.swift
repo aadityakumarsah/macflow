@@ -112,7 +112,7 @@ enum BackgroundKind: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .preset: "Preset"
+        case .preset: "Presets"
         case .solid: "Colour"
         case .gradient: "Gradient"
         case .image: "Image"

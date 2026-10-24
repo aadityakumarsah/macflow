@@ -554,6 +554,10 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         let custom = settings.customBackground
         switch custom.kind {
         case .preset:
+            if let path = custom.imagePath, BuiltInBackground.url(for: path) != nil,
+               let image = VideoExporter.backgroundImage(at: path) {
+                return dimmed(lay(image, in: extent, fills: custom.imageFills), by: custom.dim, extent: extent)
+            }
             let colors = presetColors(settings.background)
             return gradient(colors.0, colors.1, angle: 135, extent: extent)
 
