@@ -20,6 +20,8 @@ struct ExportSettings {
     let cameraURL: URL?
     let showCamera: Bool
     let cameraSize: Double
+    var cameraHeightScale: Double = 1
+    var cameraSubjectScale: Double = 1
     let cameraX: Double
     let cameraY: Double
     let cameraCornerRadius: Double
@@ -32,6 +34,8 @@ struct ExportSettings {
     var trimEnd: Double = .greatestFiniteMagnitude
     var playbackRate: Double = 1
     var muted = false
+    var musicURL: URL? = nil
+    var musicVolume: Double = 0.35
     var cameraTimeOffset: Double = 0
     var frame = FrameAppearance(chrome: .none)
     var motion = MotionAppearance()
@@ -52,7 +56,7 @@ enum ExportError: LocalizedError {
 }
 
 enum VideoExporter {
-    static func composition(source: URL, settings: ExportSettings) async throws -> (AVMutableComposition, AVMutableVideoComposition) {
+    static func composition(source: URL, settings: ExportSettings) async throws -> (AVMutableComposition, AVMutableVideoComposition, AVAudioMix?) {
         let asset = AVURLAsset(url: source)
         let duration = try await asset.load(.duration)
         guard let video = try await asset.loadTracks(withMediaType: .video).first else { throw ExportError.unavailable }
@@ -82,6 +86,27 @@ enum VideoExporter {
                 }
             }
         }
+        var musicMix: AVAudioMix?
+        if let musicURL = settings.musicURL, FileManager.default.fileExists(atPath: musicURL.path) {
+            let musicAsset = AVURLAsset(url: musicURL)
+            guard let sourceAudio = try await musicAsset.loadTracks(withMediaType: .audio).first,
+                  let track = edit.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw ExportError.failed("The selected music file has no playable audio.")
+            }
+            let range = try await sourceAudio.load(.timeRange)
+            guard range.duration > .zero else { throw ExportError.failed("The selected music file has no playable audio.") }
+            var at = CMTime.zero
+            while at < duration {
+                let length = CMTimeMinimum(range.duration, duration - at)
+                try track.insertTimeRange(CMTimeRange(start: range.start, duration: length), of: sourceAudio, at: at)
+                at = at + length
+            }
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            parameters.setVolume(Float(min(1, max(0, settings.musicVolume))), at: .zero)
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [parameters]
+            musicMix = mix
+        }
         var cameraID = kCMPersistentTrackID_Invalid
         var cameraTransform = CGAffineTransform.identity
         if let url = settings.cameraURL {
@@ -105,7 +130,7 @@ enum VideoExporter {
         composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(settings.exportOptions.frameRate.rawValue))
         composition.customVideoCompositorClass = FocusFlowCompositor.self
         composition.instructions = [CompositionInstruction(timeRange: CMTimeRange(start: .zero, duration: edit.duration), settings: settings, screenTrackID: screen.trackID, cameraTrackID: cameraID, screenTransform: screenTransform, cameraTransform: cameraTransform)]
-        return (edit, composition)
+        return (edit, composition, musicMix)
     }
 
     static func export(source: URL, destination: URL, settings: ExportSettings, progress: @escaping (Double) -> Void) async throws {
@@ -113,7 +138,7 @@ enum VideoExporter {
               settings.cameraURL?.standardizedFileURL != destination.standardizedFileURL else {
             throw ExportError.failed("Choose a different filename to preserve your original recording.")
         }
-        let (asset, composition) = try await composition(source: source, settings: settings)
+        let (asset, composition, musicMix) = try await composition(source: source, settings: settings)
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { throw ExportError.unavailable }
         let options = settings.exportOptions
         let temporary = destination.deletingLastPathComponent()
@@ -125,6 +150,7 @@ enum VideoExporter {
         // impose their own dimensions and would fight it.
         session.outputFileType = options.format == .mp4 ? .mp4 : .mov
         session.videoComposition = composition
+        session.audioMix = musicMix
         session.shouldOptimizeForNetworkUse = true
         let start = max(0, settings.trimStart / settings.playbackRate)
         let end = min(asset.duration.seconds, settings.trimEnd / settings.playbackRate)
@@ -233,11 +259,31 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let strength = MotionEngine.envelope(spot, time: time)
             guard strength > 0 else { continue }
             let w = source.extent.width * spot.regionWidth, h = source.extent.height * spot.regionHeight
+            let region = CGRect(x: source.extent.width * spot.x - w / 2, y: source.extent.height * (1 - spot.y) - h / 2, width: w, height: h)
             let mask = CIFilter.roundedRectangleGenerator()
-            mask.extent = CGRect(x: source.extent.width * spot.x - w / 2, y: source.extent.height * (1 - spot.y) - h / 2, width: w, height: h)
+            mask.extent = region
             mask.radius = Float(min(w, h) * 0.18); mask.color = .white
+            let feather = max(12, source.extent.width / 1920 * 24)
             let dimmed = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: strength * min(0.9, spot.intensity * 0.25))).cropped(to: source.extent).composited(over: source)
-            source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask.outputImage!.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 5])])
+            let softMask = mask.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather])
+            source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: softMask])
+            let borderWidth = max(2, source.extent.width / 1920 * 3)
+            let outer = CIFilter.roundedRectangleGenerator()
+            outer.extent = region.insetBy(dx: -borderWidth, dy: -borderWidth)
+            outer.radius = Float(min(w, h) * 0.18 + borderWidth)
+            outer.color = .white
+            let inner = CIFilter.roundedRectangleGenerator()
+            inner.extent = region.insetBy(dx: borderWidth, dy: borderWidth)
+            inner.radius = Float(max(1, min(w, h) * 0.18 - borderWidth))
+            inner.color = .white
+            let ring = outer.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))
+                .applyingFilter("CISourceOutCompositing", parameters: [kCIInputBackgroundImageKey: inner.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))])
+            let ink = CIImage(color: CIColor(cgColor: settings.cursor.accentColor.copy(alpha: strength * 0.48) ?? settings.cursor.accentColor)).cropped(to: ring.extent)
+            let clear = CIImage(color: .clear).cropped(to: ring.extent)
+            let glow = ink.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: ring.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather * 0.65])])
+            let edge = opacity(ink.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: ring]), 0.5)
+            source = edge.composited(over: glow.composited(over: source))
         }
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
         for outline in settings.segments where outline.kind == .outline {
@@ -273,6 +319,18 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         let layout = FrameLayout.make(canvas: canvas, sourceSize: sourceSize, padding: settings.padding, frame: settings.frame)
         source = source.transformed(by: CGAffineTransform(scaleX: layout.content.width / source.extent.width, y: layout.content.height / source.extent.height))
             .transformed(by: CGAffineTransform(translationX: layout.content.minX, y: layout.content.minY)).cropped(to: layout.content)
+        if settings.motion.automaticMotionBlur != false {
+            let frameStep = 1 / Double(settings.exportOptions.frameRate.rawValue)
+            let previous = MotionEngine.viewport(at: max(0, time - frameStep), segments: settings.segments, samples: settings.pointerSamples, crop: settings.frame.crop)
+            let next = MotionEngine.viewport(at: time + frameStep, segments: settings.segments, samples: settings.pointerSamples, crop: settings.frame.crop)
+            let dx = (next.midX - previous.midX) / max(0.01, viewport.width) * layout.content.width
+            let dy = (next.midY - previous.midY) / max(0.01, viewport.height) * layout.content.height
+            let zoomMotion = abs(next.width - previous.width) / max(0.01, viewport.width) * layout.content.width * 0.12
+            let radius = min(12, (hypot(dx, dy) * 0.16 + zoomMotion) * max(0, min(1, settings.motion.motionBlurStrength ?? 0.55)))
+            if radius > 0.6 {
+                source = source.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [kCIInputRadiusKey: radius, kCIInputAngleKey: atan2(-dy, dx)]).cropped(to: layout.content)
+            }
+        }
         if let header = RenderAssets.header(settings.frame, rect: layout.header) { source = header.composited(over: source) }
         let rounded = CIFilter.roundedRectangleGenerator()
         rounded.extent = layout.outer; rounded.radius = Float(settings.cornerRadius); rounded.color = .white
@@ -333,12 +391,14 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     }
 
     private func applyCamera(_ cameraImage: CIImage, over background: CIImage, settings: ExportSettings, canvas: CGRect) -> CIImage {
-        let height = max(72, min(canvas.width, canvas.height) * settings.cameraSize)
-        let width = settings.cameraShape == .circle ? height : height * 1.45
+        let base = max(72, min(canvas.width, canvas.height) * settings.cameraSize)
+        let height = settings.cameraShape == .circle ? base : base * min(1.7, max(0.65, settings.cameraHeightScale))
+        let width = settings.cameraShape == .circle ? height : base * 1.45
         let x = min(canvas.maxX - width, max(canvas.minX, canvas.minX + settings.cameraX * canvas.width - width / 2))
         let y = min(canvas.maxY - height, max(canvas.minY, canvas.minY + (1 - settings.cameraY) * canvas.height - height / 2))
         let target = CGRect(x: x, y: y, width: width, height: height)
         let scale = max(target.width / cameraImage.extent.width, target.height / cameraImage.extent.height)
+            * min(3, max(1, settings.cameraSubjectScale))
         var camera = cameraImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         camera = camera.transformed(by: CGAffineTransform(translationX: target.midX - camera.extent.midX, y: target.midY - camera.extent.midY)).cropped(to: target)
 
@@ -535,12 +595,14 @@ extension VideoExporter {
     nonisolated(unsafe) private static var imageCacheValue: CIImage?
 
     static func backgroundImage(at path: String) -> CIImage? {
-        let stamp = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)??.timeIntervalSince1970 ?? 0
-        let key = "\(path)|\(stamp)"
+        let resolved = BuiltInBackground.url(for: path) ?? (path.hasPrefix("builtin:") ? nil : URL(fileURLWithPath: path))
+        guard let resolved else { return nil }
+        let stamp = (try? FileManager.default.attributesOfItem(atPath: resolved.path)[.modificationDate] as? Date)??.timeIntervalSince1970 ?? 0
+        let key = "\(resolved.path)|\(stamp)"
         imageCacheLock.lock()
         defer { imageCacheLock.unlock() }
         if key == imageCacheKey { return imageCacheValue }
-        let image = CIImage(contentsOf: URL(fileURLWithPath: path))
+        let image = CIImage(contentsOf: resolved)
         imageCacheKey = key
         imageCacheValue = image
         return image

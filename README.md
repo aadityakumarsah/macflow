@@ -100,21 +100,21 @@ After a native Window or Display recording, open **Cursor** to change its size f
 
 Videos without a separate pointer track show an explanation instead of editable cursor controls. A cursor baked into an imported video cannot be independently resized. For connected Chrome tab capture, FocusFlow asks Chrome to omit its baked-in cursor and records a separate pointer track; support depends on Chrome. If Chrome includes the cursor, the editor leaves its overlay off by default and explains the limitation.
 
-- Shared Core Image renderer for preview and MP4 export, including background, rounded corners, shadows, camera, blur, cursor, and zoom.
+- Shared Core Image renderer for preview and MP4 export, including background, rounded corners, shadows, camera, blur, cursor, and zoom. **Play edited preview** in Export starts the finished edit with its audio mix.
 - Automatic editing from recorded interactions: grouped click zooms, alternating spotlights/accent frames/callouts, and focus frames around text-selection drags. Larger double click ripples, an animated canvas and progress line, and a larger editable cursor render in preview and export. Automatic editing never adds pans. Motion → **Create automatic edit** rebuilds this sequence.
-- Pan segments with editable start/end focus points, slide-up/slide-in/scale entrances, and optional fade-out.
+- Automatic motion blur on zoom movement, with a strength slider, plus slide-up/slide-in/scale entrances and optional fade-out. Earlier projects with pan segments still render correctly, but the editor no longer offers new pans.
 - Editable macOS light/dark window frame with red/yellow/green controls, optional title, title-bar height, and control size. The frame stays fixed while the content zooms.
 - Non-destructive **Crop to tab or pane** in the editor, including imported and browser videos. Canvas fitting preserves the selected content instead of filling and clipping the edges.
-- Timed spotlights, accent outlines, pixelation, and text callouts, with easing and preview positioning. Select an effect and drag its focus directly on the preview.
+- Timed spotlights with a feathered edge and soft accent border, accent outlines, pixelation, and text callouts, with easing and preview positioning. Select an effect and drag its focus directly on the preview.
 - **Full screen preview** (⌃⌘F, or the arrows in the toolbar) hides the rails, inspector and timeline, takes the window to macOS full screen, and gives the preview the display. Escape or the on-screen control returns.
 - Cursor size now goes to 10×, and the I-beam has its own scale beside it — it is a thin glyph and reads far smaller than the arrow at the same size.
 - Smooth bounded cursor interpolation, outlined Pearl/Obsidian/Accent styles, four accent colors, gentle movement tilt, size, visibility, shadow, ripple/pulse/press click effects, and optional keyboard shortcut badges. Cursor and title-bar artwork is cached for playback.
 - Region blur with editable center, width, height, strength, and timing; one button blurs the entire frame. Multiple regions can overlap.
 - Timeline scrubbing, segment move/edge resize, duplicate, split at playhead, delete, undo, and redo.
-- Non-destructive trim in/out markers, playback/export speed, and audio mute.
-- Separate camera layer with position, size, rounded/circular shape, mirroring, and show/hide. Drag the camera directly in the preview.
+- Non-destructive trim in/out markers, playback/export speed, recording audio mute, and a looping music file with volume control. Music is included in both preview and export.
+- Separate camera layer with position, frame width and height, subject size, rounded/circular shape, mirroring, and show/hide. Drag the camera directly in the preview.
 - Source, landscape, portrait, square, 4:3, and **Custom** canvas formats. The **Custom ratio** button above the preview opens width/height controls directly; all aspect ratios also appear first in the **Canvas** panel. Custom takes any width:height, including decimals such as 2.39:1, with one-tap presets for 21:9, 2.39:1, 3:2 and 4:5 and a swap button. The result is capped on its longer side and kept to even dimensions. Changing the ratio re-fits the composition: padding tightens as the content and canvas aspects diverge, and the camera moves into the area that opens up. Turn this off with **Re-fit when the ratio changes**.
-- Backgrounds: six gradient presets, a solid colour, a custom two-colour gradient at any angle, an image file (fill or fit, with an adjustable dim), or the recording itself blurred behind the frame. A missing image file falls back to the gradient rather than rendering black.
+- Backgrounds: nine bundled image choices from `public/bg*.png`, six gradient presets, a solid colour, a custom two-colour gradient at any angle, an image file (fill or fit, with an adjustable dim), or the recording itself blurred behind the frame. A missing image file falls back to the gradient rather than rendering black.
 - Export settings: MP4 or MOV, Source/720p/1080p/1440p/4K, and 30 or 60 fps. Resolution scales the composed canvas and keeps even dimensions.
 - Recording library and recoverable deletion through macOS Trash. Deleting the open recording also clears the editor.
 - Automatic local edit saving plus **Save Project** and **Open video or project**. Camera, cursor, trim, speed, appearance, effects, and recording metadata are preserved.

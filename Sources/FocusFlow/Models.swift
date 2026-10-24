@@ -4,7 +4,7 @@ import CoreGraphics
 enum SegmentKind: String, Codable, CaseIterable, Identifiable {
     case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline
     var id: String { rawValue }
-    static let availableCases: [SegmentKind] = [.zoom, .pan, .spotlight, .outline, .callout, .blur, .pixelate]
+    static let availableCases: [SegmentKind] = [.zoom, .spotlight, .outline, .callout, .blur, .pixelate]
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled" }
@@ -204,6 +204,8 @@ struct ProjectDocument: Codable {
     var showKeystrokes: Bool? = false
     var showCamera: Bool? = true
     var cameraSize: Double? = 0.24
+    var cameraHeightScale: Double? = nil
+    var cameraSubjectScale: Double? = nil
     var cameraX: Double? = 0.82
     var cameraY: Double? = 0.78
     var cameraCornerRadius: Double? = 14
@@ -213,6 +215,8 @@ struct ProjectDocument: Codable {
     var trimEnd: Double? = nil
     var playbackRate: Double? = 1
     var muted: Bool? = false
+    var musicPath: String? = nil
+    var musicVolume: Double? = nil
     var metadata: RecordingMetadata? = nil
     var frameAppearance: FrameAppearance? = nil
     var motionAppearance: MotionAppearance? = nil

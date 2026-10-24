@@ -40,6 +40,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try await tests.testBridgeAcceptsWebStudioOriginOnly()
             print("Checking backgrounds, export options, and project compatibility…")
             try tests.testCustomBackgroundKindsRenderDistinctly()
+            try tests.testAutomaticMotionBlurChangesMovingZoomFrames()
             tests.testExportResolutionScalesCanvasKeepingAspect()
             try tests.testProjectWithoutNewFieldsStillDecodes()
             print("Checking the updater…")

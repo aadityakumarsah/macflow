@@ -48,6 +48,13 @@ trap cleanup EXIT
 
 mkdir -p "$STAGE/.background"
 cp -R "$APP_DIR" "$STAGE/FocusFlow.app"
+# Desktop-backed folders may attach Finder metadata to the app after the
+# build. Strip that metadata and sign the staged copy before sealing the DMG.
+xattr -cr "$STAGE/FocusFlow.app"
+codesign --force --deep --sign - \
+    --requirements '=designated => identifier "app.focusflow.recorder"' \
+    "$STAGE/FocusFlow.app"
+codesign --verify --deep --strict "$STAGE/FocusFlow.app"
 ln -s /Applications "$STAGE/Applications"
 
 # Render the background at 2x, then tag it 144 dpi so the Finder lays it out

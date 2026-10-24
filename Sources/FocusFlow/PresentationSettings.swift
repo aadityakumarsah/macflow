@@ -59,6 +59,8 @@ struct MotionAppearance: Codable, Equatable {
     var duration: Double = 0.8
     var fadeOut = false
     var ambientGraphics: Bool? = true
+    var automaticMotionBlur: Bool? = true
+    var motionBlurStrength: Double? = 0.55
 }
 enum PointerStyle: String, Codable, CaseIterable, Identifiable {
     case macOS = "macOS", light = "Pearl", dark = "Obsidian", accent = "Accent"

@@ -90,12 +90,23 @@ final class FocusFlowTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let source = directory.appendingPathComponent("source.mp4"), camera = directory.appendingPathComponent("camera.mp4")
         try await makeFixture(at: source, camera: false); try await makeFixture(at: camera, camera: true)
+        let music = directory.appendingPathComponent("music.caf")
+        let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        let audioBuffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: 22_050)!
+        audioBuffer.frameLength = 22_050
+        for index in 0..<Int(audioBuffer.frameLength) {
+            audioBuffer.floatChannelData![0][index] = Float(sin(Double(index) * 2 * .pi * 440 / 44_100) * 0.2)
+        }
+        let audioFile = try AVAudioFile(forWriting: music, settings: audioFormat.settings)
+        try audioFile.write(from: audioBuffer)
         var settings = ExportSettings(background: .cream, canvasSize: CGSize(width: 640, height: 360), padding: 7, cornerRadius: 18, shadow: 20, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: camera, showCamera: true, cameraSize: 0.25, cameraX: 0.83, cameraY: 0.75, cameraCornerRadius: 12, cameraShape: .circle)
-        settings.trimStart = 0.4; settings.trimEnd = 1.6; settings.playbackRate = 2
+        settings.trimStart = 0.4; settings.trimEnd = 1.6; settings.playbackRate = 2; settings.musicURL = music
         let clean = directory.appendingPathComponent("clean.mp4")
         try await VideoExporter.export(source: source, destination: clean, settings: settings) { _ in }
         let duration = try await AVURLAsset(url: clean).load(.duration).seconds
         XCTAssertEqual(duration, 0.6, accuracy: 0.06)
+        let musicTracks = try await AVURLAsset(url: clean).loadTracks(withMediaType: .audio)
+        XCTAssertGreaterThan(musicTracks.count, 0)
         settings.segments = [EditSegment(kind: .blur, start: 0, duration: 2, intensity: 2, x: 0.35, y: 0.5, width: 0.25, height: 0.4)]
         let blurred = directory.appendingPathComponent("blurred.mp4")
         try await VideoExporter.export(source: source, destination: blurred, settings: settings) { _ in }
@@ -346,9 +357,38 @@ final class FocusFlowTests {
         let missing = try corner(CustomBackground(kind: .image, top: RGBColor(r: 0, g: 0.9, b: 0.3), bottom: RGBColor(r: 0, g: 0.9, b: 0.3), imagePath: "/nonexistent/background.png"))
         XCTAssertGreaterThan(Int(missing[1]), 110)
 
+        // Included artwork must resolve from the app bundle and reach the renderer.
+        for artwork in BuiltInBackground.allCases {
+            XCTAssertTrue(artwork.url.map { FileManager.default.fileExists(atPath: $0.path) } ?? false)
+        }
+        let bundled = try corner(CustomBackground(kind: .image, imagePath: BuiltInBackground.bloom.reference))
+        XCTAssertTrue(bundled != solid)
+
         // The blurred backdrop derives from the frame, which is red here.
         let blurred = try corner(CustomBackground(kind: .blur, blurRadius: 20, dim: 0))
         XCTAssertGreaterThan(Int(blurred[0]), Int(blurred[2]))
+    }
+
+    func testAutomaticMotionBlurChangesMovingZoomFrames() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 480, height: 270)
+        let bars = (0..<60).reduce(CIImage(color: .black).cropped(to: canvas)) { image, index in
+            CIImage(color: index.isMultiple(of: 2) ? .white : .black)
+                .cropped(to: CGRect(x: index * 8, y: 0, width: 8, height: 270)).composited(over: image)
+        }
+        var settings = ExportSettings(background: .none, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0,
+            segments: [EditSegment(kind: .zoom, start: 0.5, duration: 2, intensity: 2, x: 0.7, y: 0.5, transition: 0.8)],
+            pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false,
+            cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.automaticMotionBlur = false
+        let sharp = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: bars, time: 0.75, settings: settings), from: canvas))
+        settings.motion.automaticMotionBlur = true
+        settings.motion.motionBlurStrength = 1
+        let softened = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: bars, time: 0.75, settings: settings), from: canvas))
+        let before = pixels(sharp), after = pixels(softened)
+        let difference = stride(from: 0, to: before.count, by: 4).reduce(0.0) { $0 + abs(Double(before[$1]) - Double(after[$1])) }
+        XCTAssertGreaterThan(difference / Double(before.count / 4), 1)
     }
 
     /// Export resolution scales the composed canvas, keeps its aspect, and

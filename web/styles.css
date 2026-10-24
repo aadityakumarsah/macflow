@@ -42,3 +42,5 @@
 @keyframes demoFocus{0%,33%{opacity:0;transform:scale(.9)}43%,64%{opacity:1;transform:scale(1)}76%,100%{opacity:0;transform:scale(1.06)}}
 @keyframes demoProgress{from{width:0}to{width:100%}}
 @media(prefers-reduced-motion:reduce){.demo-screen,.demo-motion-glow,.demo-focus-frame,.demo-stage-progress,.demo-cursor,.demo-click-ring{animation:none!important}.demo-stage-progress{width:55%}.demo-focus-frame{opacity:1}.demo-click-ring{opacity:.45}}
+
+.background-options{display:flex;gap:7px;padding:14px 17px 0;overflow-x:auto}.background-options button{flex:0 0 35px;width:35px;height:35px;background-size:cover;background-position:center;border:2px solid white;border-radius:7px;box-shadow:0 0 0 1px #d5d5df}.background-options button.active{box-shadow:0 0 0 2px var(--blue)}.format-stage{background-size:cover;background-position:center;transition:background-image .2s}

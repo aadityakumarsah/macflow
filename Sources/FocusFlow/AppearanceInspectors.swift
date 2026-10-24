@@ -30,6 +30,10 @@ struct MotionAppearanceInspector: View {
     var body: some View {
         InspectorSection(title: "MOTION") {
             Toggle("Animated canvas and progress line", isOn: Binding(get: { model.motionAppearance.ambientGraphics != false }, set: { model.motionAppearance.ambientGraphics = $0 }))
+            Toggle("Automatic motion blur", isOn: Binding(get: { model.motionAppearance.automaticMotionBlur != false }, set: { model.motionAppearance.automaticMotionBlur = $0 }))
+            if model.motionAppearance.automaticMotionBlur != false {
+                InspectorSlider(title: "Blur strength", value: Binding(get: { model.motionAppearance.motionBlurStrength ?? 0.55 }, set: { model.motionAppearance.motionBlurStrength = $0 }), range: 0...1, suffix: "")
+            }
             Picker("Entrance", selection: $model.motionAppearance.entrance) { ForEach(EntranceStyle.allCases) { Text($0.rawValue).tag($0) } }
             Toggle("Fade out at end", isOn: $model.motionAppearance.fadeOut)
             if model.motionAppearance.entrance != .none || model.motionAppearance.fadeOut {
@@ -37,7 +41,7 @@ struct MotionAppearanceInspector: View {
             }
             Button { model.rebuildAutoEdits() } label: { Label("Create automatic edit", systemImage: "sparkles") }
                 .disabled(model.recordedClicks.isEmpty && model.pointerSamples.isEmpty)
-                .help("Build click zooms, spotlights, accent frames, callouts, pans, and text selection focus from recorded interactions. Replaces timeline effects.")
+                .help("Build click zooms, spotlights, accent frames, callouts, and text selection focus from recorded interactions. Replaces timeline effects.")
             Button { model.addAutoZooms() } label: { Label("Rebuild click zooms only", systemImage: "plus.magnifyingglass") }
                 .disabled(model.recordedClicks.isEmpty)
 
@@ -46,7 +50,7 @@ struct MotionAppearanceInspector: View {
                 Text("No clicks were recorded with this video. Text selection effects can still be generated when pointer movement was captured.")
                     .font(.caption2).foregroundStyle(.secondary)
             } else {
-                Text("Add Zoom or Pan in the Motion panel. Drag a focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
+                Text("Add Zoom in the Motion panel. Drag its focus point on the preview to direct the motion.").font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
@@ -276,6 +280,26 @@ struct BackgroundInspector: View {
                 InspectorSlider(title: "Angle", value: $model.customBackground.angle, range: 0...360, suffix: "°")
 
             case .image:
+                Text("Included backgrounds").font(.caption2).foregroundStyle(.secondary)
+                LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
+                    ForEach(BuiltInBackground.allCases) { asset in
+                        Button {
+                            model.customBackground.imagePath = asset.reference
+                            model.customBackground.imageFills = true
+                        } label: {
+                            VStack(spacing: 3) {
+                                if let url = asset.url, let image = NSImage(contentsOf: url) {
+                                    Image(nsImage: image).resizable().scaledToFill()
+                                        .frame(height: 48).frame(maxWidth: .infinity).clipped()
+                                }
+                                Text(asset.title).font(.system(size: 9)).lineLimit(1)
+                            }
+                            .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.customBackground.imagePath == asset.reference ? AppTheme.green : AppTheme.line, lineWidth: 2))
+                        }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
+                    }
+                }
                 HStack {
                     Button("Choose image…") { chooseImage() }
                     if model.customBackground.imagePath != nil {
@@ -285,7 +309,7 @@ struct BackgroundInspector: View {
                 if let path = model.customBackground.imagePath {
                     Text((path as NSString).lastPathComponent)
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    if !FileManager.default.fileExists(atPath: path) {
+                    if !FileManager.default.fileExists(atPath: BuiltInBackground.url(for: path)?.path ?? path) {
                         Text("This file has moved — the gradient is drawn instead.")
                             .font(.caption2).foregroundStyle(.orange)
                     }

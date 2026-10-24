@@ -337,8 +337,9 @@ struct EditableCameraOverlay: View {
     @State private var origin: CGPoint?
     @State private var hovered = false
     var body: some View {
-        let height = min(canvasSize.width, canvasSize.height) * model.cameraSize
-        let width = model.cameraShape == .circle ? height : height * 1.45
+        let base = min(canvasSize.width, canvasSize.height) * model.cameraSize
+        let height = model.cameraShape == .circle ? base : base * model.cameraHeightScale
+        let width = model.cameraShape == .circle ? height : base * 1.45
         let x = max(width / 2, min(canvasSize.width - width / 2, model.cameraX * canvasSize.width))
         let y = max(height / 2, min(canvasSize.height - height / 2, model.cameraY * canvasSize.height))
         RoundedRectangle(cornerRadius: model.cameraShape == .circle ? height / 2 : 10)

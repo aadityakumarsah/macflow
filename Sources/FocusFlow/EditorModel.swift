@@ -50,6 +50,8 @@ final class EditorModel: ObservableObject {
     @Published var showKeystrokes = false { willSet { remember() } didSet { changed() } }
     @Published var showCamera = true { willSet { remember() } didSet { changed() } }
     @Published var cameraSize: Double = 0.24 { willSet { remember() } didSet { changed() } }
+    @Published var cameraHeightScale: Double = 1 { willSet { remember() } didSet { changed() } }
+    @Published var cameraSubjectScale: Double = 1 { willSet { remember() } didSet { changed() } }
     @Published var cameraX: Double = 0.82 { willSet { remember() } didSet { changed() } }
     @Published var cameraY: Double = 0.78 { willSet { remember() } didSet { changed() } }
     @Published var cameraCornerRadius: Double = 14 { willSet { remember() } didSet { changed() } }
@@ -59,6 +61,8 @@ final class EditorModel: ObservableObject {
     @Published var trimEnd: Double = 0 { willSet { remember() } didSet { changed() } }
     @Published var playbackRate: Double = 1 { willSet { remember() } didSet { changed() } }
     @Published var muted = false { willSet { remember() } didSet { changed() } }
+    @Published var musicURL: URL? { willSet { remember() } didSet { changed() } }
+    @Published var musicVolume: Double = 0.35 { willSet { remember() } didSet { changed() } }
     @Published var frameAppearance = FrameAppearance() { willSet { remember() } didSet { changed() } }
     @Published var motionAppearance = MotionAppearance() { willSet { remember() } didSet { changed() } }
     @Published var cursorAppearance = CursorAppearance() { willSet { remember() } didSet { changed() } }
@@ -178,9 +182,9 @@ final class EditorModel: ObservableObject {
         playhead = 0; duration = 0; segments = []; selectedSegmentID = nil; inspectorTab = "Canvas"
         background = .aurora; ratio = .source; padding = 7; cornerRadius = 18; shadow = 30
         cursorSize = 5; clickEffects = true; showCursor = true; smoothCursor = true; cursorShadow = true
-        showKeystrokes = false; showCamera = true; cameraSize = 0.24; cameraX = 0.82; cameraY = 0.78
+        showKeystrokes = false; showCamera = true; cameraSize = 0.24; cameraHeightScale = 1; cameraSubjectScale = 1; cameraX = 0.82; cameraY = 0.78
         cameraCornerRadius = 14; cameraShape = .roundedRectangle; cameraMirrored = false
-        trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false
+        trimStart = 0; trimEnd = 0; playbackRate = 1; muted = false; musicURL = nil; musicVolume = 0.35
         frameAppearance = FrameAppearance(); motionAppearance = MotionAppearance(); cursorAppearance = CursorAppearance()
         customBackground = CustomBackground(); exportOptions = ExportOptions()
         customRatio = CGSize(width: 16, height: 10)
@@ -237,6 +241,20 @@ final class EditorModel: ObservableObject {
             player.play()
         }
         isPlaying.toggle()
+    }
+    func previewEdit() {
+        guard videoURL != nil else { return }
+        player.pause()
+        seek(to: trimStart)
+        player.play()
+        isPlaying = true
+    }
+    func chooseMusic() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        musicURL = url
     }
     func seek(to seconds: Double) {
         playhead = max(0, min(duration, seconds))
@@ -327,10 +345,12 @@ final class EditorModel: ObservableObject {
         cornerRadius = d.cornerRadius; shadow = d.shadow; cursorSize = d.cursorSize; clickEffects = d.clickEffects
         showCursor = d.showCursor ?? true; smoothCursor = d.smoothCursor ?? true; cursorShadow = d.cursorShadow ?? true
         showKeystrokes = d.showKeystrokes ?? false; showCamera = d.showCamera ?? true
-        cameraSize = d.cameraSize ?? 0.24; cameraX = d.cameraX ?? 0.82; cameraY = d.cameraY ?? 0.78
+        cameraSize = d.cameraSize ?? 0.24; cameraHeightScale = d.cameraHeightScale ?? 1; cameraSubjectScale = d.cameraSubjectScale ?? 1
+        cameraX = d.cameraX ?? 0.82; cameraY = d.cameraY ?? 0.78
         cameraCornerRadius = d.cameraCornerRadius ?? 14; cameraShape = d.cameraShape ?? .roundedRectangle; cameraMirrored = d.cameraMirrored ?? false
         trimStart = max(0, min(d.trimStart ?? 0, duration - 0.1)); trimEnd = min(duration, max(trimStart + 0.1, d.trimEnd ?? duration))
         playbackRate = max(0.25, min(3, d.playbackRate ?? 1)); muted = d.muted ?? false
+        musicURL = d.musicPath.map { URL(fileURLWithPath: $0) }; musicVolume = min(1, max(0, d.musicVolume ?? 0.35))
         frameAppearance = d.frameAppearance ?? FrameAppearance(chrome: .none)
         motionAppearance = d.motionAppearance ?? MotionAppearance()
         cursorAppearance = d.cursorAppearance ?? CursorAppearance()
@@ -340,7 +360,7 @@ final class EditorModel: ObservableObject {
         restoring = false
     }
     private func document() -> ProjectDocument {
-        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
+        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
     }
     private func readProject(at url: URL) -> ProjectDocument? { guard let data = try? Data(contentsOf: url) else { return nil }; return try? JSONDecoder().decode(ProjectDocument.self, from: data) }
     private func editsURL(for url: URL) -> URL { url.deletingPathExtension().appendingPathExtension("edits.json") }
@@ -354,7 +374,7 @@ final class EditorModel: ObservableObject {
         catch { message = error.localizedDescription }
     }
     func settings() -> ExportSettings {
-        ExportSettings(background: background, canvasSize: canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, exportOptions: exportOptions)
+        ExportSettings(background: background, canvasSize: canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, exportOptions: exportOptions)
     }
     private func changed() {
         guard !restoring, let url = videoURL, duration > 0 else { return }
@@ -363,10 +383,10 @@ final class EditorModel: ObservableObject {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 let settings = settings()
-                let (asset, composition) = try await VideoExporter.composition(source: url, settings: settings)
+                let (asset, composition, musicMix) = try await VideoExporter.composition(source: url, settings: settings)
                 try Task.checkCancellation()
                 let time = playhead, playing = isPlaying
-                let item = AVPlayerItem(asset: asset); item.videoComposition = composition
+                let item = AVPlayerItem(asset: asset); item.videoComposition = composition; item.audioMix = musicMix
                 player.replaceCurrentItem(with: item); seek(to: time); if playing { player.play() }
                 installTimeObserver(); isPreparingPreview = false
                 try JSONEncoder().encode(document()).write(to: editsURL(for: url), options: .atomic)
@@ -394,7 +414,7 @@ final class EditorModel: ObservableObject {
             previewTask?.cancel(); openTask?.cancel(); player.pause(); player.replaceCurrentItem(with: nil)
             videoURL = nil; duration = 0; playhead = 0; isPlaying = false; cameraURL = nil; segments = []
             selectedSegmentID = nil; inspectorTab = "Canvas"; trimStart = 0; trimEnd = 0
-            recordedClicks = []; pointerSamples = []; keystrokes = []; metadata = .empty
+            recordedClicks = []; pointerSamples = []; keystrokes = []; metadata = .empty; musicURL = nil
             undoStack = []; redoStack = []; updateHistory(); UserDefaults.standard.removeObject(forKey: "FocusFlow.lastRecording")
         }
         try await library.delete(item)
