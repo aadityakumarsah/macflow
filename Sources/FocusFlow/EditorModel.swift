@@ -87,7 +87,15 @@ final class EditorModel: ObservableObject {
         }
         browserRecorder.onFinish = { [weak self] url, metadata in
             guard let self else { return }
-            Task { await self.finishRecording(url: url, metadata: metadata); self.showRecorder = false }
+            Task {
+                await self.finishRecording(url: url, metadata: metadata)
+                self.showRecorder = false
+                // The recording was made in Chrome, so the app is behind the
+                // browser. Come forward with the result already open — this is
+                // the handoff the browser page has just told the user about.
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+            }
         }
     }
 

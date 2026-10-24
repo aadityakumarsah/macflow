@@ -4,6 +4,23 @@ import Network
 
 @MainActor
 final class BrowserRecorderBridge: ObservableObject {
+    /// Where the hosted copy of the studio lives. Only these may post a
+    /// recording to the local bridge, and only with a valid session token —
+    /// which reaches the page through the URL fragment when this app opens
+    /// it, so a passing visitor never has one.
+    static let webStudioOrigins = [
+        "https://macflow-delta.vercel.app",
+        "https://aadityakumarsah.github.io",
+    ]
+    static let webStudioURL = "https://macflow-delta.vercel.app/studio/"
+
+    /// Opening the hosted studio means its code is fetched over the network
+    /// rather than read from this signed app bundle. Off by default.
+    static var usesWebStudio: Bool {
+        get { UserDefaults.standard.bool(forKey: "FocusFlowUsesWebStudio") }
+        set { UserDefaults.standard.set(newValue, forKey: "FocusFlowUsesWebStudio") }
+    }
+
     @Published var status = "Choose a Chrome tab and preview it before recording."
     @Published private(set) var isActive = false
     var onFinish: ((URL, RecordingMetadata) -> Void)?
@@ -16,7 +33,15 @@ final class BrowserRecorderBridge: ObservableObject {
     private var captureID: String?
     private var lastActivity = Date.distantPast
 
-    var sessionURL: URL? { isActive ? URL(string: "http://127.0.0.1:\(port)/#\(token)") : nil }
+    var sessionURL: URL? { isActive ? studioURL : nil }
+
+    private var studioURL: URL? {
+        // The hosted page needs the port too, since it cannot infer it from
+        // its own origin the way the locally served copy can.
+        BrowserRecorderBridge.usesWebStudio
+            ? URL(string: "\(BrowserRecorderBridge.webStudioURL)#\(token)&port=\(port)")
+            : URL(string: "http://127.0.0.1:\(port)/#\(token)")
+    }
     func launch(openInBrowser: Bool = true) async throws {
         if didFinish { stop() }
         guard !isActive else { if openInBrowser { openBrowser() }; return }
@@ -30,8 +55,8 @@ final class BrowserRecorderBridge: ObservableObject {
         server.newConnectionHandler = { [weak self] connection in
             let request = LocalHTTPRequest(connection: connection) { method, path, headers, body, respond in
                 Task { @MainActor in
-                    guard let self else { respond(503, "text/plain", Data("FocusFlow closed".utf8)); return }
-                    await self.handle(method: method, path: path, headers: headers, body: body, respond: respond)
+                    guard let self else { respond(503, "text/plain", Data("FocusFlow closed".utf8), [:]); return }
+                    await self.handle(method: method, path: path, headers: headers, body: body, rawRespond: respond)
                 }
             }
             request.start()
@@ -55,7 +80,7 @@ final class BrowserRecorderBridge: ObservableObject {
     }
 
     private func openBrowser() {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/#\(token)") else { return }
+        guard let url = studioURL else { return }
         if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
             NSWorkspace.shared.open([url], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
         } else { NSWorkspace.shared.open(url) }
@@ -66,9 +91,47 @@ final class BrowserRecorderBridge: ObservableObject {
         directory = nil
     }
 
-    private func handle(method: String, path: String, headers: [String: String], body: Data, respond: @escaping (Int, String, Data) -> Void) async {
-        let origin = "http://127.0.0.1:\(port)"
+    private func handle(method: String, path: String, headers: [String: String], body: Data, rawRespond: @escaping (Int, String, Data, [String: String]) -> Void) async {
+        let localOrigin = "http://127.0.0.1:\(port)"
+        let requestOrigin = headers["origin"]
+
+        // The studio page can be served by this app or by our own web host.
+        // Either way the media is posted here, to this machine; the web copy
+        // just needs to be named explicitly, because the browser will not let
+        // a remote page reach loopback without being told it may.
+        let allowedOrigins = [localOrigin] + BrowserRecorderBridge.webStudioOrigins
+        let originAllowed = requestOrigin.map(allowedOrigins.contains) ?? false
+
+        var cors: [String: String] = [:]
+        if let requestOrigin, originAllowed {
+            cors["Access-Control-Allow-Origin"] = requestOrigin
+            cors["Access-Control-Allow-Headers"] = "Content-Type, X-FocusFlow-Token, X-FocusFlow-Capture"
+            cors["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+            cors["Access-Control-Max-Age"] = "600"
+            cors["Vary"] = "Origin"
+            // Chrome treats a public page reaching 127.0.0.1 as Private
+            // Network Access and blocks it unless the preflight says the
+            // target consents. Without this the hosted studio cannot post
+            // here at all, however correct the rest of the CORS is.
+            if headers["access-control-request-private-network"] == "true" {
+                cors["Access-Control-Allow-Private-Network"] = "true"
+            }
+        }
+
+        // Shadow the raw responder so every existing reply carries the CORS
+        // headers without each call site repeating them.
+        func respond(_ status: Int, _ type: String, _ data: Data) {
+            rawRespond(status, type, data, cors)
+        }
+
         guard headers["host"] == "127.0.0.1:\(port)" else { respond(403, "text/plain", Data()); return }
+
+        // The custom headers make every POST non-simple, so the browser asks
+        // first. Answer before any token check: a preflight carries no token.
+        if method == "OPTIONS" {
+            respond(originAllowed ? 204 : 403, "text/plain", Data())
+            return
+        }
         if method == "GET" {
             let file: String
             switch path { case "/": file = "index.html"; case "/recorder.js": file = "recorder.js"; case "/style.css": file = "style.css"; default: respond(404, "text/plain", Data()); return }
@@ -78,7 +141,7 @@ final class BrowserRecorderBridge: ObservableObject {
             respond(200, file.hasSuffix("html") ? "text/html" : file.hasSuffix("js") ? "text/javascript" : "text/css", data)
             return
         }
-        guard method == "POST", headers["origin"] == origin, headers["x-focusflow-token"] == token, let directory else { respond(403, "text/plain", Data("Invalid recording session".utf8)); return }
+        guard method == "POST", originAllowed, headers["x-focusflow-token"] == token, let directory else { respond(403, "text/plain", Data("Invalid recording session".utf8)); return }
         do {
             guard let requestID = headers["x-focusflow-capture"], UUID(uuidString: requestID) != nil else {
                 respond(403, "text/plain", Data("Missing recording identifier".utf8)); return
@@ -148,10 +211,10 @@ final class BrowserRecorderBridge: ObservableObject {
 /// use does not grow with the recording. No LAN listener, remote uploads, or arbitrary paths.
 private final class LocalHTTPRequest {
     let connection: NWConnection
-    let handler: (String, String, [String: String], Data, @escaping (Int, String, Data) -> Void) -> Void
+    let handler: (String, String, [String: String], Data, @escaping (Int, String, Data, [String: String]) -> Void) -> Void
     var buffer = Data()
     var finished = false
-    init(connection: NWConnection, handler: @escaping (String, String, [String: String], Data, @escaping (Int, String, Data) -> Void) -> Void) { self.connection = connection; self.handler = handler }
+    init(connection: NWConnection, handler: @escaping (String, String, [String: String], Data, @escaping (Int, String, Data, [String: String]) -> Void) -> Void) { self.connection = connection; self.handler = handler }
     func start() { connection.start(queue: .global(qos: .userInitiated)); receive() }
     func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, complete, error in
@@ -168,16 +231,17 @@ private final class LocalHTTPRequest {
                 guard headers["transfer-encoding"] == nil, let length = Int(headers["content-length"] ?? "0"), length >= 0, length < 32 * 1024 * 1024 else { respond(400, "text/plain", Data()); return }
                 if buffer.count - boundary.upperBound >= length {
                     let body = Data(buffer[boundary.upperBound..<(boundary.upperBound + length)])
-                    handler(String(first[0]), String(first[1]), headers, body) { [self] status, type, data in respond(status, type, data) }
+                    handler(String(first[0]), String(first[1]), headers, body) { [self] status, type, data, extra in respond(status, type, data, extra) }
                     return
                 }
             } else if buffer.count > 16384 { respond(400, "text/plain", Data()); return }
             if complete || error != nil { connection.cancel() } else { receive() }
         }
     }
-    func respond(_ status: Int, _ type: String, _ body: Data) {
+    func respond(_ status: Int, _ type: String, _ body: Data, _ extra: [String: String] = [:]) {
         guard !finished else { return }; finished = true
-        var response = Data("HTTP/1.1 \(status) Result\r\nContent-Type: \(type); charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'\r\n\r\n".utf8)
+        let extraHeaders = extra.map { "\($0.key): \($0.value)\r\n" }.joined()
+        var response = Data("HTTP/1.1 \(status) Result\r\nContent-Type: \(type); charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'\r\n\(extraHeaders)\r\n".utf8)
         response.append(body)
         connection.send(content: response, completion: .contentProcessed { [connection] _ in connection.cancel() })
     }

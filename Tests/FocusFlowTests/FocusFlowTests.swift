@@ -456,6 +456,94 @@ final class FocusFlowTests {
         XCTAssertEqual(marker(target), "old-again")
     }
 
+    /// The studio page can now be served from the web, which means the local
+    /// bridge has to accept a cross-origin POST — but only from the hosts the
+    /// studio is published on, and still only with a valid session token.
+    @MainActor func testBridgeAcceptsWebStudioOriginOnly() async throws {
+        let bridge = BrowserRecorderBridge()
+        try await bridge.launch(openInBrowser: false)
+        defer { bridge.stop() }
+
+        let session = try XCTUnwrap(bridge.sessionURL)
+        var components = URLComponents(url: session, resolvingAgainstBaseURL: false)!
+        components.fragment = nil
+        let base = components.url!
+        let token = try XCTUnwrap(session.fragment).split(separator: "&").first.map(String.init) ?? ""
+        let web = try XCTUnwrap(BrowserRecorderBridge.webStudioOrigins.first)
+
+        func request(_ path: String, method: String, origin: String, token: String?, capture: String) -> URLRequest {
+            var request = URLRequest(url: base.appendingPathComponent(path))
+            request.httpMethod = method
+            request.setValue(origin, forHTTPHeaderField: "Origin")
+            if let token { request.setValue(token, forHTTPHeaderField: "X-FocusFlow-Token") }
+            request.setValue(capture, forHTTPHeaderField: "X-FocusFlow-Capture")
+            if method == "POST" { request.httpBody = Data() }
+            return request
+        }
+
+        // A preflight carries no token, so it must be answered on origin alone.
+        let (_, preflight) = try await URLSession.shared.data(
+            for: request("begin", method: "OPTIONS", origin: web, token: nil, capture: UUID().uuidString))
+        let preflightResponse = try XCTUnwrap(preflight as? HTTPURLResponse)
+        XCTAssertEqual(preflightResponse.statusCode, 204)
+        // Echoed back exactly, never "*", so no other site is covered by it.
+        XCTAssertEqual(preflightResponse.value(forHTTPHeaderField: "Access-Control-Allow-Origin"), web)
+        XCTAssertTrue((preflightResponse.value(forHTTPHeaderField: "Access-Control-Allow-Headers") ?? "")
+            .localizedCaseInsensitiveContains("X-FocusFlow-Token"))
+
+        // Chrome blocks a public page from reaching loopback unless the
+        // preflight consents, so a PNA request must be answered in kind.
+        var pna = request("begin", method: "OPTIONS", origin: web, token: nil, capture: UUID().uuidString)
+        pna.setValue("true", forHTTPHeaderField: "Access-Control-Request-Private-Network")
+        let (_, pnaResponse) = try await URLSession.shared.data(for: pna)
+        XCTAssertEqual((pnaResponse as? HTTPURLResponse)?.statusCode, 204)
+        XCTAssertEqual((pnaResponse as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "Access-Control-Allow-Private-Network"), "true")
+
+        // A preflight from anywhere else is refused outright.
+        let (_, hostile) = try await URLSession.shared.data(
+            for: request("begin", method: "OPTIONS", origin: "https://evil.invalid", token: nil, capture: UUID().uuidString))
+        XCTAssertEqual((hostile as? HTTPURLResponse)?.statusCode, 403)
+        XCTAssertNil((hostile as? HTTPURLResponse)?.value(forHTTPHeaderField: "Access-Control-Allow-Origin"))
+
+        // The real POST from the published studio, with the session token.
+        let capture = UUID().uuidString
+        let (_, accepted) = try await URLSession.shared.data(
+            for: request("begin", method: "POST", origin: web, token: token, capture: capture))
+        let acceptedResponse = try XCTUnwrap(accepted as? HTTPURLResponse)
+        XCTAssertEqual(acceptedResponse.statusCode, 200)
+        XCTAssertEqual(acceptedResponse.value(forHTTPHeaderField: "Access-Control-Allow-Origin"), web)
+
+        // The token remains the thing that matters: the right origin without
+        // it gets nowhere, which is what protects a casual visitor to the site.
+        let (_, noToken) = try await URLSession.shared.data(
+            for: request("begin", method: "POST", origin: web, token: "not-the-token", capture: UUID().uuidString))
+        XCTAssertEqual((noToken as? HTTPURLResponse)?.statusCode, 403)
+
+        // And a valid token from an unlisted origin is still refused, so a
+        // leaked token alone does not open the bridge to any page.
+        let (_, wrongOrigin) = try await URLSession.shared.data(
+            for: request("begin", method: "POST", origin: "https://evil.invalid", token: token, capture: UUID().uuidString))
+        XCTAssertEqual((wrongOrigin as? HTTPURLResponse)?.statusCode, 403)
+
+        // The launch URL differs by mode: served locally it needs only the
+        // token, but the hosted page cannot infer the port from its own
+        // origin, so the port travels in the fragment — never the query, which
+        // a web server would see.
+        let localURL = try XCTUnwrap(bridge.sessionURL)
+        XCTAssertTrue(localURL.absoluteString.hasPrefix("http://127.0.0.1:"))
+        XCTAssertTrue(!(localURL.fragment ?? "").contains("port="))
+
+        let previous = BrowserRecorderBridge.usesWebStudio
+        BrowserRecorderBridge.usesWebStudio = true
+        defer { BrowserRecorderBridge.usesWebStudio = previous }
+        let webURL = try XCTUnwrap(bridge.sessionURL)
+        XCTAssertTrue(webURL.absoluteString.hasPrefix(BrowserRecorderBridge.webStudioURL))
+        XCTAssertTrue((webURL.fragment ?? "").contains("port="))
+        XCTAssertTrue((webURL.fragment ?? "").hasPrefix(token))
+        XCTAssertNil(webURL.query)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

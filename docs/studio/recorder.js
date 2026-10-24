@@ -1,7 +1,16 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const token = location.hash.slice(1);
-history.replaceState(null, '', '/');
+// The fragment carries the session token, and — when this page is served
+// from the web rather than by the app itself — the loopback port to send the
+// recording to. Fragments are never sent to a server, so neither value leaves
+// this machine.
+const fragment = location.hash.slice(1);
+const token = fragment.split('&')[0];
+const bridgePort = new URLSearchParams(fragment.slice(fragment.indexOf('&') + 1)).get('port');
+// Media always goes to the app on this machine. Same origin when the app
+// serves this page; the loopback bridge when a web host does.
+const api = bridgePort && /^\d+$/.test(bridgePort) ? `http://127.0.0.1:${bridgePort}` : '';
+history.replaceState(null, '', location.pathname);
 let display, camera, microphone, audioContext, screenRecorder, cameraRecorder;
 let state = 'setup', screenChunks = [], cameraChunks = [], uploads = Promise.resolve(), uploadError;
 let started = 0, pausedAt = 0, pausedDuration = 0, timer, heartbeat, totalBytes = 0, cameraDrag, captureID;
@@ -64,7 +73,13 @@ function setControls(locked) {
   $('change').disabled = locked;
 }
 async function post(path, body) {
-  const response = await fetch(path,{method:'POST',headers:{'X-FocusFlow-Token':token,'X-FocusFlow-Capture':captureID},body});
+  let response;
+  try {
+    response = await fetch(api + path,{method:'POST',headers:{'X-FocusFlow-Token':token,'X-FocusFlow-Capture':captureID},body});
+  } catch (error) {
+    // Cross-origin to loopback fails this way when the app has quit.
+    throw new Error(api ? 'FocusFlow is no longer listening. Keep the app open while recording.' : error.message);
+  }
   if (!response.ok) throw new Error(await response.text() || 'Could not save to FocusFlow.');
 }
 function recorder(stream, chunks, path) {
@@ -149,7 +164,9 @@ async function save() {
   try {
     if (uploadError) throw uploadError;
     await post('/finish',JSON.stringify({sourceName,cameraPresentation})); state = 'done'; $('badge').textContent = 'SAVED';
-    status('Saved on your Mac. Your recording is now open in FocusFlow, ready to edit.'); $('stop').hidden = true;
+    status('Saved on your Mac. Switching to FocusFlow, where it is open and ready to edit.'); $('stop').hidden = true;
+    // The app raises itself on handoff; this is the browser's half of it.
+    document.body.classList.add('handed-off');
   } catch(error) {
     state = 'recovery'; $('badge').textContent = 'BACKUP READY';
     status(`Could not complete the handoff: ${error.message} Your recording is available below. Download it before closing this page.`);
@@ -178,6 +195,6 @@ $('camera').onpointermove = event => {
 $('camera').onpointerup = $('camera').onpointercancel = () => { cameraDrag = null; };
 window.addEventListener('beforeunload', event => { if (['starting','recording','paused','saving','recovery'].includes(state)) { event.preventDefault(); event.returnValue = ''; } });
 if (!navigator.mediaDevices?.getDisplayMedia || !window.MediaRecorder) { $('choose').disabled = true; status('Open this page in a current version of Chrome.'); }
-else { devices(); if (!token) { $('choose').disabled = true; status('Open Tab studio from FocusFlow → Record → Chrome tab.'); } }
+else { devices(); if (!token) { $('choose').disabled = true; status('Open Tab studio from FocusFlow → Record → Chrome tab. This page records into the app, so it has to be launched from there.'); } }
 
 window.addEventListener('pagehide', () => { if (captureID && state !== 'done') { fetch('/release',{method:'POST',headers:{'X-FocusFlow-Token':token,'X-FocusFlow-Capture':captureID},body:'',keepalive:true}).catch(() => {}); } });

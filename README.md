@@ -60,6 +60,21 @@ Click **Record**, then choose:
 - **Display**: select a display. FocusFlow’s own windows and audio are excluded to avoid recording the recorder recursively.
 - **Chrome tab**: click **Open Chrome tab studio**, then **Choose a Chrome tab**. Chrome’s picker opens on tabs; window or screen selections are rejected before recording. Only the selected tab’s page content is recorded, without the browser toolbar. Check the live preview, enable camera/microphone as needed, then press **Start recording**. Pause/resume, camera shape/mirroring/position, tab audio, and device selection are available. **Stop & edit** saves the video back into FocusFlow automatically.
 
+The studio can be served two ways. By default FocusFlow serves it itself, so
+the page never touches the network. Tick **Open the web studio instead** and it
+opens the published copy at <https://macflow-delta.vercel.app/studio/>, which
+posts the recording back to this Mac over the loopback bridge and hands off to
+the editor exactly as the local copy does. The difference is where the page's
+code comes from: the app bundle, or the network. The recording itself is local
+either way.
+
+Only the hosts the studio is published on may post to the bridge, and only with
+the session token, which reaches the page through the URL fragment when the app
+opens it — fragments are never sent to a server, so a casual visitor to the site
+has no session and cannot record. Chrome additionally treats a public page
+reaching loopback as Private Network Access, so the bridge answers that
+preflight explicitly.
+
 Keep FocusFlow open during tab capture. The companion uses a random port bound to `127.0.0.1`, a per-session token, and same-origin write checks. Media chunks are written locally. Nothing is uploaded to an external service. A 512 MB combined session limit bounds the browser’s recovery buffer; the session stops and saves when reached. Backup download buttons remain available after capture, including if local handoff fails. A browser supporting MP4 MediaRecorder output is required; unsupported browsers show a useful error before recording starts.
 
 Grant Screen Recording permission to FocusFlow for native capture. Camera and microphone permission is requested only when enabled. Input Monitoring enables shortcut badges; ordinary typed text is not collected. Browser capture uses Chrome’s separate sharing and device permission prompts.

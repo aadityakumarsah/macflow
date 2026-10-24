@@ -730,7 +730,7 @@ footer .legal {
   <div class="frame">
     <span class="eyebrow">
       <span class="pip" aria-hidden="true">✓</span>
-      v0.4.1 · free and open source
+      v0.5.0 · free and open source
     </span>
 
     <h1>Record your Mac.<br>The clicks animate <em>themselves</em>.</h1>
@@ -794,7 +794,7 @@ footer .legal {
       <article class="card">
         <span class="num">01</span>
         <h3>Record what you choose</h3>
-        <p>A window, a display, or one Chrome tab. Drag out a region to keep a single pane and leave the toolbar out of frame.</p>
+        <p>A window, a display, or one Chrome tab — from the app or from the web studio. Either way it lands back in the editor automatically.</p>
       </article>
       <article class="card">
         <span class="num">02</span>
@@ -1226,7 +1226,7 @@ footer .legal {
       .then(function () { return spinner("Resolving the latest release", 900, token); })
       .then(function () {
         if (token !== runToken) return;
-        replace(ok("Release resolved", "v0.4.1"));
+        replace(ok("Release resolved", "v0.5.0"));
         return wait(260);
       })
       .then(function () { return download(token); })

@@ -30,6 +30,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             print("Checking undo and browser bridge…")
             await tests.testUndoRedoAndSegmentBounds()
             try await tests.testBrowserBridgeRejectsUntrustedWritesAndServesResources()
+            try await tests.testBridgeAcceptsWebStudioOriginOnly()
             print("Checking backgrounds, export options, and project compatibility…")
             try tests.testCustomBackgroundKindsRenderDistinctly()
             tests.testExportResolutionScalesCanvasKeepingAspect()

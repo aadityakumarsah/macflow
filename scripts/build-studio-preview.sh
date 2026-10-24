@@ -32,10 +32,24 @@ html = html.replace('<a class="brand" href="/"', '<a class="brand" href="../"')
 banner = """<link rel="stylesheet" href="preview.css">"""
 html = html.replace("</head>", banner + "</head>", 1)
 
-notice = """<div class="preview-notice">
-<p><strong>Interface preview.</strong> This is the Tab Studio exactly as it looks inside FocusFlow. Recording is disabled here — the studio captures a tab only when the app serves it locally, over a private connection on your own Mac.</p>
+# Two states: a plain visitor sees a preview, while a page opened by the app
+# carries a session in its fragment and is the real recorder. The banner is
+# written for the first and removed at runtime for the second.
+notice = """<div class="preview-notice" id="preview-notice">
+<p><strong>Interface preview.</strong> This is the Tab Studio exactly as it looks inside FocusFlow. Recording from here needs the app: open <em>Record \u2192 Chrome tab</em> in FocusFlow and it will bring you back to this page with a session attached.</p>
 <a href="../">Get FocusFlow</a>
-</div>"""
+</div>
+<script>
+// A fragment of the form "<token>&port=NNNN" means FocusFlow opened this page
+// and is listening on that port, so this is a live studio, not a preview.
+(function () {
+  var fragment = location.hash.slice(1);
+  if (/&port=\\d+/.test(fragment)) {
+    var notice = document.getElementById("preview-notice");
+    if (notice) notice.remove();
+  }
+})();
+</script>"""
 html = html.replace("<body>", "<body>" + notice, 1)
 
 open(output, "w", encoding="utf-8").write(html)

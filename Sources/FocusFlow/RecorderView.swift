@@ -447,6 +447,7 @@ private struct BrowserCaptureCard: View {
     @ObservedObject var bridge: BrowserRecorderBridge
     @State private var opening = false
     @State private var error: String?
+    @State private var useWeb = BrowserRecorderBridge.usesWebStudio
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "globe").font(.system(size: 42, weight: .light)).foregroundStyle(AppTheme.green)
@@ -461,7 +462,18 @@ private struct BrowserCaptureCard: View {
                 }
             }.buttonStyle(.borderedProminent).tint(AppTheme.green).disabled(opening)
             Text(error ?? bridge.status).font(.caption).foregroundStyle(.secondary)
-            Text("Keep FocusFlow open while recording. Video stays on your Mac.").font(.caption2).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity).frame(height: 330).background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 16))
+
+            Toggle("Open the web studio instead", isOn: $useWeb)
+                .font(.caption)
+                .toggleStyle(.checkbox)
+                .disabled(bridge.isActive)
+                .onChange(of: useWeb) { _, value in BrowserRecorderBridge.usesWebStudio = value }
+                .help("Loads the studio from the FocusFlow website instead of this app. The recording still goes straight to your Mac, but the page itself is fetched over the network.")
+
+            Text(useWeb
+                 ? "Keep FocusFlow open while recording. The page loads from the web; the video goes straight to your Mac."
+                 : "Keep FocusFlow open while recording. Everything, including the page, stays on your Mac.")
+                .font(.caption2).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+        }.frame(maxWidth: .infinity).frame(height: 360).background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 16))
     }
 }
