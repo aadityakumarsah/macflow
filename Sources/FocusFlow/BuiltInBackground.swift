@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import ImageIO
 
 enum BuiltInBackground: String, CaseIterable, Identifiable {
     case bloom = "bg"
@@ -18,9 +19,46 @@ enum BuiltInBackground: String, CaseIterable, Identifiable {
     var reference: String { "builtin:\(rawValue).png" }
     var url: URL? { Bundle.module.url(forResource: rawValue, withExtension: "png", subdirectory: "Backgrounds") }
 
-    static func url(for reference: String) -> URL? {
+    /// These three supplied PNGs have an all-zero alpha channel. They are
+    /// kept in the bundle, but cannot be presented as usable artwork.
+    var isUsable: Bool { self != .bloom && self != .bloomTwo && self != .bloomSeven }
+    static let usablePresets: [Self] = [.classic, .gallery, .studio, .horizon, .flowers, .portrait, .blush, .garden]
+    static let emptyFiles: [Self] = [.bloom, .bloomTwo, .bloomSeven]
+
+    private static let thumbnailCache: NSCache<NSString, CGImageBox> = {
+        let cache = NSCache<NSString, CGImageBox>()
+        cache.countLimit = 8
+        return cache
+    }()
+
+    /// ImageIO decodes only the small thumbnail, and only when its tile opens.
+    var thumbnail: CGImage? {
+        let key = rawValue as NSString
+        if let cached = Self.thumbnailCache.object(forKey: key) { return cached.image }
+        guard let url,
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 320,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { return nil }
+        Self.thumbnailCache.setObject(CGImageBox(image), forKey: key)
+        return image
+    }
+
+    static func asset(for reference: String) -> Self? {
         guard reference.hasPrefix("builtin:") else { return nil }
         let name = String(reference.dropFirst("builtin:".count)).replacingOccurrences(of: ".png", with: "")
-        return Self(rawValue: name)?.url
+        return Self(rawValue: name)
     }
+
+    static func url(for reference: String) -> URL? {
+        asset(for: reference)?.url
+    }
+}
+
+private final class CGImageBox {
+    let image: CGImage
+    init(_ image: CGImage) { self.image = image }
 }

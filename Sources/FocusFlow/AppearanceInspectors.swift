@@ -70,12 +70,10 @@ struct CursorAppearanceInspector: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
                 CursorStylePreview(size: model.cursorSize, appearance: model.cursorAppearance,
-                                   visible: model.showCursor && model.recordingMetadata.embeddedCursor != true, shadow: model.cursorShadow,
+                                   visible: model.showCursor, shadow: model.cursorShadow,
                                    clicks: model.clickEffects && !model.recordedClicks.isEmpty).equatable()
-                if model.recordingMetadata.embeddedCursor != true {
-                    Text("The replacement cursor is drawn inside the video frame, above the recorded content and beneath callouts and window chrome. It appears in preview and export.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                Text("The replacement cursor is drawn inside the video frame, above the recorded content and beneath callouts and window chrome. It appears in preview and export.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 24) {
                 InspectorSection(title: "Cursor") {
@@ -252,6 +250,7 @@ struct EditableFocusOverlay: View {
 
 struct BackgroundInspector: View {
     @EnvironmentObject private var model: EditorModel
+    @State private var showAllBackgrounds = false
 
     var body: some View {
         InspectorSection(title: "BACKGROUND") {
@@ -261,7 +260,7 @@ struct BackgroundInspector: View {
 
             switch model.customBackground.kind {
             case .preset:
-                Text("Included image backgrounds (\(BuiltInBackground.allCases.count))")
+                Text("Included image backgrounds")
                     .font(.caption2).foregroundStyle(.secondary)
                 builtInGrid
                 if BuiltInBackground.url(for: model.customBackground.imagePath ?? "") != nil {
@@ -323,23 +322,40 @@ struct BackgroundInspector: View {
     }
 
     private var builtInGrid: some View {
-        LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
-            ForEach(BuiltInBackground.allCases) { asset in
-                Button {
-                    model.customBackground.imagePath = asset.reference
-                    model.customBackground.imageFills = true
-                } label: {
-                    VStack(spacing: 3) {
-                        if let url = asset.url, let image = NSImage(contentsOf: url) {
-                            Image(nsImage: image).resizable().scaledToFill()
-                                .frame(height: 54).frame(maxWidth: .infinity).clipped()
+        VStack(spacing: 8) {
+            LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
+                ForEach(showAllBackgrounds ? BuiltInBackground.allCases : BuiltInBackground.usablePresets) { asset in
+                    Button {
+                        model.customBackground.imagePath = asset.reference
+                        model.customBackground.imageFills = true
+                    } label: {
+                        VStack(spacing: 3) {
+                            if let thumbnail = asset.thumbnail {
+                                Image(nsImage: NSImage(cgImage: thumbnail, size: CGSize(width: thumbnail.width, height: thumbnail.height)))
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(height: 54)
+                                    .frame(maxWidth: .infinity)
+                                    .clipped()
+                            } else {
+                                Rectangle()
+                                    .fill(AppTheme.elevated)
+                                    .frame(height: 54).frame(maxWidth: .infinity)
+                                    .overlay(Text(asset.isUsable ? "No image" : "Empty file").font(.caption2).foregroundStyle(.secondary))
+                            }
+                            Text(asset.title).font(.system(size: 9)).lineLimit(1)
                         }
-                        Text(asset.title).font(.system(size: 9)).lineLimit(1)
-                    }
-                    .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.customBackground.imagePath == asset.reference ? AppTheme.green : AppTheme.line, lineWidth: 2))
-                }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
+                        .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.customBackground.imagePath == asset.reference ? AppTheme.green : AppTheme.line, lineWidth: 2))
+                    }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
+                }
+            }
+            if !showAllBackgrounds {
+                Button("Show more backgrounds") {
+                    withAnimation { showAllBackgrounds = true }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
