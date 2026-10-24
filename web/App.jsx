@@ -1,14 +1,15 @@
 import React, { useState } from 'react'
 import {
-  ArrowDown, ArrowRight, ArrowUpRight, Check, ChevronDown, CircleHelp,
-  Clapperboard, Command, Download, Film, FolderOpen, Fullscreen, LayoutPanelLeft,
-  LockKeyhole, Menu, Mic2, Monitor, MousePointer2, MousePointerClick, Play,
-  Ratio, Scissors, ShieldCheck, SlidersHorizontal, Sparkles, Video, WandSparkles, X,
+  ArrowUpRight, Check, CircleHelp, Clapperboard, Command, Copy,
+  Download, FolderOpen, Fullscreen, LayoutPanelLeft, LockKeyhole, Menu,
+  Monitor, MousePointer2, MousePointerClick, Play, Ratio, Scissors,
+  ShieldCheck, Sparkles, Star, Video, WandSparkles, X,
 } from 'lucide-react'
 
 const RELEASE = 'https://github.com/aadityakumarsah/macflow/releases/latest'
 const REPO = 'https://github.com/aadityakumarsah/macflow'
 const INSTALL = 'curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash'
+const LATEST_RELEASE_API = 'https://api.github.com/repos/aadityakumarsah/macflow/releases/latest'
 const ratios = [
   { label: '16:9', className: 'landscape' },
   { label: '9:16', className: 'portrait' },
@@ -16,9 +17,34 @@ const ratios = [
   { label: 'Custom', className: 'custom' },
 ]
 
-function ButtonLink({ href, children, light = false, arrow = false, className = '' }) {
-  return <a className={`button ${light ? 'button-light' : 'button-primary'} ${className}`} href={href}>
-    {children}{arrow ? <ArrowUpRight size={17} strokeWidth={2} /> : <ArrowRight size={17} strokeWidth={2} />}
+function GithubMark() {
+  return <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.558 21.924c.563.104.77-.244.77-.543 0-.267-.01-.974-.016-1.912-3.132.68-3.793-1.51-3.793-1.51-.512-1.3-1.25-1.646-1.25-1.646-1.023-.699.077-.684.077-.684 1.132.08 1.727 1.162 1.727 1.162 1.006 1.724 2.639 1.226 3.283.937.102-.728.394-1.226.716-1.508-2.5-.284-5.128-1.25-5.128-5.56 0-1.229.44-2.233 1.16-3.02-.117-.285-.503-1.428.11-2.977 0 0 .944-.302 3.094 1.154A10.78 10.78 0 0 1 12 5.37c.956.005 1.918.13 2.817.379 2.148-1.456 3.09-1.154 3.09-1.154.615 1.549.229 2.692.113 2.977.722.787 1.158 1.791 1.158 3.02 0 4.32-2.633 5.273-5.14 5.55.405.35.766 1.046.766 2.108 0 1.522-.014 2.75-.014 3.124 0 .301.203.65.775.54A11.252 11.252 0 0 0 12 .75Z"/></svg>
+}
+
+function CopyInstallButton({ onCopy, copied, className = '' }) {
+  return <button className={`button button-primary ${className}`} type="button" onClick={onCopy}>
+    {copied ? <Check size={17} /> : <Copy size={17} />} {copied ? 'Copied to clipboard' : 'Copy install command'}
+  </button>
+}
+
+function DmgDownload({ className = '' }) {
+  const [busy, setBusy] = useState(false)
+  async function download(event) {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    try {
+      const response = await fetch(LATEST_RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } })
+      if (!response.ok) throw new Error('Could not read the latest release')
+      const release = await response.json()
+      const asset = release.assets?.find(item => item.name?.toLowerCase().endsWith('.dmg'))
+      window.location.assign(asset?.browser_download_url || RELEASE)
+    } catch {
+      window.location.assign(RELEASE)
+    }
+  }
+  return <a className={`button button-outline ${className}`} href={RELEASE} onClick={download} aria-busy={busy}>
+    <Download size={17} /> {busy ? 'Finding latest .dmg…' : 'Download .dmg'}
   </a>
 }
 
@@ -28,7 +54,7 @@ function Brand() {
   </a>
 }
 
-function Header() {
+function Header({ onCopy, copied }) {
   const [open, setOpen] = useState(false)
   return <header className="site-header" id="top">
     <div className="header-inner wrap">
@@ -38,8 +64,9 @@ function Header() {
         <a href="#editor" onClick={() => setOpen(false)}>The editor</a>
         <a href="#formats" onClick={() => setOpen(false)}>Canvas</a>
         <a href="./studio/" onClick={() => setOpen(false)}>Tab studio <ArrowUpRight size={14} /></a>
+        <a className="nav-github" href={REPO} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}><GithubMark /><Star size={13} fill="currentColor" /> Star on GitHub</a>
       </nav>
-      <a className="header-cta" href={RELEASE}>Get the app <ArrowUpRight size={16} /></a>
+      <button className="header-cta" type="button" onClick={onCopy} title="Copy the FocusFlow install command" aria-label={copied ? 'Install command copied' : 'Copy install command'}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Download'}</button>
       <button className="menu-button" type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? <X size={22} /> : <Menu size={22} />}
       </button>
@@ -80,16 +107,38 @@ function App() {
   const [cursorSize, setCursorSize] = useState(2)
   const [clickStyle, setClickStyle] = useState('Ripple')
   const [ratio, setRatio] = useState('16:9')
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState('idle')
   async function copyInstall() {
-    try { await navigator.clipboard.writeText(INSTALL); setCopied(true); window.setTimeout(() => setCopied(false), 2300) }
-    catch { setCopied(false) }
+    try {
+      let worked = false
+      if (navigator.clipboard?.writeText) {
+        try { await navigator.clipboard.writeText(INSTALL); worked = true } catch { /* Try the selection fallback. */ }
+      }
+      if (!worked) {
+        const field = document.createElement('textarea')
+        field.value = INSTALL
+        field.style.position = 'fixed'
+        field.style.opacity = '0'
+        document.body.appendChild(field)
+        field.select()
+        worked = document.execCommand('copy')
+        field.remove()
+        if (!worked) throw new Error('Copy failed')
+      }
+      setCopyStatus('copied')
+      window.setTimeout(() => setCopyStatus('idle'), 3000)
+    } catch {
+      setCopyStatus('failed')
+    }
   }
   return <>
-    <Header />
+    <Header onCopy={copyInstall} copied={copyStatus === 'copied'} />
+    <div className={`copy-toast ${copyStatus === 'idle' ? '' : 'visible'}`} role="status" aria-live="polite">
+      {copyStatus === 'copied' ? <><Check size={16} /> Install command copied. Paste it in Terminal.</> : copyStatus === 'failed' ? 'Copy failed. Select the command below to copy it.' : ''}
+    </div>
     <main>
       <section className="hero wrap" aria-labelledby="hero-title">
-        <div className="hero-copy"><div className="hero-announcement"><span className="announcement-dot" /> THE SCREEN RECORDER WITH AN EDITOR INSIDE <ArrowUpRight size={13}/></div><h1 id="hero-title">Make your screen<br />worth <em>watching.</em></h1><p>Record on your Mac. Give clicks the focus they deserve. Shape a polished video without leaving the editor.</p><div className="hero-actions"><ButtonLink href={RELEASE}>Get FocusFlow for Mac</ButtonLink><a className="text-action" href="#how">Explore the workflow <ArrowDown size={16}/></a></div><div className="hero-proof"><span className="proof-icon"><Check size={12}/></span> Free &amp; open source <span className="proof-divider"/> macOS 14+ · Apple silicon</div></div>
+        <div className="hero-copy"><div className="hero-announcement"><span className="announcement-dot" /> THE SCREEN RECORDER WITH AN EDITOR INSIDE <ArrowUpRight size={13}/></div><h1 id="hero-title">Make your screen<br />worth <em>watching.</em></h1><p>Record on your Mac. Give clicks the focus they deserve. Shape a polished video without leaving the editor.</p><div className="hero-actions"><CopyInstallButton onCopy={copyInstall} copied={copyStatus === 'copied'} /><DmgDownload /></div><div className="hero-proof"><span className="proof-icon"><Check size={12}/></span> Free &amp; open source <span className="proof-divider"/> macOS 14+ · Apple silicon</div></div>
         <div className="hero-product"><div className="hero-glow" /><div className="hero-product-inner"><div className="float-note note-one"><span><MousePointerClick size={16}/></span> Clicks become zooms</div><ProductWindow size={cursorSize} ratio={ratio}/><div className="float-note note-two"><span><Ratio size={16}/></span> Every ratio, one recording</div></div><p className="hero-caption">A focused workspace for everything after you press record.</p></div>
       </section>
 
@@ -105,7 +154,7 @@ function App() {
 
       <section className="section privacy"><div className="wrap privacy-inner"><div><span className="eyebrow">BUILT FOR YOUR MAC</span><h2>Your work stays<br /><em>your work.</em></h2><p>FocusFlow is a native macOS app. Recordings and projects save locally, and the browser tab companion passes your capture back to the editor on your Mac.</p><a className="privacy-link" href={REPO}>See the source on GitHub <ArrowUpRight size={18}/></a></div><div className="privacy-card"><div className="privacy-symbol"><LockKeyhole size={34}/></div><div className="privacy-card-line"><FolderOpen size={18}/><span>Files saved on your Mac</span><Check size={17}/></div><div className="privacy-card-line"><ShieldCheck size={18}/><span>Local recording handoff</span><Check size={17}/></div><div className="privacy-card-line"><Command size={18}/><span>Open source</span><Check size={17}/></div><small>No account required to record or edit.</small></div></div></section>
 
-      <section id="download" className="section download wrap"><span className="eyebrow">READY WHEN YOU ARE</span><h2>Make the next one<br /><em>impossible to miss.</em></h2><p>Free and open source for macOS 14+ on Apple silicon.</p><div className="download-actions"><ButtonLink href={RELEASE}>Get FocusFlow for Mac</ButtonLink><a className="button button-outline" href="./studio/">Open tab studio <ArrowUpRight size={17}/></a></div><div className="install-card"><div><span>Prefer Terminal?</span><code>{INSTALL}</code></div><button type="button" onClick={copyInstall} aria-label={copied ? 'Command copied' : 'Copy install command'}>{copied ? <><Check size={16}/> Copied</> : 'Copy command'}</button></div><p className="install-note">The installer downloads the latest GitHub release. You can also download its disk image from the release page.</p></section>
+      <section id="download" className="section download wrap"><span className="eyebrow">READY WHEN YOU ARE</span><h2>Make the next one<br /><em>impossible to miss.</em></h2><p>Free and open source for macOS 14+ on Apple silicon.</p><div className="download-actions"><CopyInstallButton onCopy={copyInstall} copied={copyStatus === 'copied'} /><DmgDownload /></div><div className="install-card"><div><span>Install with Terminal</span><code>{INSTALL}</code></div><button type="button" onClick={copyInstall} aria-label={copyStatus === 'copied' ? 'Command copied' : 'Copy install command'}>{copyStatus === 'copied' ? <><Check size={16}/> Copied</> : <><Copy size={16}/> Copy</>}</button></div><p className="install-note">Download uses the latest GitHub release. If you choose the disk image, open FocusFlow from the mounted .dmg.</p></section>
     </main>
     <footer className="footer"><div className="wrap footer-inner"><Brand/><p>Record clearly. Edit calmly. Share confidently.</p><div><a href={REPO}>GitHub</a><a href={RELEASE}>Releases</a><a href="./studio/">Tab studio</a></div></div></footer>
   </>
