@@ -2,14 +2,14 @@
 
 A native macOS recording and editing app, with a local Chrome tab recording companion. Built with SwiftUI, ScreenCaptureKit, AVFoundation, Core Image, and browser media APIs. Recordings stay on your Mac.
 
-Landing page: <https://aadityakumarsah.github.io/focusflow/>
+Landing page: <https://aadityakumarsah.github.io/macflow/>
 
 ## Install
 
 Requires macOS 14+ on Apple silicon.
 
 ```sh
-curl -L -o ~/Downloads/focusflow.dmg https://github.com/aadityakumarsah/focusflow/releases/download/v0.2.0/FocusFlow-0.2.0.dmg && xattr -c ~/Downloads/focusflow.dmg && open ~/Downloads/focusflow.dmg
+curl -L -o ~/Downloads/focusflow.dmg https://github.com/aadityakumarsah/macflow/releases/download/v0.2.0/FocusFlow-0.2.0.dmg && xattr -c ~/Downloads/focusflow.dmg && open ~/Downloads/focusflow.dmg
 ```
 
 The disk image opens; drag **FocusFlow** into Applications.
@@ -17,7 +17,7 @@ The disk image opens; drag **FocusFlow** into Applications.
 To install straight into `/Applications` without the drag step:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/focusflow/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash
 ```
 
 FocusFlow is signed ad-hoc rather than with a paid Developer ID, so Gatekeeper would otherwise refuse the first launch. Both commands above clear the download quarantine flag for you. If you download the `.dmg` from the browser instead, right-click the app and choose **Open** the first time.
@@ -93,3 +93,7 @@ The installed Cursorful recorder/editor was inspected through its interface to u
 The implementation is not full Cursorful feature parity. Speech-to-text captions, multi-clip assembly, motion blur, cloud collaboration, custom background images, and native capture pause/resume are not implemented. Chrome capture supports pause/resume. Changing the selected native capture source starts a new recording.
 
 Implementation references: [Chrome sharing controls](https://developer.chrome.com/docs/web-platform/screen-sharing-controls), [Chrome MediaRecorder](https://developer.chrome.com/blog/mediarecorder), [Apple SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

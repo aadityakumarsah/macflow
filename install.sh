@@ -1,14 +1,14 @@
 #!/bin/bash
 # FocusFlow installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/focusflow/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash
 #
 # Downloads the latest release disk image, copies FocusFlow.app into
 # /Applications, and clears the download quarantine flag.
 
 set -euo pipefail
 
-REPO="aadityakumarsah/focusflow"
+REPO="aadityakumarsah/macflow"
 APP="FocusFlow"
 TARGET="${FOCUSFLOW_PREFIX:-/Applications}"
 
