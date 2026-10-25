@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://macflow-delta.vercel.app/sitemap.xml
