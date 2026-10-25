@@ -203,7 +203,15 @@ struct SegmentMotionInspector: View {
                 InspectorSlider(title: "Ease in / out", value: Binding(get: { segment.transition ?? 0.7 }, set: { value in model.updateSelected { $0.transition = value } }), range: 0.1...2, suffix: "s")
             }
             if segment.kind == .zoom {
-                Toggle("Follow cursor", isOn: Binding(get: { segment.followsCursor ?? false }, set: { value in model.updateSelected { $0.followsCursor = value } })).disabled(model.pointerSamples.isEmpty)
+                if segment.tracksSelection == true {
+                    Text("Tracks the recorded text selection as it grows.").font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Toggle("Follow cursor", isOn: Binding(get: { segment.followsCursor ?? false }, set: { value in model.updateSelected { $0.followsCursor = value } })).disabled(model.pointerSamples.isEmpty)
+                }
+            }
+            if segment.kind == .spotlight {
+                InspectorSlider(title: "Dim opacity", value: Binding(get: { segment.spotlightOpacity ?? 0.24 }, set: { value in model.updateSelected { $0.spotlightOpacity = value } }), range: 0...0.65, suffix: "")
+                InspectorSlider(title: "Edge fade", value: Binding(get: { segment.spotlightFeather ?? 0.7 }, set: { value in model.updateSelected { $0.spotlightFeather = value } }), range: 0...1, suffix: "")
             }
             if segment.kind == .pan {
                 InspectorSlider(title: "End X", value: Binding(get: { segment.endX ?? 0.7 }, set: { value in model.updateSelected { $0.endX = value } }), range: 0...1, suffix: "")
@@ -250,7 +258,14 @@ struct EditableFocusOverlay: View {
 
 struct BackgroundInspector: View {
     @EnvironmentObject private var model: EditorModel
-    @State private var showAllBackgrounds = false
+    @State private var visiblePresetCount = 4
+
+    private var visiblePresets: [BuiltInBackground] {
+        var visible = Array(BuiltInBackground.usablePresets.prefix(visiblePresetCount))
+        if let selected = BuiltInBackground.asset(for: model.customBackground.imagePath ?? ""),
+           !visible.contains(selected) { visible.append(selected) }
+        return visible
+    }
 
     var body: some View {
         InspectorSection(title: "BACKGROUND") {
@@ -260,8 +275,9 @@ struct BackgroundInspector: View {
 
             switch model.customBackground.kind {
             case .preset:
-                Text("Included image backgrounds")
+                Text("Choose a background")
                     .font(.caption2).foregroundStyle(.secondary)
+                selectedPresetPreview
                 builtInGrid
                 if BuiltInBackground.url(for: model.customBackground.imagePath ?? "") != nil {
                     Picker("Fit", selection: $model.customBackground.imageFills) {
@@ -323,27 +339,21 @@ struct BackgroundInspector: View {
 
     private var builtInGrid: some View {
         VStack(spacing: 8) {
-            LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
-                ForEach(showAllBackgrounds ? BuiltInBackground.allCases : BuiltInBackground.usablePresets) { asset in
+            LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
+                ForEach(visiblePresets) { asset in
                     Button {
                         model.customBackground.imagePath = asset.reference
                         model.customBackground.imageFills = true
                     } label: {
-                        VStack(spacing: 3) {
-                            if let thumbnail = asset.thumbnail {
-                                Image(nsImage: NSImage(cgImage: thumbnail, size: CGSize(width: thumbnail.width, height: thumbnail.height)))
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(height: 54)
-                                    .frame(maxWidth: .infinity)
-                                    .clipped()
-                            } else {
-                                Rectangle()
-                                    .fill(AppTheme.elevated)
-                                    .frame(height: 54).frame(maxWidth: .infinity)
-                                    .overlay(Text(asset.isUsable ? "No image" : "Empty file").font(.caption2).foregroundStyle(.secondary))
-                            }
-                            Text(asset.title).font(.system(size: 9)).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 5) {
+                            presetThumbnail(asset, height: 76)
+                            HStack(spacing: 4) {
+                                Text(asset.title).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                                Spacer(minLength: 0)
+                                if model.customBackground.imagePath == asset.reference {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(AppTheme.green)
+                                }
+                            }.padding(.horizontal, 7).padding(.bottom, 6)
                         }
                         .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -351,13 +361,59 @@ struct BackgroundInspector: View {
                     }.buttonStyle(.plain).accessibilityLabel("Use \(asset.title) background")
                 }
             }
-            if !showAllBackgrounds {
-                Button("Show more backgrounds") {
-                    withAnimation { showAllBackgrounds = true }
-                }
-                .font(.caption).foregroundStyle(.secondary)
+            if visiblePresetCount < BuiltInBackground.usablePresets.count {
+                Button {
+                    withAnimation { visiblePresetCount = min(BuiltInBackground.usablePresets.count, visiblePresetCount + 4) }
+                } label: {
+                    HStack {
+                        Label("See more backgrounds", systemImage: "square.grid.2x2")
+                        Spacer()
+                        Text("\(visiblePresetCount) of \(BuiltInBackground.usablePresets.count)")
+                            .foregroundStyle(.secondary)
+                    }
+                }.buttonStyle(.plain).font(.caption).padding(.vertical, 7)
+            } else {
+                Button("Show fewer backgrounds") { withAnimation { visiblePresetCount = 4 } }
+                    .buttonStyle(.plain).font(.caption)
             }
         }
+    }
+
+    private var selectedPresetPreview: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let selected = BuiltInBackground.asset(for: model.customBackground.imagePath ?? "") {
+                presetThumbnail(selected, height: 116)
+            } else {
+                BackgroundGradient(style: model.background).frame(height: 116)
+            }
+            HStack {
+                Text(BuiltInBackground.asset(for: model.customBackground.imagePath ?? "")?.title ?? model.background.title)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text("SELECTED").font(.system(size: 9, weight: .bold)).tracking(0.8)
+            }
+            .foregroundStyle(.white).padding(10)
+            .background(LinearGradient(colors: [.clear, .black.opacity(0.56)], startPoint: .top, endPoint: .bottom))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.line))
+    }
+
+    private func presetThumbnail(_ asset: BuiltInBackground, height: CGFloat) -> some View {
+        GeometryReader { geometry in
+            ZStack {
+                AppTheme.elevated
+                if let thumbnail = asset.thumbnail {
+                    Image(decorative: thumbnail, scale: 1).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                } else {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(height: height)
+        .clipped()
     }
 
     /// Bridges the stored sRGB triple to SwiftUI's Color for the picker.

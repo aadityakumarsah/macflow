@@ -19,11 +19,7 @@ enum BuiltInBackground: String, CaseIterable, Identifiable {
     var reference: String { "builtin:\(rawValue).png" }
     var url: URL? { Bundle.module.url(forResource: rawValue, withExtension: "png", subdirectory: "Backgrounds") }
 
-    /// These three supplied PNGs have an all-zero alpha channel. They are
-    /// kept in the bundle, but cannot be presented as usable artwork.
-    var isUsable: Bool { self != .bloom && self != .bloomTwo && self != .bloomSeven }
-    static let usablePresets: [Self] = [.classic, .gallery, .studio, .horizon, .flowers, .portrait, .blush, .garden]
-    static let emptyFiles: [Self] = [.bloom, .bloomTwo, .bloomSeven]
+    static let usablePresets: [Self] = allCases
 
     private static let thumbnailCache: NSCache<NSString, CGImageBox> = {
         let cache = NSCache<NSString, CGImageBox>()

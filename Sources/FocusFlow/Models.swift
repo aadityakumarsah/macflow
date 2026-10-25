@@ -41,6 +41,13 @@ struct EditSegment: Identifiable, Codable, Equatable {
     var endX: Double? = nil
     var endY: Double? = nil
     var text: String? = nil
+    /// Selection edits anchor the camera at the drag start and follow the
+    /// growing selected range using the separately recorded pointer samples.
+    var tracksSelection: Bool? = nil
+    var selectionStartTime: Double? = nil
+    var selectionEndTime: Double? = nil
+    var spotlightOpacity: Double? = nil
+    var spotlightFeather: Double? = nil
     var end: Double { start + duration }
     var regionWidth: Double { width ?? 0.3 }
     var regionHeight: Double { height ?? 0.2 }

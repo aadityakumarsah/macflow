@@ -258,32 +258,26 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         for spot in settings.segments where spot.kind == .spotlight {
             let strength = MotionEngine.envelope(spot, time: time)
             guard strength > 0 else { continue }
-            let w = source.extent.width * spot.regionWidth, h = source.extent.height * spot.regionHeight
-            let region = CGRect(x: source.extent.width * spot.x - w / 2, y: source.extent.height * (1 - spot.y) - h / 2, width: w, height: h)
+            let region: CGRect
+            if spot.tracksSelection == true {
+                let tracked = MotionEngine.selectionRegion(spot, at: time, samples: settings.pointerSamples)
+                region = CGRect(x: source.extent.width * tracked.minX,
+                                y: source.extent.height * (1 - tracked.maxY),
+                                width: source.extent.width * tracked.width,
+                                height: source.extent.height * tracked.height)
+            } else {
+                let w = source.extent.width * spot.regionWidth, h = source.extent.height * spot.regionHeight
+                region = CGRect(x: source.extent.width * spot.x - w / 2, y: source.extent.height * (1 - spot.y) - h / 2, width: w, height: h)
+            }
             let mask = CIFilter.roundedRectangleGenerator()
             mask.extent = region
-            mask.radius = Float(min(w, h) * 0.18); mask.color = .white
-            let feather = max(12, source.extent.width / 1920 * 24)
-            let dimmed = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: strength * min(0.9, spot.intensity * 0.25))).cropped(to: source.extent).composited(over: source)
+            mask.radius = Float(min(region.width, region.height) * 0.18); mask.color = .white
+            let feather = max(12, source.extent.width / 1920 * (18 + 82 * min(1, max(0, spot.spotlightFeather ?? 0.7))))
+            let dimAlpha = strength * min(0.65, max(0, spot.spotlightOpacity ?? 0.24)) * min(1.4, max(0.5, spot.intensity))
+            let dimmed = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: dimAlpha)).cropped(to: source.extent).composited(over: source)
             let softMask = mask.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))
                 .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather])
             source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: softMask])
-            let borderWidth = max(2, source.extent.width / 1920 * 3)
-            let outer = CIFilter.roundedRectangleGenerator()
-            outer.extent = region.insetBy(dx: -borderWidth, dy: -borderWidth)
-            outer.radius = Float(min(w, h) * 0.18 + borderWidth)
-            outer.color = .white
-            let inner = CIFilter.roundedRectangleGenerator()
-            inner.extent = region.insetBy(dx: borderWidth, dy: borderWidth)
-            inner.radius = Float(max(1, min(w, h) * 0.18 - borderWidth))
-            inner.color = .white
-            let ring = outer.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))
-                .applyingFilter("CISourceOutCompositing", parameters: [kCIInputBackgroundImageKey: inner.outputImage!.cropped(to: region.insetBy(dx: -feather * 4, dy: -feather * 4))])
-            let ink = CIImage(color: CIColor(cgColor: settings.cursor.accentColor.copy(alpha: strength * 0.48) ?? settings.cursor.accentColor)).cropped(to: ring.extent)
-            let clear = CIImage(color: .clear).cropped(to: ring.extent)
-            let glow = ink.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: ring.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather * 0.65])])
-            let edge = opacity(ink.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: ring]), 0.5)
-            source = edge.composited(over: glow.composited(over: source))
         }
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
         for outline in settings.segments where outline.kind == .outline {

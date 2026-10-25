@@ -13,7 +13,21 @@ final class FocusFlowTests {
             XCTAssertTrue(edits.contains { $0.kind == kind })
         }
         XCTAssertTrue(edits.allSatisfy { $0.kind != .pan })
-        XCTAssertTrue(edits.contains { $0.kind == .outline && $0.start > 8.8 && $0.regionWidth > 0.25 })
+        let selectionZoom = edits.first { $0.kind == .zoom && $0.tracksSelection == true }
+        XCTAssertTrue(selectionZoom != nil)
+        XCTAssertTrue(edits.contains { $0.kind == .spotlight && $0.tracksSelection == true && $0.spotlightFeather == 0.85 })
+        XCTAssertTrue(!edits.contains { $0.kind == .outline && $0.start > 8.8 })
+        if let selectionZoom {
+            let start = MotionEngine.selectionRegion(selectionZoom, at: 9, samples: samples)
+            let middle = MotionEngine.selectionRegion(selectionZoom, at: 9.2, samples: samples)
+            let end = MotionEngine.selectionRegion(selectionZoom, at: 9.385, samples: samples)
+            XCTAssertTrue(start.midX < middle.midX && middle.midX < end.midX)
+            XCTAssertTrue(start.width < middle.width && middle.width < end.width)
+            let earlyCamera = MotionEngine.viewport(at: 9.1, segments: [selectionZoom], samples: samples, crop: ContentRegion())
+            let lateCamera = MotionEngine.viewport(at: 9.3, segments: [selectionZoom], samples: samples, crop: ContentRegion())
+            XCTAssertTrue(earlyCamera.midX < lateCamera.midX)
+            XCTAssertTrue(lateCamera.width < 1)
+        }
         XCTAssertTrue(edits.allSatisfy { $0.start >= 0 && $0.end <= 12 })
         let hover = (0..<12).map { PointerSample(time: 1 + Double($0) * 0.035, x: 0.2 + Double($0) * 0.025, y: 0.3, shape: .text) }
         XCTAssertTrue(MotionEngine.autoEdits(clicks: [], samples: hover, duration: 3).isEmpty)
@@ -293,18 +307,18 @@ final class FocusFlowTests {
         XCTAssertEqual(model.cursorSize, 1.25)
         model.videoURL = URL(fileURLWithPath: "/tmp/nonexistent-focusflow-cursor-test.mp4")
         model.duration = 2
-        model.cursorSize = 4; model.showCursor = false
+        model.cursorSize = 2; model.showCursor = false
         model.cursorAppearance.highlight = true
         model.resetCursorSettings()
-        XCTAssertEqual(model.cursorSize, 1.25)
+        XCTAssertEqual(model.cursorSize, 4)
         XCTAssertTrue(model.showCursor)
         XCTAssertEqual(model.cursorAppearance.highlight, false)
         model.undo()
-        XCTAssertEqual(model.cursorSize, 4)
+        XCTAssertEqual(model.cursorSize, 2)
         XCTAssertEqual(model.showCursor, false)
         XCTAssertEqual(model.cursorAppearance.highlight, true)
         model.redo()
-        XCTAssertEqual(model.cursorSize, 1.25)
+        XCTAssertEqual(model.cursorSize, 4)
         XCTAssertTrue(model.showCursor)
         // Cancel pending preview work for the intentionally nonexistent test video.
         model.videoURL = nil
