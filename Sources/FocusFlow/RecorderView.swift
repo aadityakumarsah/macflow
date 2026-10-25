@@ -167,7 +167,7 @@ struct RecorderView: View {
             // nothing says why.
             if !inputMonitoringReady && !recorder.isRecording {
                 HStack {
-                    Label("Input Monitoring is off, so click zooms and typing follow will not be created. Recording itself still works.",
+                    Label("Input Monitoring is off, so click zooms and typing follow will not be created. Allow FocusFlow, then quit and reopen it — macOS only hands keypresses to an app that was already allowed when it launched. Recording itself still works.",
                           systemImage: "exclamationmark.triangle.fill")
                     Spacer()
                     Button("Open Settings") { openInputMonitoringSettings() }.buttonStyle(.link)
@@ -319,7 +319,7 @@ struct RecorderView: View {
     private func loadSources(requestIfNeeded: Bool) async {
         isLoadingSources = true
         sourceError = nil
-        inputMonitoringReady = CGPreflightListenEventAccess()
+        inputMonitoringReady = KeyPressTap.isPermitted
         if requestIfNeeded && !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
         }
@@ -383,7 +383,7 @@ struct RecorderView: View {
                 isStarting = true
                 defer { isStarting = false }
                 if !inputMonitoringReady {
-                    inputMonitoringReady = CGRequestListenEventAccess()
+                    inputMonitoringReady = CGRequestListenEventAccess() || KeyPressTap.isPermitted
                 }
                 do {
                     if includeCamera {

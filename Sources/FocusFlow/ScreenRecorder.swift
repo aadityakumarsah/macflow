@@ -48,7 +48,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var firstPTS: CMTime?
     private var timer: Timer?
     private var pointerTimer: Timer?
-    private var monitor: Any?
+    private var keyPresses: KeyPressTap?
     private(set) var clicks: [RecordedClick] = []
     private(set) var typingEvents: [TypingEvent] = []
     private(set) var pointerSamples: [PointerSample] = []
@@ -215,7 +215,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.samplePointerAndClicks() }
         }
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        keyPresses = KeyPressTap { [weak self] event in
             self?.recordKeystroke(event)
         }
     }
@@ -227,7 +227,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         timer = nil
         pointerTimer?.invalidate()
         pointerTimer = nil
-        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        keyPresses?.invalidate(); keyPresses = nil
         defer { self.stream = nil; self.writer = nil; isRecording = false }
         try? await stream.stopCapture()
         isRecording = false
@@ -349,6 +349,8 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         DispatchQueue.main.async { [weak self] in
             self?.timer?.invalidate()
             self?.pointerTimer?.invalidate()
+            self?.keyPresses?.invalidate()
+            self?.keyPresses = nil
             self?.errorMessage = error.localizedDescription
         }
     }

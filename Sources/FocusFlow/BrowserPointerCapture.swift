@@ -31,7 +31,7 @@ final class BrowserPointerCapture {
     private var lastButtonDown = false
     private var viewportPixels: CGSize = .zero
     private var cachedWindow: (frame: CGRect, scale: CGFloat, at: Date)?
-    private var keyMonitor: Any?
+    private var keyPresses: KeyPressTap?
 
     var isRunning: Bool { timer != nil }
 
@@ -54,7 +54,7 @@ final class BrowserPointerCapture {
         // Typing in the captured tab has to be noticed here too, or a browser
         // recording can never follow the caret. Only the instant is kept —
         // no character, no key code — and only while Chrome is in front.
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        keyPresses = KeyPressTap { [weak self] event in
             // Stamped as the key arrives, not after the hop onto the main
             // actor: a busy main thread would otherwise file the keypress
             // later than it happened and drag the slide behind the text.
@@ -107,8 +107,8 @@ final class BrowserPointerCapture {
         timer?.invalidate()
         timer = nil
         pausedSince = nil
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        keyMonitor = nil
+        keyPresses?.invalidate()
+        keyPresses = nil
     }
 
     /// Clears everything, for a session that ended without producing a video.
