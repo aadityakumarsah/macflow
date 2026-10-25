@@ -557,6 +557,15 @@ struct AspectRatioInspector: View {
 
 struct SegmentInspector: View {
     @EnvironmentObject private var model: EditorModel
+
+    /// One slider onto one part of the selected segment's pose.
+    private func pose(_ segment: EditSegment, _ part: WritableKeyPath<FramePose, Double>) -> Binding<Double> {
+        Binding(get: { (segment.pose ?? .neutral)[keyPath: part] },
+                set: { value in
+                    model.updateSelected { $0.pose = ($0.pose ?? .neutral).setting { $0[keyPath: part] = value } }
+                })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             if let segment = model.selectedSegment {
@@ -573,6 +582,36 @@ struct SegmentInspector: View {
                     // from the number of keys, so one run in a recording
                     // sometimes needs correcting without redoing them all.
                     InspectorSlider(title: "Slides to X", value: Binding(get: { segment.endX ?? segment.x }, set: { v in model.updateSelected { $0.endX = v } }), range: 0...1, suffix: "")
+                }
+                if segment.kind == .perspective {
+                    Text("Leans in, sweeps across, and comes back out over the segment. Drag its ends on the timeline to say for how long.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    InspectorSlider(title: "Tilt (lean back)", value: pose(segment, \.pitch), range: -1...1, suffix: "")
+                    InspectorSlider(title: "Turn (left / right)", value: pose(segment, \.yaw), range: -1...1, suffix: "")
+                    InspectorSlider(title: "Rotate", value: pose(segment, \.roll), range: -1...1, suffix: "")
+                    InspectorSlider(title: "Pan across", value: pose(segment, \.panX), range: -1...1, suffix: "")
+                    InspectorSlider(title: "Pan up / down", value: pose(segment, \.panY), range: -1...1, suffix: "")
+                    InspectorSlider(title: "Push in", value: pose(segment, \.zoom), range: 0.6...1.8, suffix: "×")
+                    Toggle("Sweep through it", isOn: Binding(
+                        get: { segment.sweeps ?? true },
+                        set: { on in model.updateSelected { $0.sweeps = on } }))
+                        .help("Travels from the far side of the lean, through it, and out — rather than easing into it and holding.")
+                    Picker("Blur", selection: Binding(
+                        get: { segment.blur ?? .none },
+                        set: { style in model.updateSelected { $0.blur = style } })) {
+                        ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    if (segment.blur ?? .none) != .none {
+                        InspectorSlider(title: "Blur amount", value: Binding(
+                            get: { segment.blurAmount ?? 0.35 },
+                            set: { v in model.updateSelected { $0.blurAmount = v } }), range: 0...1, suffix: "")
+                        if segment.blur == .directional {
+                            InspectorSlider(title: "Angle", value: Binding(
+                                get: { segment.blurAngle ?? 0 },
+                                set: { v in model.updateSelected { $0.blurAngle = v } }), range: 0...360, suffix: "°")
+                        }
+                    }
                 }
                 SegmentMotionInspector(segment: segment)
                 if [.blur, .spotlight, .pixelate, .outline].contains(segment.kind) {

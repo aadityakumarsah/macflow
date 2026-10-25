@@ -1369,6 +1369,48 @@ final class FocusFlowTests {
         }
         XCTAssertGreaterThan(rowDetail(shifted, row: 120), rowDetail(shifted, row: 20))
 
+        // A 3D camera laid on the timeline is a move for a few seconds, not
+        // a place the frame is parked: square before it, leaning during it,
+        // square again after.
+        settings.cameraMove = CameraMoveSettings(move: .none, focusBlur: 0)
+        settings.cameraMove.blur = .none
+        var lean = EditSegment(kind: .perspective, start: 2, duration: 3, intensity: 1,
+                               x: 0.5, y: 0.5, transition: 0.6, curve: .smooth)
+        lean.pose = FramePose(pitch: 0.5, yaw: 0.6, zoom: 1.1)
+        lean.sweeps = false
+        settings.segments = [lean]
+        let before = try frame(0.5), during = try frame(3.5), after = try frame(7.5)
+        func apart(_ a: [UInt8], _ b: [UInt8]) -> Double {
+            var total = 0.0
+            for index in stride(from: 0, to: a.count, by: 41) { total += abs(Double(a[index]) - Double(b[index])) }
+            return total / Double(a.count / 41)
+        }
+        XCTAssertGreaterThan(apart(before, during), 1)
+        XCTAssertLessThan(apart(before, after), 0.5)
+
+        // It animates rather than snapping: part way into the lean-in the
+        // frame is somewhere between square and the full pose.
+        let easing = try frame(2.3)
+        XCTAssertGreaterThan(apart(before, easing), 0.3)
+        XCTAssertGreaterThan(apart(during, easing), 0.3)
+
+        // Sweeping travels through the pose, so the two halves differ.
+        var swept = lean
+        swept.sweeps = true
+        settings.segments = [swept]
+        XCTAssertGreaterThan(apart(try frame(2.6), try frame(4.4)), 1)
+
+        // And the stance it is all built on: neutral outside, leaning inside.
+        XCTAssertTrue(MotionEngine.stance(at: 0.5, segments: [lean]).isNeutral)
+        XCTAssertTrue(!MotionEngine.stance(at: 3.5, segments: [lean]).isNeutral)
+        XCTAssertTrue(MotionEngine.stance(at: 9, segments: [lean]).isNeutral)
+        // Two at once are both departures from square, so they add.
+        var second = lean
+        second.pose = FramePose(yaw: 0.2)
+        let both = MotionEngine.stance(at: 3.5, segments: [lean, second]).pose
+        XCTAssertGreaterThan(both.yaw, MotionEngine.stance(at: 3.5, segments: [lean]).pose.yaw)
+        settings.segments = []
+
         // A project written before any of this still opens, and gets the
         // defaults rather than a failure.
         let legacyMove = Data("{\"move\":\"Glide across\",\"tilt\":0.8,\"amount\":0.4,\"focusBlur\":0.2,\"duration\":3,\"curve\":\"Silky\",\"holds\":true}".utf8)

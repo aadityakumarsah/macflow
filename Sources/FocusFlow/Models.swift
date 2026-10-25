@@ -2,21 +2,22 @@ import Foundation
 import CoreGraphics
 
 enum SegmentKind: String, Codable, CaseIterable, Identifiable {
-    case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline, typing
+    case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline, typing, perspective
     var id: String { rawValue }
     /// `.spotlight` is deliberately absent: dimming everything but a patch
     /// looked worse than it helped. Existing projects still decode and render
     /// theirs; it simply cannot be added any more.
-    static let availableCases: [SegmentKind] = [.zoom, .typing, .outline, .callout, .blur, .pixelate]
-    var title: String { rawValue.capitalized }
+    static let availableCases: [SegmentKind] = [.zoom, .typing, .perspective, .outline, .callout, .blur, .pixelate]
+    var title: String { self == .perspective ? "3D camera" : rawValue.capitalized }
     var symbol: String {
-        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled"; case .typing: "text.cursor" }
+        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled"; case .typing: "text.cursor"; case .perspective: "cube.transparent" }
     }
     var detail: String {
         switch self {
         case .zoom: "Move closer to a detail"
         case .pan: "Glide across the frame"
         case .typing: "Follow the typing"
+        case .perspective: "Lean the frame through 3D"
         case .spotlight: "Dim everything around a detail"
         case .outline: "Draw an accent frame"
         case .callout: "Add a short text label"
@@ -49,6 +50,13 @@ struct EditSegment: Identifiable, Codable, Equatable {
     /// last keypress, so the travel finishes here and the frame is still for
     /// the remainder. Nil travels across the whole segment.
     var travelFraction: Double? = nil
+    /// For `.perspective`: where the frame is being leaned to, whether it
+    /// sweeps there from the other side, and how it is softened on the way.
+    var pose: FramePose? = nil
+    var sweeps: Bool? = nil
+    var blur: FrameBlur? = nil
+    var blurAmount: Double? = nil
+    var blurAngle: Double? = nil
     /// For `.typing`: how far the caret travels before the frame moves, in
     /// frame widths, and how long the frame then takes to catch up. Nil, or
     /// zero, slides continuously with the caret.

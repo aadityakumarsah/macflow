@@ -211,6 +211,44 @@ enum FrameBlur: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Where the frame stands in space: one thing, so it can be animated from
+/// one to another rather than being six sliders that each go their own way.
+struct FramePose: Codable, Equatable {
+    var pitch: Double = 0
+    var yaw: Double = 0
+    var roll: Double = 0
+    var panX: Double = 0
+    var panY: Double = 0
+    var zoom: Double = 1
+
+    static let neutral = FramePose()
+    var isNeutral: Bool { self == .neutral }
+
+    /// The same pose seen from the other side. A move that travels sweeps
+    /// from here to the pose itself, so one set of sliders describes a
+    /// journey rather than a place.
+    var mirrored: FramePose {
+        FramePose(pitch: -pitch, yaw: -yaw, roll: -roll, panX: -panX, panY: -panY, zoom: 2 - zoom)
+    }
+
+    func blended(to other: FramePose, _ amount: Double) -> FramePose {
+        let t = max(0, min(1, amount))
+        func mix(_ a: Double, _ b: Double) -> Double { a + (b - a) * t }
+        return FramePose(pitch: mix(pitch, other.pitch), yaw: mix(yaw, other.yaw), roll: mix(roll, other.roll),
+                         panX: mix(panX, other.panX), panY: mix(panY, other.panY), zoom: mix(zoom, other.zoom))
+    }
+    /// Towards neutral, which is how a pose fades in and out.
+    func weighted(_ amount: Double) -> FramePose { FramePose.neutral.blended(to: self, amount) }
+    func setting(_ change: (inout FramePose) -> Void) -> FramePose {
+        var copy = self; change(&copy); return copy
+    }
+    /// Two poses at once are both departures from square, so they add.
+    func added(_ other: FramePose) -> FramePose {
+        FramePose(pitch: pitch + other.pitch, yaw: yaw + other.yaw, roll: roll + other.roll,
+                  panX: panX + other.panX, panY: panY + other.panY, zoom: zoom * other.zoom)
+    }
+}
+
 struct CameraMoveSettings: Codable, Equatable {
     var move: CameraMove = .none
 

@@ -271,7 +271,18 @@ final class EditorModel: ObservableObject {
         lastHistory = .distantPast
         let start = min(playhead, max(0, duration - 0.2))
         let crop = frameAppearance.crop.bounded
-        let segment = EditSegment(kind: kind, start: start, duration: min(kind == .pan ? 4 : 2.5, duration - start), intensity: kind == .zoom || kind == .pan ? 1.65 : kind == .callout ? 1 : 2, x: crop.x + crop.width * 0.5, y: crop.y + crop.height * 0.5, width: kind == .outline ? 0.35 : nil, height: kind == .outline ? 0.25 : nil, transition: 0.7, curve: .smooth, endX: crop.x + crop.width * 0.75, endY: crop.y + crop.height * 0.5, text: kind == .callout ? "Look here" : nil)
+        var segment = EditSegment(kind: kind, start: start, duration: min(kind == .pan ? 4 : 2.5, duration - start), intensity: kind == .zoom || kind == .pan ? 1.65 : kind == .callout ? 1 : 2, x: crop.x + crop.width * 0.5, y: crop.y + crop.height * 0.5, width: kind == .outline ? 0.35 : nil, height: kind == .outline ? 0.25 : nil, transition: 0.7, curve: .smooth, endX: crop.x + crop.width * 0.75, endY: crop.y + crop.height * 0.5, text: kind == .callout ? "Look here" : nil)
+        if kind == .perspective {
+            // Something to look at straight away: a lean that sweeps across
+            // the shot and settles back, rather than a segment that does
+            // nothing until six sliders have been found.
+            segment.pose = FramePose(pitch: 0.22, yaw: 0.38, zoom: 1.04)
+            segment.sweeps = true
+            segment.blur = .depth
+            segment.blurAmount = 0.35
+            segment.duration = min(3, max(0.6, duration - start))
+            segment.transition = 0.8
+        }
         segments.append(segment); selectedSegmentID = segment.id; inspectorTab = "Segment"
     }
     func deleteSelected() {

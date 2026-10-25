@@ -121,6 +121,45 @@ enum MotionEngine {
         return min(total, band * moved)
     }
 
+    /// How the frame is standing at this instant, and how it is softened.
+    struct FrameStance: Equatable {
+        var pose: FramePose = .neutral
+        var blur: FrameBlur = .none
+        var amount: Double = 0
+        var angle: Double = 0
+        var isNeutral: Bool { pose.isNeutral && (blur == .none || amount <= 0.01) }
+    }
+
+    /// The 3D camera effects standing on the timeline at this moment.
+    ///
+    /// A pose on the timeline is a move, not a place: it leans in over the
+    /// segment's transition, travels while it holds, and comes back out —
+    /// so the frame is never parked at an angle unless that is what was
+    /// asked for. Several at once are each a departure from square, so they
+    /// add.
+    static func stance(at time: Double, segments: [EditSegment]) -> FrameStance {
+        var stance = FrameStance()
+        var strongest = 0.0
+        for segment in segments where segment.kind == .perspective {
+            let weight = envelope(segment, time: time)
+            guard weight > 0, let target = segment.pose else { continue }
+            // Travelling: from the far side of the pose, through it, out the
+            // other side over the length of the segment.
+            let through = segment.sweeps == false
+                ? target
+                : target.mirrored.blended(to: target, (segment.curve ?? .smooth).value((time - segment.start) / max(0.01, segment.duration)))
+            stance.pose = stance.pose.added(through.weighted(weight))
+            let amount = (segment.blurAmount ?? 0) * weight
+            if let blur = segment.blur, blur != .none, amount > strongest {
+                strongest = amount
+                stance.blur = blur
+                stance.amount = amount
+                stance.angle = segment.blurAngle ?? 0
+            }
+        }
+        return stance
+    }
+
     /// Whether someone is typing at this moment, according to the edit.
     ///
     /// The pointer usually sits still beside the words going in, and the

@@ -460,8 +460,12 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         }
         let motion = settings.motion
         let progress = MotionCurve.smooth.value((time - settings.trimStart) / max(0.1, motion.duration))
-        if settings.cameraMove.isActive {
-            source = applyCameraMove(source, at: time, canvas: canvas, settings: settings)
+        // A 3D camera laid on the timeline is a move for a few seconds; the
+        // one in the canvas panel is where the frame stands for the whole
+        // recording. Both end up in the same transform.
+        let stance = MotionEngine.stance(at: time, segments: settings.segments)
+        if settings.cameraMove.isActive || !stance.isNeutral {
+            source = applyCameraMove(source, at: time, canvas: canvas, settings: settings, stance: stance)
         }
         if motion.entrance != .none {
             var transform = CGAffineTransform.identity
@@ -550,7 +554,9 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     /// other out and the frame recedes. The receding edge is then softened
     /// with a graduated blur, so the depth reads as depth rather than as a
     /// skewed rectangle.
-    private func applyCameraMove(_ image: CIImage, at time: Double, canvas: CGRect, settings: ExportSettings) -> CIImage {
+    private func applyCameraMove(_ image: CIImage, at time: Double, canvas: CGRect,
+                                 settings: ExportSettings,
+                                 stance: MotionEngine.FrameStance = MotionEngine.FrameStance()) -> CIImage {
         let move = settings.cameraMove
         let span = max(0.2, move.duration)
         let elapsed = time - settings.trimStart
@@ -562,7 +568,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         // frame has been placed by hand stays, though — that is not a move,
         // it is where the frame stands.
         let settled = !move.holds && raw >= 1
-        if settled, !move.isPlaced, !move.hasStandaloneBlur { return image }
+        if settled, !move.isPlaced, !move.hasStandaloneBlur, stance.isNeutral { return image }
 
         let tilt = max(0, min(1, move.tilt))
         let amount = max(0, min(1, move.amount))
@@ -596,7 +602,10 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         // Turning and leaning by hand, on top of whatever the move is doing.
         // An edge that recedes is pulled in and, because it is further away,
         // is also shorter than the edge facing the viewer.
-        let yaw = max(-1, min(1, move.yaw)), pitch = max(-1, min(1, move.pitch))
+        // Where the frame stands, plus whatever the timeline is leaning it to.
+        let placed = FramePose(pitch: move.pitch, yaw: move.yaw, roll: move.roll,
+                               panX: move.panX, panY: move.panY, zoom: move.zoom).added(stance.pose)
+        let yaw = max(-1, min(1, placed.yaw)), pitch = max(-1, min(1, placed.pitch))
         leanRight += max(0, yaw) * 0.26
         leanLeft += max(0, -yaw) * 0.26
         leanTop += max(0, pitch) * 0.2
@@ -622,10 +631,10 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         guard var result = perspective.outputImage else { return image }
 
         // Roll, slide and push in — the rest of standing the frame somewhere.
-        let zoom = max(0.2, min(3, move.zoom))
-        let roll = max(-1, min(1, move.roll)) * .pi / 5
-        let dx = shiftX + move.panX * frame.width * 0.5
-        let dy = move.panY * frame.height * 0.5
+        let zoom = max(0.2, min(3, placed.zoom))
+        let roll = max(-1, min(1, placed.roll)) * .pi / 5
+        let dx = shiftX + placed.panX * frame.width * 0.5
+        let dy = placed.panY * frame.height * 0.5
         if scale * zoom != 1 || dx != 0 || dy != 0 || roll != 0 {
             let centre = CGPoint(x: canvas.midX, y: canvas.midY)
             let transform = CGAffineTransform(translationX: centre.x + dx, y: centre.y + dy)
@@ -635,8 +644,12 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             result = result.transformed(by: transform)
         }
 
-        let strength = max(0, min(1, move.focusBlur))
-        switch move.blur {
+        // A blur asked for on the timeline is this moment's; the panel's is
+        // the standing one.
+        let timelineBlur = stance.blur != .none && stance.amount > 0.01
+        let strength = max(0, min(1, timelineBlur ? stance.amount : move.focusBlur))
+        let angle = timelineBlur ? stance.angle : move.blurAngle
+        switch timelineBlur ? stance.blur : move.blur {
         case .none: return result
         case .radial:
             guard strength > 0.01 else { return result }
@@ -648,7 +661,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             guard strength > 0.01 else { return result }
             return result.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
                 kCIInputRadiusKey: max(1, Double(frame.width) / 1920 * 32 * strength),
-                kCIInputAngleKey: move.blurAngle * .pi / 180,
+                kCIInputAngleKey: angle * .pi / 180,
             ]).cropped(to: result.extent)
         case .tiltShift:
             guard strength > 0.01 else { return result }
