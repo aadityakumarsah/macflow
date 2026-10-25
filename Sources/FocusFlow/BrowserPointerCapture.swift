@@ -22,6 +22,7 @@ import CoreGraphics
 final class BrowserPointerCapture {
     private(set) var clicks: [RecordedClick] = []
     private(set) var typingEvents: [TypingEvent] = []
+    private(set) var scrollEvents: [ScrollEvent] = []
     private(set) var samples: [PointerSample] = []
 
     private var timer: Timer?
@@ -42,6 +43,7 @@ final class BrowserPointerCapture {
         clicks = []
         samples = []
         typingEvents = []
+        scrollEvents = []
         pausedTotal = 0
         pausedSince = nil
         lastButtonDown = false
@@ -66,6 +68,15 @@ final class BrowserPointerCapture {
                 let time = pressedAt.timeIntervalSince(self.start) - self.pausedTotal
                 if time >= 0 { self.typingEvents.append(TypingEvent(time: time)) }
             }
+        } onScroll: { [weak self] _ in
+            let turnedAt = Date()
+            Task { @MainActor in
+                guard let self, self.timer != nil, self.pausedSince == nil else { return }
+                guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == BrowserPointerCapture.chromeBundleID else { return }
+                let time = turnedAt.timeIntervalSince(self.start) - self.pausedTotal
+                guard time >= 0, time - (self.scrollEvents.last?.time ?? -1) > 0.05 else { return }
+                self.scrollEvents.append(ScrollEvent(time: time))
+            }
         }
 
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
@@ -87,6 +98,7 @@ final class BrowserPointerCapture {
         clicks = []
         samples = []
         typingEvents = []
+        scrollEvents = []
         lastButtonDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
     }
 
@@ -117,6 +129,7 @@ final class BrowserPointerCapture {
         clicks = []
         samples = []
         typingEvents = []
+        scrollEvents = []
     }
 
     // MARK: - Sampling

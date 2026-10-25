@@ -46,6 +46,9 @@ struct ExportSettings {
     var grade = GradeSettings()
     var cameraMove = CameraMoveSettings()
     var exportOptions = ExportOptions()
+    var typingEvents: [TypingEvent] = []
+    var scrollEvents: [ScrollEvent] = []
+    var sounds = SoundSettings()
 }
 
 enum ExportError: LocalizedError {
@@ -89,7 +92,7 @@ enum VideoExporter {
                 }
             }
         }
-        var musicMix: AVAudioMix?
+        var mixInputs: [AVMutableAudioMixInputParameters] = []
         if let musicURL = settings.musicURL, FileManager.default.fileExists(atPath: musicURL.path) {
             let musicAsset = AVURLAsset(url: musicURL)
             guard let sourceAudio = try await musicAsset.loadTracks(withMediaType: .audio).first,
@@ -106,8 +109,53 @@ enum VideoExporter {
             }
             let parameters = AVMutableAudioMixInputParameters(track: track)
             parameters.setVolume(Float(min(1, max(0, settings.musicVolume))), at: .zero)
+            mixInputs.append(parameters)
+        }
+
+        // Sounds for what happened: the keyboard under a run of typing, a
+        // click under a click, the wheel under a scroll. The cues come from
+        // the recording's own events, so they follow the edit rather than
+        // being placed once and left to drift out of step with it.
+        let cues = SoundTrack.cues(clicks: settings.clicks,
+                                   typing: settings.typingEvents,
+                                   scrolling: settings.scrollEvents,
+                                   duration: duration.seconds,
+                                   settings: settings.sounds)
+        for kind in SoundKind.allCases {
+            let kindCues = cues.filter { $0.kind == kind }
+            guard !kindCues.isEmpty, let url = kind.url else { continue }
+            let clipAsset = AVURLAsset(url: url)
+            guard let clipAudio = try await clipAsset.loadTracks(withMediaType: .audio).first,
+                  let track = edit.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            let clip = try await clipAudio.load(.timeRange)
+            guard clip.duration > .zero else { continue }
+            let shortest = CMTime(seconds: 0.02, preferredTimescale: 600)
+            // In order, and never on top of what is already there: inserting
+            // into a composition track pushes whatever follows, so two cues
+            // that overlap would shove the rest of the sound out of time.
+            var cursor = CMTime.zero
+            for (index, cue) in kindCues.enumerated() {
+                let next = index + 1 < kindCues.count ? kindCues[index + 1].start : .greatestFiniteMagnitude
+                // A cue with no span of its own — a click — is the clip once.
+                let span = cue.fills ? cue.end - cue.start : clip.duration.seconds
+                let stop = CMTime(seconds: min(min(cue.start + span, next), duration.seconds), preferredTimescale: 600)
+                var at = CMTimeMaximum(CMTime(seconds: cue.start, preferredTimescale: 600), cursor)
+                while at < stop {
+                    let length = CMTimeMinimum(clip.duration, stop - at)
+                    guard length > shortest else { break }
+                    try track.insertTimeRange(CMTimeRange(start: clip.start, duration: length), of: clipAudio, at: at)
+                    at = at + length
+                }
+                cursor = CMTimeMaximum(cursor, at)
+            }
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            parameters.setVolume(Float(settings.sounds.volume(kind)), at: .zero)
+            mixInputs.append(parameters)
+        }
+        var musicMix: AVAudioMix?
+        if !mixInputs.isEmpty {
             let mix = AVMutableAudioMix()
-            mix.inputParameters = [parameters]
+            mix.inputParameters = mixInputs
             musicMix = mix
         }
         var cameraID = kCMPersistentTrackID_Invalid
@@ -675,8 +723,14 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 .transformed(by: CGAffineTransform(translationX: x, y: y))
             result = opacity(placed, max(0, min(1, settings.cursor.highlightOpacity ?? 0.22))).composited(over: result)
         }
-        if settings.showCursor, let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor), let cursor = RenderAssets.cursor(settings.cursor, shape: settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!) {
-            let resolvedShape = settings.cursor.shape == nil || settings.cursor.shape == .automatic ? pointer.shape ?? .arrow : settings.cursor.shape!
+        if settings.showCursor, let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor) {
+            // Automatic means the shape the system reported, except while
+            // text is being written, where it is a text cursor whatever the
+            // pointer happened to be resting over.
+            let automatic = settings.cursor.shape == nil || settings.cursor.shape == .automatic
+            let typing = MotionEngine.isTyping(at: time, segments: settings.segments)
+            let resolvedShape = automatic ? (typing ? .text : pointer.shape ?? .arrow) : settings.cursor.shape!
+            guard let cursor = RenderAssets.cursor(settings.cursor, shape: resolvedShape) else { return result.cropped(to: image.extent) }
             let isText = resolvedShape == .text
             let isSystem = settings.cursor.style == .macOS || isText
             // The I-beam is a thin glyph and reads much smaller than the arrow

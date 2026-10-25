@@ -176,6 +176,37 @@ final class FocusFlowTests {
             try await VideoExporter.export(source: source, destination: source, settings: settings) { _ in }
             XCTFail("Exporter must not overwrite source")
         } catch { XCTAssertTrue(FileManager.default.fileExists(atPath: source.path)) }
+
+        // The sounds reach the composition, laid where the events were: a
+        // track for each kind that has any, with the typing filled for as
+        // long as the typing lasted and cut there rather than running on for
+        // the length of the clip.
+        var sounded = settings
+        sounded.segments = []
+        sounded.trimStart = 0; sounded.trimEnd = .greatestFiniteMagnitude
+        sounded.playbackRate = 1; sounded.musicURL = nil
+        sounded.clicks = [RecordedClick(time: 0.2, x: 0.5, y: 0.5)]
+        sounded.typingEvents = (0..<13).map { TypingEvent(time: 0.3 + Double($0) * 0.1) }  // 0.30 … 1.50
+        let (withSound, _, mix) = try await VideoExporter.composition(source: source, settings: sounded)
+        let soundTracks = withSound.tracks(withMediaType: .audio)
+        XCTAssertEqual(soundTracks.count, 2)
+        // What is actually sounding, rather than the span the track covers:
+        // a track that starts late carries an empty stretch before it.
+        func sounding(_ track: AVCompositionTrack) -> Double {
+            track.segments.filter { !$0.isEmpty }.reduce(0) { $0 + $1.timeMapping.target.duration.seconds }
+        }
+        let spans = soundTracks.map(sounding).sorted()
+        // The click is the clip played once; the typing is the length of the
+        // run, cut there rather than running on for the eight-second clip.
+        XCTAssertEqual(spans[0], 0.84, accuracy: 0.12)
+        XCTAssertEqual(spans[1], 1.2 + SoundTrack.tail, accuracy: 0.1)
+        // And each track carries a volume of its own.
+        XCTAssertEqual(mix?.inputParameters.count, 2)
+
+        var silent = sounded
+        silent.sounds = SoundSettings(typing: false, clicking: false, scrolling: false)
+        let (quiet, _, _) = try await VideoExporter.composition(source: source, settings: silent)
+        XCTAssertTrue(quiet.tracks(withMediaType: .audio).isEmpty)
     }
 
     func testCropGeometryMotionAndPresentationRoundTrip() throws {
@@ -1327,6 +1358,66 @@ final class FocusFlowTests {
         for span in typingSpans {
             XCTAssertTrue(!edits.contains { $0.kind == .zoom && $0.start >= span.start - 0.3 && $0.start <= span.end })
         }
+    }
+
+    /// Sounds are laid under what the recording saw happen, and the cursor
+    /// reads as a text cursor while text is being written.
+    func testSoundsAndTextCursorFollowTheRecording() throws {
+        let clicks = [RecordedClick(time: 0.5, x: 0.2, y: 0.2),
+                      RecordedClick(time: 4.0, x: 0.6, y: 0.6)]
+        let typing = (0..<24).map { TypingEvent(time: 1 + Double($0) * 0.12) }   // 1.00 … 3.76
+        let scrolling = (0..<10).map { ScrollEvent(time: 6 + Double($0) * 0.1) } // 6.00 … 6.90
+        let settings = SoundSettings()
+
+        let cues = SoundTrack.cues(clicks: clicks, typing: typing, scrolling: scrolling,
+                                   duration: 10, settings: settings)
+        XCTAssertEqual(cues.filter { $0.kind == .clicking }.count, 2)
+        XCTAssertEqual(cues.filter { $0.kind == .typing }.count, 1)
+        XCTAssertEqual(cues.filter { $0.kind == .scrolling }.count, 1)
+        // In order, so they can be laid down without shoving each other along.
+        XCTAssertEqual(cues.map(\.start), cues.map(\.start).sorted())
+
+        // A run covers the typing and stops with it; a click is a single hit.
+        guard let run = cues.first(where: { $0.kind == .typing }),
+              let hit = cues.first(where: { $0.kind == .clicking }) else {
+            XCTFail("the recording's typing and clicks produced no cues"); return
+        }
+        XCTAssertEqual(run.start, 1, accuracy: 0.001)
+        XCTAssertEqual(run.end, 3.76 + SoundTrack.tail, accuracy: 0.001)
+        XCTAssertTrue(run.fills)
+        XCTAssertTrue(!hit.fills)
+
+        // Nothing is laid under a kind that is switched off.
+        var quiet = settings
+        quiet.typing = false; quiet.scrolling = false
+        let remaining = SoundTrack.cues(clicks: clicks, typing: typing, scrolling: scrolling,
+                                        duration: 10, settings: quiet)
+        XCTAssertTrue(remaining.allSatisfy { $0.kind == .clicking })
+        XCTAssertTrue(SoundTrack.cues(clicks: [], typing: [], scrolling: [], duration: 10, settings: settings).isEmpty)
+
+        // Every clip is bundled, or there is nothing to play.
+        for kind in SoundKind.allCases {
+            if kind.url == nil { XCTFail("the \(kind.rawValue) sound is missing from the bundle") }
+        }
+
+        // The cursor is a text cursor while the writing happens, and back to
+        // whatever the pointer was over once the frame is only holding.
+        let follow = MotionEngine.typingFollows(typing: typing, clicks: clicks,
+                                                samples: [PointerSample(time: 0, x: 0.3, y: 0.3),
+                                                          PointerSample(time: 10, x: 0.3, y: 0.3)],
+                                                duration: 10, settings: TypingFollowSettings())
+        guard let segment = follow.first else { XCTFail("no typing segment to read a cursor from"); return }
+        XCTAssertTrue(MotionEngine.isTyping(at: 2.0, segments: follow))
+        XCTAssertTrue(!MotionEngine.isTyping(at: segment.end - 0.05, segments: follow))
+        XCTAssertTrue(!MotionEngine.isTyping(at: 5.0, segments: follow))
+        XCTAssertTrue(!MotionEngine.isTyping(at: 2.0, segments: [EditSegment(kind: .zoom, start: 0, duration: 9, intensity: 2, x: 0.5, y: 0.5)]))
+
+        // Scroll events and sound settings survive a round trip.
+        var metadata = RecordingMetadata(clicks: clicks, pointerSamples: [], keystrokes: [],
+                                         sourceWidth: 100, sourceHeight: 100, sourceName: "test")
+        metadata.scrollEvents = scrolling
+        let restored = try JSONDecoder().decode(RecordingMetadata.self, from: JSONEncoder().encode(metadata))
+        XCTAssertEqual(restored.scrollEvents?.count, scrolling.count)
     }
 
     /// Spotlight is off the menu, and typing follow has to be reachable from

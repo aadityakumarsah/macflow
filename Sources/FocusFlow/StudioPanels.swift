@@ -32,7 +32,49 @@ struct AudioPanel: View {
                 Text("Export: \(model.outputDuration, specifier: "%.1f") s").font(.caption).foregroundStyle(.secondary)
             }
 
+            InspectorSection(title: "SOUNDS") {
+                Toggle("Typing", isOn: $model.sounds.typing)
+                if model.sounds.typing {
+                    InspectorSlider(title: "Typing volume", value: $model.sounds.typingVolume, range: 0...1, suffix: "")
+                }
+                Toggle("Clicks", isOn: $model.sounds.clicking)
+                if model.sounds.clicking {
+                    InspectorSlider(title: "Click volume", value: $model.sounds.clickingVolume, range: 0...1, suffix: "")
+                }
+                Toggle("Scrolling", isOn: $model.sounds.scrolling)
+                if model.sounds.scrolling {
+                    InspectorSlider(title: "Scroll volume", value: $model.sounds.scrollingVolume, range: 0...1, suffix: "")
+                }
+                Text(soundSummary).font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
         }
+    }
+}
+
+extension AudioPanel {
+    /// What the recording has to put a sound under. Scrolling was not watched
+    /// for before this existed, so an older recording has none of it and says
+    /// so rather than looking broken.
+    private var counts: (clicks: Int, typing: Int, scrolling: Int) {
+        (model.recordingMetadata.clicks.count,
+         model.recordingMetadata.typingEvents?.count ?? 0,
+         model.recordingMetadata.scrollEvents?.count ?? 0)
+    }
+    var soundSummary: String {
+        guard model.videoURL != nil else {
+            return "Sounds are laid under the typing, clicks and scrolling of a recording, and follow every change to the edit."
+        }
+        let found = counts
+        var parts: [String] = []
+        if found.clicks > 0 { parts.append("\(found.clicks) clicks") }
+        if found.typing > 0 { parts.append("\(found.typing) keypresses") }
+        if found.scrolling > 0 { parts.append("\(found.scrolling) scrolls") }
+        guard !parts.isEmpty else {
+            return "This recording carries no clicks, typing or scrolling to put a sound under."
+        }
+        return parts.joined(separator: ", ") + " in this recording. The clip repeats to cover a run and is cut where the run ends."
     }
 }
 

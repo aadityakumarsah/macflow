@@ -121,6 +121,21 @@ enum MotionEngine {
         return min(total, band * moved)
     }
 
+    /// Whether someone is typing at this moment, according to the edit.
+    ///
+    /// The pointer usually sits still beside the words going in, and the
+    /// system only reports an I-beam while it happens to be over text — so a
+    /// recording of someone typing shows an arrow resting in the middle of
+    /// the frame doing nothing. While text is being written the cursor is a
+    /// text cursor, whatever the pointer was over.
+    static func isTyping(at time: Double, segments: [EditSegment]) -> Bool {
+        segments.contains { segment in
+            guard segment.kind == .typing else { return false }
+            let writing = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
+            return time >= segment.start && time <= segment.start + writing
+        }
+    }
+
     /// How long a zoom lingers after the click that caused it, and how long
     /// it takes to settle at each end. The hold is what decides when the
     /// frame starts pulling back, so it is the number to shorten for a

@@ -247,6 +247,7 @@ struct ProjectDocument: Codable {
     var grade: GradeSettings? = nil
     var cameraMove: CameraMoveSettings? = nil
     var typingFollow: TypingFollowSettings? = nil
+    var sounds: SoundSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
 }
@@ -257,6 +258,12 @@ struct ProjectDocument: Codable {
 /// was typed is none of the app's business — so only the instant is kept. No
 /// character, no key code, nothing that could reconstruct the text.
 struct TypingEvent: Codable, Equatable {
+    var time: Double
+}
+
+/// When the wheel turned, and nothing else — the same bargain as a keypress.
+/// Enough to lay a sound under a scroll and to know a scroll happened.
+struct ScrollEvent: Codable, Equatable {
     var time: Double
 }
 
@@ -301,6 +308,7 @@ struct RecordingMetadata: Codable {
     var sourcePointHeight: Double? = nil
     var embeddedCursor: Bool? = nil
     var typingEvents: [TypingEvent]? = nil
+    var scrollEvents: [ScrollEvent]? = nil
 
     static let empty = RecordingMetadata(clicks: [], pointerSamples: [], keystrokes: [], sourceWidth: 0, sourceHeight: 0, sourceName: "", cameraFileName: nil)
 
@@ -317,7 +325,7 @@ struct RecordingMetadata: Codable {
         self.sourcePointWidth = sourcePointWidth; self.sourcePointHeight = sourcePointHeight
     }
 
-    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight, embeddedCursor, typingEvents }
+    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight, embeddedCursor, typingEvents, scrollEvents }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         clicks = try values.decodeIfPresent([RecordedClick].self, forKey: .clicks) ?? []
@@ -333,5 +341,6 @@ struct RecordingMetadata: Codable {
         sourcePointHeight = try values.decodeIfPresent(Double.self, forKey: .sourcePointHeight)
         embeddedCursor = try values.decodeIfPresent(Bool.self, forKey: .embeddedCursor)
         typingEvents = try values.decodeIfPresent([TypingEvent].self, forKey: .typingEvents)
+        scrollEvents = try values.decodeIfPresent([ScrollEvent].self, forKey: .scrollEvents)
     }
 }

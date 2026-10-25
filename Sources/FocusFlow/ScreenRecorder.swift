@@ -51,6 +51,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var keyPresses: KeyPressTap?
     private(set) var clicks: [RecordedClick] = []
     private(set) var typingEvents: [TypingEvent] = []
+    private(set) var scrollEvents: [ScrollEvent] = []
     private(set) var pointerSamples: [PointerSample] = []
     private(set) var keystrokes: [KeystrokeEvent] = []
     private(set) var sourceSize = CGSize.zero
@@ -98,6 +99,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         targetPID = nil; targetWindowID = nil
         firstFrameDate = nil
         typingEvents = []
+        scrollEvents = []
         switch resolvedTarget {
         case .display(let display):
             filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: [])
@@ -217,6 +219,8 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         }
         keyPresses = KeyPressTap { [weak self] event in
             self?.recordKeystroke(event)
+        } onScroll: { [weak self] _ in
+            self?.recordScroll()
         }
     }
 
@@ -278,6 +282,10 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
             let time = event.time - delta
             return time >= 0 ? TypingEvent(time: time) : nil
         }
+        scrollEvents = scrollEvents.compactMap { event in
+            let time = event.time - delta
+            return time >= 0 ? ScrollEvent(time: time) : nil
+        }
     }
 
     @MainActor
@@ -306,6 +314,17 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
             clicks.append(RecordedClick(time: t, x: x, y: y))
         }
         lastLeftButtonDown = down
+    }
+
+    /// Momentum scrolling arrives dozens of times a second and all that is
+    /// wanted is the shape of the run, so the wheel is sampled rather than
+    /// transcribed.
+    private func recordScroll() {
+        guard isRecording else { return }
+        if let targetPID, NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID { return }
+        let time = Date().timeIntervalSince(recordingStart)
+        guard time - (scrollEvents.last?.time ?? -1) > 0.05 else { return }
+        scrollEvents.append(ScrollEvent(time: time))
     }
 
     private func recordKeystroke(_ event: NSEvent) {

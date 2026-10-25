@@ -9,7 +9,7 @@ let package = Package(
         .executableTarget(
             name: "FocusFlow",
             path: "Sources/FocusFlow",
-            resources: [.copy("BrowserRecorder"), .copy("Backgrounds")],
+            resources: [.copy("BrowserRecorder"), .copy("Backgrounds"), .copy("Sounds")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

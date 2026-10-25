@@ -2,7 +2,8 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 
-/// Notices that a key was pressed, for as long as a recording lasts.
+/// Notices that a key was pressed, or the wheel turned, for as long as a
+/// recording lasts.
 ///
 /// This is a listen-only event tap rather than an `NSEvent` global monitor.
 /// A global monitor delivers *key* events only to a process trusted for
@@ -22,13 +23,17 @@ final class KeyPressTap {
     private var source: CFRunLoopSource?
     private var fallbackMonitor: Any?
     private let handler: (NSEvent) -> Void
+    private let scrollHandler: ((NSEvent) -> Void)?
 
     /// Whether keypresses can be captured at all. Either permission will do,
     /// which is why both are asked about.
     static var isPermitted: Bool { CGPreflightListenEventAccess() || AXIsProcessTrusted() }
 
-    init(handler: @escaping (NSEvent) -> Void) {
+    init(handler: @escaping (NSEvent) -> Void, onScroll: ((NSEvent) -> Void)? = nil) {
         self.handler = handler
+        self.scrollHandler = onScroll
+        var mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        if onScroll != nil { mask |= CGEventMask(1 << CGEventType.scrollWheel.rawValue) }
 
         let callback: CGEventTapCallBack = { _, type, event, context in
             guard let context else { return Unmanaged.passUnretained(event) }
@@ -38,7 +43,7 @@ final class KeyPressTap {
         if let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
                                        place: .tailAppendEventTap,
                                        options: .listenOnly,
-                                       eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+                                       eventsOfInterest: mask,
                                        callback: callback,
                                        userInfo: Unmanaged.passUnretained(self).toOpaque()) {
             self.tap = tap
@@ -49,8 +54,11 @@ final class KeyPressTap {
             // No Input Monitoring. An Accessibility-trusted Mac still reports
             // keys this way; an untrusted one silently reports none, which is
             // what the recorder's warning is for.
-            fallbackMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-                self?.handler(event)
+            var kinds: NSEvent.EventTypeMask = [.keyDown]
+            if onScroll != nil { kinds.insert(.scrollWheel) }
+            fallbackMonitor = NSEvent.addGlobalMonitorForEvents(matching: kinds) { [weak self] event in
+                guard let self else { return }
+                if event.type == .scrollWheel { self.scrollHandler?(event) } else { self.handler(event) }
             }
         }
     }
@@ -64,8 +72,12 @@ final class KeyPressTap {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
-        guard type == .keyDown, let key = NSEvent(cgEvent: event) else { return }
-        handler(key)
+        guard let received = NSEvent(cgEvent: event) else { return }
+        switch type {
+        case .keyDown: handler(received)
+        case .scrollWheel: scrollHandler?(received)
+        default: return
+        }
     }
 
     func invalidate() {
