@@ -17,7 +17,14 @@ enum BuiltInBackground: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { "\(rawValue).png" }
     var reference: String { "builtin:\(rawValue).png" }
-    var url: URL? { Bundle.module.url(forResource: rawValue, withExtension: "png", subdirectory: "Backgrounds") }
+    /// These ship as JPEG: as PNG the eleven of them were 15MB of the disk
+    /// image, which every update had to carry. They are opaque backdrops, so
+    /// there is no alpha to lose. PNG is still accepted so a project saved
+    /// against an older build keeps resolving.
+    var url: URL? {
+        Bundle.module.url(forResource: rawValue, withExtension: "jpg", subdirectory: "Backgrounds")
+            ?? Bundle.module.url(forResource: rawValue, withExtension: "png", subdirectory: "Backgrounds")
+    }
 
     static let usablePresets: [Self] = allCases
 
@@ -45,7 +52,10 @@ enum BuiltInBackground: String, CaseIterable, Identifiable {
 
     static func asset(for reference: String) -> Self? {
         guard reference.hasPrefix("builtin:") else { return nil }
-        let name = String(reference.dropFirst("builtin:".count)).replacingOccurrences(of: ".png", with: "")
+        var name = String(reference.dropFirst("builtin:".count))
+        for suffix in [".png", ".jpg", ".jpeg"] where name.hasSuffix(suffix) {
+            name = String(name.dropLast(suffix.count))
+        }
         return Self(rawValue: name)
     }
 

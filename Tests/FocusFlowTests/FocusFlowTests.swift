@@ -979,6 +979,28 @@ final class FocusFlowTests {
         XCTAssertEqual(centre(try render(GradeSettings())), plainCentre)
     }
 
+    /// Every bundled background must resolve to a real, decodable file, and a
+    /// reference saved by an older build must still find it now the files are
+    /// JPEG rather than PNG.
+    func testBundledBackgroundsResolveAndDecode() throws {
+        XCTAssertTrue(!BuiltInBackground.allCases.isEmpty)
+        for background in BuiltInBackground.allCases {
+            let url = try XCTUnwrap(background.url)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            // Decodable, not merely present.
+            XCTAssertTrue(CIImage(contentsOf: url) != nil)
+
+            // The reference stored in projects still spells ".png".
+            let resolved = try XCTUnwrap(BuiltInBackground.url(for: background.reference))
+            XCTAssertEqual(resolved, url)
+            // And the current spelling resolves too.
+            let asJPEG = try XCTUnwrap(BuiltInBackground.url(for: "builtin:\(background.rawValue).jpg"))
+            XCTAssertEqual(asJPEG, url)
+        }
+        XCTAssertNil(BuiltInBackground.url(for: "builtin:not-a-background.png"))
+        XCTAssertNil(BuiltInBackground.url(for: "/some/local/file.png"))
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

@@ -205,39 +205,29 @@ final class Updater: ObservableObject {
     }
 
     private func download(_ url: URL, to destination: URL) async throws {
-        let (bytes, response) = try await session.bytes(from: url)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw UpdateError.message("The download could not be started.")
-        }
-        let expected = http.expectedContentLength
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
-
-        var buffer = Data()
-        buffer.reserveCapacity(1 << 16)
-        var written: Int64 = 0
-        var lastReported = Date.distantPast
-
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count >= (1 << 16) {
-                try handle.write(contentsOf: buffer)
-                written += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                // Repainting on every chunk floods the main actor.
-                if Date().timeIntervalSince(lastReported) > 0.1 {
-                    lastReported = Date()
-                    let fraction = expected > 0 ? Double(written) / Double(expected) : 0
-                    state = .downloading(min(0.99, fraction))
-                }
+        // A download task, not a byte sequence. `URLSession.bytes` yields one
+        // byte per iteration, which for a disk image of this size is millions
+        // of awaits — and because this type is @MainActor, every one of them
+        // ran on the main thread and locked the interface while updating.
+        let reporter = DownloadProgress { [weak self] fraction in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .downloading = self.state { self.state = .downloading(min(0.99, fraction)) }
             }
         }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            written += Int64(buffer.count)
+
+        let (temporary, response) = try await session.download(from: url, delegate: reporter)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            try? FileManager.default.removeItem(at: temporary)
+            throw UpdateError.message("The download could not be completed.")
         }
-        guard written > 0 else { throw UpdateError.message("The download was empty.") }
+
+        // The async download API hands back a file it expects us to move.
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+
+        let size = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int) ?? 0
+        guard (size ?? 0) > 0 else { throw UpdateError.message("The download was empty.") }
         state = .downloading(1)
     }
 
@@ -373,4 +363,29 @@ final class Updater: ObservableObject {
         }
         return error.localizedDescription
     }
+}
+
+/// Reports download progress. URLSession calls this on its own queue, which is
+/// the point: the transfer must not be driven from the main thread.
+private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let report: (Double) -> Void
+
+    init(_ report: @escaping (Double) -> Void) {
+        self.report = report
+    }
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        report(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    /// Required by the protocol. The async `download(from:delegate:)` call
+    /// returns the file itself, so there is nothing to do here.
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {}
 }
