@@ -1,156 +1,197 @@
-# FocusFlow
+# FocusFlow — open-source screen recorder and motion editor for macOS
 
-A native macOS recording and editing app, with a local Chrome tab recording companion. Built with SwiftUI, ScreenCaptureKit, AVFoundation, Core Image, and browser media APIs. Recordings stay on your Mac.
+[![Release](https://img.shields.io/github/v/release/aadityakumarsah/macflow?label=release)](https://github.com/aadityakumarsah/macflow/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey.svg)](#requirements)
+[![Built with SwiftUI](https://img.shields.io/badge/built%20with-SwiftUI-orange.svg)](#how-it-is-built)
 
-Landing page: <https://macflow-delta.vercel.app/> (also on <https://aadityakumarsah.github.io/macflow/>)
+**FocusFlow records your Mac screen and turns every click into an animated zoom.** It is a free, MIT-licensed, native macOS app that puts a screen recorder and a motion editor in one window — record a window, a display, or a single Chrome tab, and the recording opens in a timeline with the zooms already written for you.
+
+Nothing is uploaded. There is no account, no telemetry and no cloud step: recordings are written straight to `~/Movies/FocusFlow` and stay there.
+
+**Website:** <https://macflow-delta.vercel.app/> · **Download:** [latest release](https://github.com/aadityakumarsah/macflow/releases/latest)
+
+---
 
 ## Install
 
-Requires macOS 14+ on Apple silicon.
+One line in Terminal, on macOS 14 or later (Apple silicon):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash
 ```
 
-The installer resolves the latest release, shows a live progress bar while it
-downloads, copies **FocusFlow** into `/Applications`, and clears the download
-quarantine flag. Set `FOCUSFLOW_PREFIX` to install somewhere else.
+That resolves the latest release, downloads the disk image with a progress bar, copies **FocusFlow** into `/Applications`, and clears the download quarantine flag. Set `FOCUSFLOW_PREFIX` to install elsewhere.
 
-Prefer the disk image? Take it from the
-[latest release](https://github.com/aadityakumarsah/macflow/releases/latest)
-and drag FocusFlow into Applications — then right-click the app and choose
-**Open** the first time.
+Prefer the disk image? Take it from the [latest release](https://github.com/aadityakumarsah/macflow/releases/latest) and drag FocusFlow into Applications — then **right-click the app and choose Open** the first time.
 
-FocusFlow is signed ad-hoc rather than with a paid Developer ID, so Gatekeeper
-would otherwise refuse the first launch. The install script clears the
-quarantine flag for you; a browser download does not.
+> FocusFlow is signed ad-hoc rather than with a paid Apple Developer ID, and is not notarized. Gatekeeper therefore blocks a plain double-click on a browser download. The install command clears the quarantine flag for you; a browser download does not.
+
+After the first install, FocusFlow updates itself — see [Updating](#updating).
+
+---
+
+## What it does
+
+### Recording
+
+| Source | What you get |
+| :- | :- |
+| **Window** | Pick a window with a live source preview. **Select area** crops to one pane before recording, excluding the toolbar. |
+| **Display** | A whole display. FocusFlow's own windows and audio are excluded, so it cannot record itself. |
+| **Chrome tab** | Only the chosen tab's page content, without browser chrome. Pause/resume, tab audio, camera and microphone. **Stop & edit** sends it straight back to the editor. |
+
+Up to 60 fps. Camera and screen are recorded separately and composited, so the camera stays a movable, resizable layer in the editor rather than being burned in.
+
+### Automatic editing
+
+Clicks are grouped into smooth, eased **zooms** before you touch anything — including for Chrome tab recordings, where FocusFlow follows the pointer itself, because a web page cannot see events in the tab it is capturing.
+
+Only zooms are generated automatically. Spotlights, outlines, pixelation and callouts are all available, but adding one is your decision.
+
+### The editor
+
+- **3D camera moves** — Glide across, Unfold, Pull back. The frame leans into real perspective with focus blur on the receding edge.
+- **Colour grades** — Cinematic, Noir, Vintage, Frost, Golden, Midnight, Vivid, Dreamy, over exposure, contrast and vignette.
+- **Smooth scrolling** — a true shutter, blending neighbouring frames so scrolling stops strobing. Separate from camera motion blur, and separately adjustable.
+- **Cursor** — 0.5× to 10× with quick presets, ripple/pulse/press click effects, any accent colour, a pointer highlight, independent I-beam scale, tilt, opacity and shadow.
+- **A real macOS window frame** — light or dark, working traffic lights, optional title, adjustable bar height. It stays fixed while the content zooms underneath.
+- **Backgrounds** — 11 bundled images, gradient presets, any solid colour, a custom two-colour gradient at any angle, your own image, or the recording itself blurred behind the frame.
+- **Privacy masks** — blur or pixelate any region, with editable position, size, strength and timing. Regions can overlap.
+- **Canvas** — Source, 16:9, 9:16, 1:1, 4:3, or **any custom ratio** including decimals like 2.39:1. Change it and padding and the camera re-fit themselves.
+- **Timeline** — scrub, move, resize, duplicate, split at the playhead, delete, undo, redo. Non-destructive trim, playback speed, audio mute, and a looping music track.
+- **Full screen preview** — ⌃⌘F gives the preview the whole display.
+- **Export** — MP4 or MOV, Source to 4K, 30 or 60 fps.
+
+Preview and export run through one shared Core Image renderer, so the frame you scrub is the frame you ship.
+
+---
+
+## How it compares
+
+An honest comparison, including where FocusFlow is behind:
+
+| | FocusFlow | Screen Studio | Loom | OBS Studio |
+| :- | :- | :- | :- | :- |
+| Price | **Free** | Paid | Free tier + paid | Free |
+| Licence | **MIT, open source** | Proprietary | Proprietary | GPL |
+| Automatic click zooms | **Yes** | Yes | No | No |
+| 3D camera moves | **Yes** | Yes | No | No |
+| Records a single browser tab | **Yes** | No | Yes | No |
+| Works fully offline | **Yes** | Yes | No | Yes |
+| Platform | macOS 14+ | macOS | macOS, Windows, web | macOS, Windows, Linux |
+| Signed with a paid Developer ID | **No** | Yes | Yes | Yes |
+| Cloud sharing links | No | No | Yes | No |
+| Transcription, captions, AI summaries | No | Some | Yes | No |
+| Live streaming | No | No | No | Yes |
+| Maturity | Early | Mature | Mature | Mature |
+
+**Choose FocusFlow** if you want automatic click zooms and a motion editor, free and open source, with nothing leaving your Mac.
+
+**Choose something else** if you need captions or transcription, cloud share links, Windows or Linux, live streaming, or a notarized build your IT policy will accept.
+
+---
 
 ## Updating
 
-From 0.4.0 onward FocusFlow checks GitHub Releases on launch and offers any
-newer build in a bar under the toolbar. **Install and relaunch** downloads the
-disk image, verifies it, replaces the app in place and reopens it. There is
-also **FocusFlow → Check for Updates…**. Nothing is installed without a press.
+FocusFlow checks GitHub Releases at launch and every six hours, and offers a newer build in a bar under the toolbar. **Install and relaunch** downloads it, verifies it, replaces the app and reopens it. There is also **FocusFlow → Check for Updates…**. Nothing installs without a press.
 
-Earlier builds have no updater, so 0.3.0 and older must be updated once by
-hand — rerun the install command, or take the `.dmg` from the latest release.
+Before replacing anything it checks that the asset is a `.dmg` served over HTTPS from GitHub, that the bundle carries FocusFlow's identifier and a genuinely newer version, and that its code signature verifies. Your existing copy is moved aside rather than deleted, and put back if the swap fails, so a failed update cannot leave you with no app.
 
-The app cannot overwrite itself while running, so installation hands off to a
-short script that waits for the process to exit, swaps the bundle and relaunches.
-The old copy is kept until the new one is in place: if the swap fails, the
-previous version is put back rather than leaving no app at all. FocusFlow must
-be somewhere writable — it refuses to update while running from a disk image.
+Versions before 0.4.0 have no updater and must be updated once by hand.
 
-## Run
+---
 
-Requires macOS 14+ and Apple Command Line Tools. Native microphone recording requires macOS 15+.
+## Requirements
+
+- **macOS 14 (Sonoma) or later**, Apple silicon
+- **macOS 15+** for native microphone recording
+- **Google Chrome** for single-tab capture
+- **Screen Recording** permission for native capture; **Input Monitoring** for click zooms and shortcut badges; camera and microphone only when you switch them on
+
+---
+
+## FAQ
+
+**Is FocusFlow free?**
+Yes — free and MIT licensed. No account, no subscription, no paid tier.
+
+**Does my recording get uploaded anywhere?**
+No. Recordings are written to `~/Movies/FocusFlow` on your own Mac. There is no account system and no upload step. The Chrome companion runs on `127.0.0.1` with a per-session token.
+
+**Why does macOS say the app can't be opened?**
+It is signed ad-hoc rather than with a paid Apple Developer ID, so Gatekeeper blocks a browser download. Use the install command above, which clears the quarantine flag, or right-click the app and choose **Open** once.
+
+**Is it a Screen Studio alternative?**
+For automatic click zooms, 3D camera moves, backgrounds and cursor styling, yes — and it is free and open source. Screen Studio is a mature, notarized commercial product and FocusFlow is early. FocusFlow also records a single Chrome tab, which Screen Studio does not.
+
+**Is it a Loom alternative?**
+Only for recording and editing. FocusFlow has no cloud sharing, no share links, no viewer analytics and no transcription. If you need to send someone a link, Loom does that and this does not.
+
+**Can it record a single browser tab?**
+Yes. Chrome's picker is restricted to tabs, and only the page content is recorded — no browser toolbar. Click zooms work there too.
+
+**Does it do captions or transcription?**
+No.
+
+**Does it work on Intel Macs or Windows?**
+Builds target Apple silicon on macOS 14+. There is no Windows or Linux version.
+
+**How big is the download?**
+About 6.5 MB.
+
+**Can I build it myself?**
+Yes — see below. It is a single Swift package with no third-party dependencies.
+
+---
+
+## Building from source
+
+Requires macOS 14+ and the Apple Command Line Tools. No package manager, no dependencies.
 
 ```sh
+git clone https://github.com/aadityakumarsah/macflow.git
+cd macflow
 ./build-app.sh
 open dist/FocusFlow.app
 ```
 
-The app uses an ad-hoc signature for local use. Developer ID signing and notarization are not configured.
+- `./check.sh` runs the test suite — rendering checks that read real pixels, a real MP4 export, the local HTTP bridge, and the updater.
+- `./scripts/make-dmg.sh` packages a styled disk image.
+- `./scripts/make-hero-art.sh` and `./scripts/build-studio-preview.sh` build the website assets.
 
-## Recording
+## How it is built
 
-Click **Record**, then choose:
+SwiftUI, ScreenCaptureKit, AVFoundation and Core Image, plus browser media APIs for tab capture. One shared Core Image renderer serves both the preview and the export, so there is no second code path to drift. The image context is Metal-backed where the hardware allows.
 
-- **Window**: bring the desired window onto the current desktop, choose it and see a source preview before starting. Enable **Select area** and drag around a tab’s content or a single pane to save only that region, excluding the original toolbar. The pointer and click coordinates are aligned to the selected area. The recording view displays actual captured frames, with a separate live camera preview.
-- **Display**: select a display. FocusFlow’s own windows and audio are excluded to avoid recording the recorder recursively.
-- **Chrome tab**: click **Open Chrome tab studio**, then **Choose a Chrome tab**. Chrome’s picker opens on tabs; window or screen selections are rejected before recording. Only the selected tab’s page content is recorded, without the browser toolbar. Check the live preview, enable camera/microphone as needed, then press **Start recording**. Pause/resume, camera shape/mirroring/position, tab audio, and device selection are available. **Stop & edit** saves the video back into FocusFlow automatically.
+Tab capture runs a small local HTTP bridge on a random `127.0.0.1` port with a per-session token and strict origin checks. Media chunks are written to disk as they arrive, so memory does not grow with the recording.
 
-The studio can be served two ways. By default FocusFlow serves it itself, so
-the page never touches the network. Tick **Open the web studio instead** and it
-opens the published copy at <https://macflow-delta.vercel.app/studio/>, which
-posts the recording back to this Mac over the loopback bridge and hands off to
-the editor exactly as the local copy does. The difference is where the page's
-code comes from: the app bundle, or the network. The recording itself is local
-either way.
+## Privacy
 
-Only the hosts the studio is published on may post to the bridge, and only with
-the session token, which reaches the page through the URL fragment when the app
-opens it — fragments are never sent to a server, so a casual visitor to the site
-has no session and cannot record. Chrome additionally treats a public page
-reaching loopback as Private Network Access, so the bridge answers that
-preflight explicitly.
+- Recordings and projects are written to `~/Movies/FocusFlow` and nowhere else.
+- No account, no telemetry, no analytics, no upload.
+- Input Monitoring is used for pointer positions, clicks and modifier shortcuts. Ordinary typed text is never collected.
+- API keys for AI providers, if you add any, are stored in the macOS Keychain — not in preferences or project files. Nothing in the app calls them yet.
+- The only network requests FocusFlow makes are to GitHub, to check for updates.
 
-Click zooms work for tab recordings too. A page cannot see pointer events in
-the tab it is capturing, so FocusFlow follows the pointer itself while Chrome
-records and builds the zooms from that. The browser reports the captured size,
-which together with Chrome's window bounds pins down where the page sits on
-screen. Samples are taken only while Chrome is frontmost and the pointer is
-over the captured page, so a click in another app cannot invent a zoom. This is
-an approximation of a geometry the browser does not expose, and it needs Input
-Monitoring permission.
+## Project layout
 
-API keys for AI providers live in **FocusFlow → Settings → AI**, stored in the
-macOS Keychain rather than in preferences or project files. Nothing calls them
-yet; the storage exists so a key is in place before the features that need it.
+| Path | What it holds |
+| :- | :- |
+| `Sources/FocusFlow` | The app: recorder, editor, renderer, updater |
+| `Sources/FocusFlow/BrowserRecorder` | The Chrome tab studio page served locally |
+| `Tests/FocusFlowTests` | Checks, runnable with the Command Line Tools |
+| `docs/` | The website, served by both Vercel and GitHub Pages |
+| `scripts/` | Build, packaging and asset generation |
 
-Keep FocusFlow open during tab capture. The companion uses a random port bound to `127.0.0.1`, a per-session token, and same-origin write checks. Media chunks are written locally. Nothing is uploaded to an external service. A 512 MB combined session limit bounds the browser’s recovery buffer; the session stops and saves when reached. Backup download buttons remain available after capture, including if local handoff fails. A browser supporting MP4 MediaRecorder output is required; unsupported browsers show a useful error before recording starts.
+## Contributing
 
-Grant Screen Recording permission to FocusFlow for native capture. Camera and microphone permission is requested only when enabled. Input Monitoring enables shortcut badges; ordinary typed text is not collected. Browser capture uses Chrome’s separate sharing and device permission prompts.
+Issues and pull requests are welcome. Run `./check.sh` before opening one.
 
-## Editing
+## Licence
 
-The studio uses a quiet neutral canvas with a blue accent, a dedicated navigation sidebar, and one settings panel at a time: **Canvas**, **Cursor**, **Motion**, **Camera**, **Audio**, and **Export**. The timeline only shows effect tracks in use. Add any effect from **Motion** or the timeline’s **Add effect** menu.
+[MIT](LICENSE) © Aaditya sah
 
-After a native Window or Display recording, open **Cursor** to change its size from **0.5× to 10×**, with quick 1×/1.25×/1.5×/2×/3× buttons and an actual-renderer style preview. New recordings start at **1.25×**; saved projects keep their previous size. Choose ripple, pulse, or press click animations, adjust ripple/pulse size, pick a custom effect color, or add a soft pointer highlight. Advanced controls include I-beam scale, tilt, and cursor opacity. **Reset cursor settings** can be undone. These settings are saved with the project and applied to both preview and export.
+---
 
-Videos without a separate pointer track show an explanation instead of editable cursor controls. A cursor baked into an imported video cannot be independently resized. For connected Chrome tab capture, FocusFlow asks Chrome to omit its baked-in cursor and records a separate pointer track; support depends on Chrome. If Chrome includes the cursor, the editor suppresses its replacement overlay, even in an older saved project, and explains the limitation. Native Window and Display capture request cursor-free frames and store a separate pointer track.
-
-- Shared Core Image renderer for preview and MP4 export, including background, rounded corners, shadows, camera, blur, cursor, and zoom. **Play edited preview** in Export starts the finished edit with its audio mix.
-- Automatic editing from recorded interactions: grouped click zooms, alternating spotlights/accent frames/callouts, and focus frames around text-selection drags. Larger double click ripples, an animated canvas and progress line, and a larger editable cursor render in preview and export. Automatic editing never adds pans. Motion → **Create automatic edit** rebuilds this sequence.
-- Automatic motion blur on zoom movement, with a strength slider, plus slide-up/slide-in/scale entrances and optional fade-out. Earlier projects with pan segments still render correctly, but the editor no longer offers new pans.
-- Editable macOS light/dark window frame with red/yellow/green controls, optional title, title-bar height, and control size. The frame stays fixed while the content zooms.
-- Non-destructive **Crop to tab or pane** in the editor, including imported and browser videos. Canvas fitting preserves the selected content instead of filling and clipping the edges.
-- Timed spotlights with a feathered edge and soft accent border, accent outlines, pixelation, and text callouts, with easing and preview positioning. Select an effect and drag its focus directly on the preview.
-- **Full screen preview** (⌃⌘F, or the arrows in the toolbar) hides the rails, inspector and timeline, takes the window to macOS full screen, and gives the preview the display. Escape or the on-screen control returns.
-- Cursor size now goes to 10×, and the I-beam has its own scale beside it — it is a thin glyph and reads far smaller than the arrow at the same size.
-- Smooth bounded cursor interpolation, outlined Pearl/Obsidian/Accent styles, four accent colors, gentle movement tilt, size, visibility, shadow, ripple/pulse/press click effects, and optional keyboard shortcut badges. Cursor and title-bar artwork is cached for playback.
-- Region blur with editable center, width, height, strength, and timing; one button blurs the entire frame. Multiple regions can overlap.
-- Timeline scrubbing, segment move/edge resize, duplicate, split at playhead, delete, undo, and redo.
-- Non-destructive trim in/out markers, playback/export speed, recording audio mute, and a looping music file with volume control. Music is included in both preview and export.
-- Separate camera layer with position, frame width and height, subject size, rounded/circular shape, mirroring, and show/hide. Drag the camera directly in the preview.
-- Source, landscape, portrait, square, 4:3, and **Custom** canvas formats. The **Custom ratio** button above the preview opens width/height controls directly; all aspect ratios also appear first in the **Canvas** panel. Custom takes any width:height, including decimals such as 2.39:1, with one-tap presets for 21:9, 2.39:1, 3:2 and 4:5 and a swap button. The result is capped on its longer side and kept to even dimensions. Changing the ratio re-fits the composition: padding tightens as the content and canvas aspects diverge, and the camera moves into the area that opens up. Turn this off with **Re-fit when the ratio changes**.
-- Backgrounds: all 11 bundled `bg*.png` files from `public/`, available directly in **Canvas → Background → Presets**, six gradient presets, a solid colour, a custom two-colour gradient at any angle, an image file (fill or fit, with an adjustable dim), or the recording itself blurred behind the frame. A missing image file falls back to the gradient rather than rendering black.
-- Export settings: MP4 or MOV, Source/720p/1080p/1440p/4K, and 30 or 60 fps. Resolution scales the composed canvas and keeps even dimensions.
-- Recording library and recoverable deletion through macOS Trash. Deleting the open recording also clears the editor.
-- Automatic local edit saving plus **Save Project** and **Open video or project**. Camera, cursor, trim, speed, appearance, effects, and recording metadata are preserved.
-
-Native camera start time is aligned to the screen video. Chrome camera framing is carried into the editor. Open the hosted tab studio from FocusFlow, or click **Open FocusFlow** on the site with version 0.9.1 or later installed, to open the bundled local studio in Chrome and connect the capture without granting the website local-network access. Stopping the recording saves it locally and brings it into the editor with click zooms generated from the pointer track when available. Chrome may still bake its cursor into the video; in that case, the original pixels cannot be removed or independently resized. Direct browser-only recording offers an MP4 download.
-
-## Files
-
-Recordings are stored in `~/Movies/FocusFlow`:
-
-- `Recording … .mp4` / `Tab … .mp4`: screen video
-- `Camera … .mov` / `.mp4`: separate camera video
-- `*.focusflow.json`: original capture metadata
-- `*.edits.json`: automatic project edits
-- `*.project.json`: user-saved projects (source video and camera files must remain available)
-
-Export uses a temporary output and preserves source files. Export resolution is source matched up to a 1920-pixel longest edge, or the selected fixed canvas size.
-
-## Validation
-
-```sh
-./check.sh
-```
-
-The cursor checks also measure rendered size changes, glow and click scaling, opacity, legacy cursor decoding, settings round trips, and reset/undo behavior. The standalone Swift checks run with Command Line Tools without requiring XCTest. They cover legacy project decoding, appearance settings round trips, crop rounding and aspect preservation, bounded smooth zooms, cursor tracking through gaps, undo/redo and segment limits, local HTTP origin/token handling, and real encoded MP4 rendering. Browser checks exercise tab-only selection, cleanup of rejected streams, preserving a valid source after a rejected selection, and a second guard before recording. The export check measures trim/speed duration and image differences inside/outside a blur region, checks the camera layer, and verifies source overwrite protection. Rendered QA frames are saved at `.build/qa/export-render.png`, `.build/qa/presentation-render.png`, and `.build/qa/cursor-render.png`. Presentation checks cover toolbar removal, a fixed title bar during zoom, cursor rendering, spotlight/callout compositing, and entrance/exit frames. The script also checks browser JavaScript syntax.
-
-Earlier live UI validation covered native window recording → stop → edit → region blur → recoverable deletion, and Chrome single-tab selection → live preview → record → pause/resume → automatic editor handoff. The studio redesign was checked with rendered SwiftUI layout snapshots at 1280 × 820, plus the automated rendering and export checks. Live interaction with the redesigned app was not available through the UI tool in this session. For the earlier capture/appearance update, the rebuilt UI and area selector were inspected; a live area recording could not be completed while desktop/window visibility was changing. Crop geometry, appearance rendering, motion, tab rejection, and export were checked automatically. Camera compositing uses generated footage; physical camera/microphone capture was not exercised.
-
-## Reference and scope
-
-The installed Cursorful recorder/editor was inspected through its interface to understand its capture-to-edit workflow, cursor controls, timeline operations, and layout. FocusFlow keeps its own implementation and visual assets. No REA tool or asset source called “Do” was identified in this workspace; those references need a concrete name/path to integrate.
-
-The implementation is not full Cursorful feature parity. Speech-to-text captions, multi-clip assembly, motion blur, cloud collaboration, AI titles or summaries, and native capture pause/resume are not implemented. Chrome capture supports pause/resume. Changing the selected native capture source starts a new recording.
-
-Implementation references: [Chrome sharing controls](https://developer.chrome.com/docs/web-platform/screen-sharing-controls), [Chrome MediaRecorder](https://developer.chrome.com/blog/mediarecorder), [Apple SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager).
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+<sub>Keywords: macOS screen recorder, open source screen recorder, screen recording with automatic zoom, cursor animation, motion editor, Screen Studio alternative, Loom alternative, Cursorful alternative, Chrome tab recorder, ScreenCaptureKit, SwiftUI, product demo video, software tutorial recording, free screen recorder for Mac.</sub>
