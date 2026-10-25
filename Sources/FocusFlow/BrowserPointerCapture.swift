@@ -21,6 +21,7 @@ import CoreGraphics
 @MainActor
 final class BrowserPointerCapture {
     private(set) var clicks: [RecordedClick] = []
+    private(set) var typingEvents: [TypingEvent] = []
     private(set) var samples: [PointerSample] = []
 
     private var timer: Timer?
@@ -30,6 +31,7 @@ final class BrowserPointerCapture {
     private var lastButtonDown = false
     private var viewportPixels: CGSize = .zero
     private var cachedWindow: (frame: CGRect, scale: CGFloat, at: Date)?
+    private var keyMonitor: Any?
 
     var isRunning: Bool { timer != nil }
 
@@ -39,6 +41,7 @@ final class BrowserPointerCapture {
         stop()
         clicks = []
         samples = []
+        typingEvents = []
         pausedTotal = 0
         pausedSince = nil
         lastButtonDown = false
@@ -47,6 +50,20 @@ final class BrowserPointerCapture {
         guard pixels.width > 0, pixels.height > 0 else { return }
 
         start = Date()
+
+        // Typing in the captured tab has to be noticed here too, or a browser
+        // recording can never follow the caret. Only the instant is kept —
+        // no character, no key code — and only while Chrome is in front.
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            Task { @MainActor in
+                guard let self, self.timer != nil, self.pausedSince == nil else { return }
+                guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == BrowserPointerCapture.chromeBundleID else { return }
+                guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return }
+                let time = Date().timeIntervalSince(self.start) - self.pausedTotal
+                if time >= 0 { self.typingEvents.append(TypingEvent(time: time)) }
+            }
+        }
+
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sample() }
         }
@@ -65,6 +82,7 @@ final class BrowserPointerCapture {
         pausedTotal = 0
         clicks = []
         samples = []
+        typingEvents = []
         lastButtonDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
     }
 
@@ -85,6 +103,8 @@ final class BrowserPointerCapture {
         timer?.invalidate()
         timer = nil
         pausedSince = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 
     /// Clears everything, for a session that ended without producing a video.
@@ -92,6 +112,7 @@ final class BrowserPointerCapture {
         stop()
         clicks = []
         samples = []
+        typingEvents = []
     }
 
     // MARK: - Sampling

@@ -1109,25 +1109,25 @@ final class FocusFlowTests {
         XCTAssertEqual(flatTop, flatBottom)
 
         // Glide leans, so one end of the frame is narrower than the other.
-        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0.5, focusBlur: 0, duration: 4)
+        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0.5, focusBlur: 0, duration: 4, holds: false)
         let glideTop = litInRow(try frame(0.3), row: 30)
         let glideBottom = litInRow(try frame(0.3), row: 210)
         XCTAssertTrue(glideTop != glideBottom || glideBottom != flatBottom)
 
         // Unfold starts leaning and ends square.
-        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 2)
+        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 2, holds: false)
         let openingEarly = litInRow(try frame(0.05), row: 120)
         let openedLate = litInRow(try frame(1.98), row: 120)
         XCTAssertTrue(openingEarly != openedLate)
 
         // Pull back starts larger than it finishes.
-        settings.cameraMove = CameraMoveSettings(move: .pullBack, tilt: 0.3, amount: 1, focusBlur: 0, duration: 2)
+        settings.cameraMove = CameraMoveSettings(move: .pullBack, tilt: 0.3, amount: 1, focusBlur: 0, duration: 2, holds: false)
         let close = litInRow(try frame(0.05), row: 120)
         let far = litInRow(try frame(1.95), row: 120)
         XCTAssertGreaterThan(close, far)
 
         // Once settled it must match the untouched frame, not drift.
-        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 1)
+        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 1, holds: false)
         let settled = litInRow(try frame(5), row: 120)
         settings.cameraMove = CameraMoveSettings(move: .none)
         XCTAssertEqual(settled, litInRow(try frame(5), row: 120))
@@ -1135,9 +1135,21 @@ final class FocusFlowTests {
         XCTAssertTrue(!CameraMoveSettings().isActive)
         XCTAssertTrue(CameraMoveSettings(move: .glide).isActive)
 
+        // Spreading across the clip is the default, because a move that
+        // played once from the start left the frame untouched everywhere
+        // else — choosing one and looking at the middle showed nothing.
+        XCTAssertTrue(CameraMoveSettings().holds)
+        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0.5, focusBlur: 0)
+        let spreadEarly = litInRow(try frame(0.3), row: 30)
+        let spreadLate = litInRow(try frame(7.6), row: 30)
+        // Still leaning late in the clip, where a one-shot would have settled.
+        XCTAssertTrue(spreadEarly != flatTop || spreadLate != flatTop)
+        settings.cameraMove = CameraMoveSettings(move: .none)
+        XCTAssertEqual(litInRow(try frame(7.6), row: 30), flatTop)
+
         // Focus blur must soften the edge that recedes, not the near one.
         // Glide leans its right edge away, so that side should be the soft one.
-        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0, focusBlur: 1, duration: 4)
+        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0, focusBlur: 1, duration: 4, holds: false)
         let focused = try frame(0.3)
         func edgeSharpness(_ data: [UInt8], column: Int) -> Int {
             // Largest jump between neighbouring rows down a column: a sharp
@@ -1234,6 +1246,48 @@ final class FocusFlowTests {
         for span in typingSpans {
             XCTAssertTrue(!edits.contains { $0.kind == .zoom && $0.start >= span.start - 0.3 && $0.start <= span.end })
         }
+    }
+
+    /// Spotlight is off the menu, and typing follow has to be reachable from
+    /// a browser recording — it captured no keypresses at all, which is why
+    /// the effect never appeared for one.
+    func testSpotlightIsRetiredAndTypingReachesBrowserRecordings() {
+        // Not offered any more.
+        XCTAssertTrue(!SegmentKind.availableCases.contains(.spotlight))
+        // But still decodes and renders, so older projects keep working.
+        XCTAssertTrue(SegmentKind.allCases.contains(.spotlight))
+        let legacy = """
+        {"id":"\(UUID().uuidString)","kind":"spotlight","start":1,"duration":2,"intensity":1.2,"x":0.4,"y":0.5}
+        """
+        XCTAssertTrue((try? JSONDecoder().decode(EditSegment.self, from: Data(legacy.utf8))) != nil)
+
+        // Still on the menu, since these were not the complaint.
+        for kept in [SegmentKind.zoom, .typing, .outline, .callout, .blur, .pixelate] {
+            XCTAssertTrue(SegmentKind.availableCases.contains(kept))
+        }
+
+        // A recording whose metadata carries typing events must produce a
+        // follow regardless of where those events came from.
+        let typing = (0..<16).map { TypingEvent(time: 1 + Double($0) * 0.1) }
+        var metadata = RecordingMetadata(clicks: [RecordedClick(time: 0.8, x: 0.25, y: 0.5)],
+                                         pointerSamples: [PointerSample(time: 0, x: 0.5, y: 0.5)],
+                                         keystrokes: [], sourceWidth: 1920, sourceHeight: 1080,
+                                         sourceName: "Chrome tab")
+        metadata.typingEvents = typing
+        let edits = MotionEngine.autoEdits(clicks: metadata.clicks, samples: metadata.pointerSamples,
+                                           duration: 10, typing: metadata.typingEvents ?? [],
+                                           typingFollow: TypingFollowSettings())
+        XCTAssertTrue(edits.contains { $0.kind == .typing })
+
+        // And metadata carrying none produces none, rather than inventing one.
+        let none = MotionEngine.autoEdits(clicks: metadata.clicks, samples: metadata.pointerSamples,
+                                          duration: 10, typing: [], typingFollow: TypingFollowSettings())
+        XCTAssertTrue(!none.contains { $0.kind == .typing })
+
+        // Typing events survive a metadata round trip, or a reopened
+        // recording would silently lose its follows.
+        let restored = try? JSONDecoder().decode(RecordingMetadata.self, from: JSONEncoder().encode(metadata))
+        XCTAssertEqual(restored?.typingEvents?.count, typing.count)
     }
 
     private func pixels(_ image: CGImage) -> [UInt8] {

@@ -185,16 +185,20 @@ enum CameraMove: String, Codable, CaseIterable, Identifiable {
 struct CameraMoveSettings: Codable, Equatable {
     var move: CameraMove = .none
     /// How far the frame leans, 0 flat and 1 steep.
-    var tilt: Double = 0.4
+    var tilt: Double = 0.55
     /// How far it travels or withdraws.
     var amount: Double = 0.5
     /// Depth of field: the receding edge softens by this much.
     var focusBlur: Double = 0.35
-    /// Seconds the move takes. It plays once, from the start of the trim.
+    /// Seconds the move takes when it plays once.
     var duration: Double = 2.6
     var curve: MotionCurve = .smooth
-    /// Keeps the move running for the whole clip rather than settling.
-    var holds: Bool = false
+    /// Spreads the move across the whole clip rather than playing once.
+    ///
+    /// On by default. Playing once from the start of the trim meant that
+    /// anywhere past `duration` the frame was untouched, so choosing a move
+    /// and looking at the middle of a recording showed nothing at all.
+    var holds: Bool = true
 
     var isActive: Bool { move != .none }
 }

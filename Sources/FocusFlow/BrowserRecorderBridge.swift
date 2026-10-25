@@ -221,6 +221,7 @@ final class BrowserRecorderBridge: ObservableObject {
                 pointer.stop()
                 var metadata = RecordingMetadata(clicks: pointer.clicks, pointerSamples: pointer.samples, keystrokes: [], sourceWidth: size.width, sourceHeight: size.height, sourceName: String((info["sourceName"] as? String ?? "Chrome tab").prefix(200)), cameraFileName: cameraName, cameraPresentation: presentation)
                 metadata.embeddedCursor = info["cursorIncluded"] as? Bool
+                metadata.typingEvents = pointer.typingEvents
                 didFinish = true; status = "Saved to your library. Ready to edit."
                 respond(200, "text/plain", Data("Saved to FocusFlow".utf8)); onFinish?(video, metadata)
             } else { respond(404, "text/plain", Data()) }

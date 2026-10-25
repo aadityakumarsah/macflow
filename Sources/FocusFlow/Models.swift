@@ -4,7 +4,10 @@ import CoreGraphics
 enum SegmentKind: String, Codable, CaseIterable, Identifiable {
     case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline, typing
     var id: String { rawValue }
-    static let availableCases: [SegmentKind] = [.zoom, .typing, .spotlight, .outline, .callout, .blur, .pixelate]
+    /// `.spotlight` is deliberately absent: dimming everything but a patch
+    /// looked worse than it helped. Existing projects still decode and render
+    /// theirs; it simply cannot be added any more.
+    static let availableCases: [SegmentKind] = [.zoom, .typing, .outline, .callout, .blur, .pixelate]
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled"; case .typing: "text.cursor" }

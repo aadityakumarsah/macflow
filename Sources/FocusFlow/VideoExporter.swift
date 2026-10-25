@@ -527,18 +527,18 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             return image
         case .glide:
             // Holds its lean and travels across.
-            leanRight = tilt * 0.16
+            leanRight = tilt * 0.2
             shiftX = (progress - 0.5) * amount * frame.width * 0.22
             scale = 1 + tilt * 0.06
         case .unfold:
             // Opens out of the lean as it plays.
             let remaining = 1 - progress
-            leanLeft = tilt * 0.22 * remaining
-            leanTop = tilt * 0.10 * remaining
+            leanLeft = tilt * 0.26 * remaining
+            leanTop = tilt * 0.12 * remaining
             scale = 1 - 0.06 * remaining
         case .pullBack:
             // Starts close, withdraws, keeping a slight lean.
-            leanTop = tilt * 0.07
+            leanTop = tilt * 0.09
             scale = (1 + amount * 0.3) - amount * 0.3 * progress
         }
 
