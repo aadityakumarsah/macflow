@@ -4,33 +4,61 @@ import CoreImage
 import CoreText
 
 final class FocusFlowTests {
-    func testAutomaticEditTracksTextSelectionAndVariesEffects() {
+    /// The automatic pass produces zooms and nothing else.
+    ///
+    /// It used to add a spotlight, an outline or a "Click" callout to every
+    /// third click, and a tracking zoom and spotlight to every text selection.
+    /// That decorated a plain recording without being asked, so it is gone;
+    /// those effects remain available by hand.
+    func testAutomaticEditsProduceZoomsOnly() {
         let clicks = (0..<4).map { RecordedClick(time: Double($0) * 2 + 1, x: 0.3 + Double($0) * 0.1, y: 0.45) }
         var samples = clicks.map { PointerSample(time: $0.time + 0.8, x: $0.x + 0.08, y: $0.y, shape: .arrow) }
         samples += (0..<12).map { PointerSample(time: 9 + Double($0) * 0.035, x: 0.2 + Double($0) * 0.025, y: 0.3, shape: .text, pressed: true) }
         let edits = MotionEngine.autoEdits(clicks: clicks, samples: samples, duration: 12)
-        for kind in [SegmentKind.zoom, .spotlight, .outline, .callout] {
-            XCTAssertTrue(edits.contains { $0.kind == kind })
+
+        XCTAssertTrue(!edits.isEmpty)
+        XCTAssertTrue(edits.allSatisfy { $0.kind == .zoom })
+        for unwanted in [SegmentKind.spotlight, .outline, .callout, .pan] {
+            XCTAssertTrue(!edits.contains { $0.kind == unwanted })
         }
-        XCTAssertTrue(edits.allSatisfy { $0.kind != .pan })
-        let selectionZoom = edits.first { $0.kind == .zoom && $0.tracksSelection == true }
-        XCTAssertTrue(selectionZoom != nil)
-        XCTAssertTrue(edits.contains { $0.kind == .spotlight && $0.tracksSelection == true && $0.spotlightFeather == 0.85 })
-        XCTAssertTrue(!edits.contains { $0.kind == .outline && $0.start > 8.8 })
-        if let selectionZoom {
-            let start = MotionEngine.selectionRegion(selectionZoom, at: 9, samples: samples)
-            let middle = MotionEngine.selectionRegion(selectionZoom, at: 9.2, samples: samples)
-            let end = MotionEngine.selectionRegion(selectionZoom, at: 9.385, samples: samples)
-            XCTAssertTrue(start.midX < middle.midX && middle.midX < end.midX)
-            XCTAssertTrue(start.width < middle.width && middle.width < end.width)
-            let earlyCamera = MotionEngine.viewport(at: 9.1, segments: [selectionZoom], samples: samples, crop: ContentRegion())
-            let lateCamera = MotionEngine.viewport(at: 9.3, segments: [selectionZoom], samples: samples, crop: ContentRegion())
-            XCTAssertTrue(earlyCamera.midX < lateCamera.midX)
-            XCTAssertTrue(lateCamera.width < 1)
-        }
+
+        // A text selection still earns one steady zoom, rather than a zoom and
+        // a spotlight travelling across it together.
+        let selectionZooms = edits.filter { $0.start > 8.5 }
+        XCTAssertEqual(selectionZooms.count, 1)
+        // And it does not pan: tracking is what made the frame travel.
+        XCTAssertTrue(selectionZooms.allSatisfy { $0.tracksSelection != true })
+
         XCTAssertTrue(edits.allSatisfy { $0.start >= 0 && $0.end <= 12 })
+
+        // Hovering over text without pressing is not a selection.
         let hover = (0..<12).map { PointerSample(time: 1 + Double($0) * 0.035, x: 0.2 + Double($0) * 0.025, y: 0.3, shape: .text) }
         XCTAssertTrue(MotionEngine.autoEdits(clicks: [], samples: hover, duration: 3).isEmpty)
+    }
+
+    /// A click zoom holds its anchor through small pointer movement instead of
+    /// drifting after it, which read as an aimless pan.
+    func testClickZoomHoldsStillUntilThePointerLeavesTheFrame() {
+        let zoom = EditSegment(kind: .zoom, start: 0, duration: 4, intensity: 2,
+                               x: 0.5, y: 0.5, followsCursor: true, transition: 0.3)
+
+        func viewport(pointerX: Double) -> CGRect {
+            // A flat run of samples either side so smoothing settles on it.
+            let samples = (0..<40).map { PointerSample(time: Double($0) * 0.05, x: pointerX, y: 0.5) }
+            return MotionEngine.viewport(at: 1, segments: [zoom], samples: samples, crop: ContentRegion())
+        }
+
+        let anchored = viewport(pointerX: 0.5)
+        // A small movement must not move the frame at all.
+        let nudged = viewport(pointerX: 0.54)
+        XCTAssertEqual(Double(nudged.midX), Double(anchored.midX), accuracy: 0.001)
+
+        // A large one must, or the subject would leave the frame.
+        let far = viewport(pointerX: 0.9)
+        XCTAssertGreaterThan(Double(far.midX), Double(anchored.midX) + 0.05)
+
+        // And it follows only as far as it must, never all the way.
+        XCTAssertLessThan(Double(far.midX), 0.9)
     }
 
     func testCursorStaysWithinBoundsAndDisappearsAcrossGaps() {

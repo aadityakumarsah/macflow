@@ -49,7 +49,17 @@ enum MotionEngine {
                 y += ((segment.endY ?? 0.5) - y) * progress * 0.55
                 targetZoom = min(targetZoom, 1.35)
             } else if segment.followsCursor == true, let pointer = CursorMotion.followPoint(at: time, samples: samples) {
-                x = pointer.x; y = pointer.y
+                // Anchored at the click, not glued to the pointer. Following
+                // it outright made the frame drift about for every small hand
+                // movement, which reads as an aimless pan. The frame holds
+                // still until the pointer leaves the middle of the viewport,
+                // then eases only as far as it must to bring it back in.
+                let span = 1 / max(1, min(4, segment.intensity))
+                let slack = span * 0.22
+                let dx = pointer.x - x
+                let dy = pointer.y - y
+                if abs(dx) > slack { x += (abs(dx) - slack) * (dx < 0 ? -1 : 1) }
+                if abs(dy) > slack { y += (abs(dy) - slack) * (dy < 0 ? -1 : 1) }
             }
             weight += w; zoomSum += (targetZoom - 1) * w
             cx += ((x - r.x) / r.width) * w; cy += ((y - r.y) / r.height) * w
@@ -108,34 +118,25 @@ enum MotionEngine {
             !selections.contains { click.time >= $0.0.time - 0.18 && click.time <= $0.1.time + 0.1 }
         }.sorted { $0.time < $1.time }
         var result = autoZooms(clicks: validClicks, duration: duration)
-        for (index, click) in validClicks.enumerated() {
-            let start = max(0, click.time - 0.12)
-            let length = min(duration - start, 1.15)
-            guard length >= 0.2 else { continue }
-            switch index % 3 {
-            case 0:
-                result.append(EditSegment(kind: .spotlight, start: start, duration: length, intensity: 1.3,
-                                          x: click.x, y: click.y, width: 0.30, height: 0.22, transition: 0.28))
-            case 1:
-                result.append(EditSegment(kind: .outline, start: start, duration: length, intensity: 1.2,
-                                          x: click.x, y: click.y, width: 0.22, height: 0.16, transition: 0.24))
-            default:
-                result.append(EditSegment(kind: .callout, start: start, duration: length, intensity: 0.85,
-                                          x: click.x, y: min(0.94, click.y + 0.13), transition: 0.25, text: "Click"))
-            }
-        }
+
+        // Only zooms are generated automatically. Spotlights, outlines and
+        // "Click" callouts used to be added to every third click, and a zoom
+        // and spotlight to every text selection — unasked-for decoration that
+        // made a plain recording look busy. They remain available by hand from
+        // the effects rail, where they are a deliberate choice.
         for (first, last) in selections {
-            let start = max(0, first.time - 0.24)
-            let length = min(duration - start, last.time + 0.8 - start)
-            guard length >= 0.2 else { continue }
-            result.append(EditSegment(kind: .zoom, start: start, duration: length, intensity: 2.0,
-                                      x: first.x, y: first.y, transition: 0.35, endX: last.x, endY: last.y,
-                                      tracksSelection: true, selectionStartTime: first.time, selectionEndTime: last.time))
-            result.append(EditSegment(kind: .spotlight, start: start, duration: length, intensity: 0.9,
-                                      x: first.x, y: first.y, transition: 0.35, endX: last.x, endY: last.y,
-                                      tracksSelection: true, selectionStartTime: first.time, selectionEndTime: last.time,
-                                      spotlightOpacity: 0.16, spotlightFeather: 0.85))
+            let span = max(0, last.time - first.time)
+            // A selection still deserves a look, but one steady zoom rather
+            // than a zoom and a spotlight tracking across it together.
+            guard span >= 0.25 else { continue }
+            let start = max(0, first.time - 0.2)
+            let length = min(duration - start, last.time + 0.7 - start)
+            guard length >= 0.4 else { continue }
+            result.append(EditSegment(kind: .zoom, start: start, duration: length, intensity: 1.7,
+                                      x: (first.x + last.x) / 2, y: (first.y + last.y) / 2,
+                                      transition: clickZoomTransition))
         }
+
         return result.sorted { $0.start < $1.start }
     }
 }

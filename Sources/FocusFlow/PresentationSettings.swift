@@ -58,7 +58,10 @@ struct MotionAppearance: Codable, Equatable {
     var entrance: EntranceStyle = .none
     var duration: Double = 0.8
     var fadeOut = false
-    var ambientGraphics: Bool? = true
+    /// An animated backdrop and a progress line across the frame. Off by
+    /// default: it is decoration applied to every recording, and a plain one
+    /// should not arrive already dressed up.
+    var ambientGraphics: Bool? = false
     var automaticMotionBlur: Bool? = true
     var motionBlurStrength: Double? = 0.55
 }
