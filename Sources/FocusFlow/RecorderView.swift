@@ -175,6 +175,12 @@ struct RecorderView: View {
             }
 
             if let error = recorder.errorMessage { Text(error).foregroundStyle(.red).font(.caption) }
+            // The camera records to its own file and can fail while the screen
+            // carries on, so it says so here rather than leaving the editor to
+            // present a recording with the camera mysteriously absent.
+            if let cameraError = cameraRecorder.failureMessage {
+                Label(cameraError, systemImage: "video.slash.fill").foregroundStyle(.orange).font(.caption)
+            }
 
             if captureMode != .tab || completedURL != nil {
             Button(action: recordAction) {
@@ -366,12 +372,16 @@ struct RecorderView: View {
                 do {
                     let url = try await recorder.stop()
                     let cameraURL = await cameraRecorder.stop()
+                    let cameraFailure = cameraRecorder.failureMessage
                     cameraRecorder.shutdown()
                     var metadata = RecordingMetadata(clicks: recorder.clicks, pointerSamples: recorder.pointerSamples, keystrokes: recorder.keystrokes, sourceWidth: recorder.sourceSize.width, sourceHeight: recorder.sourceSize.height, sourceName: recorder.sourceName, cameraFileName: cameraURL?.lastPathComponent, cameraTimeOffset: recorder.firstFrameDate.flatMap { start in cameraRecorder.recordingStartedAt.map { start.timeIntervalSince($0) } }, sourcePointWidth: recorder.sourcePointSize.width, sourcePointHeight: recorder.sourcePointSize.height)
                     metadata.typingEvents = recorder.typingEvents
                     metadata.embeddedCursor = false
                     self.completedURL = url
                     self.completedMetadata = metadata
+                    if includeCamera && cameraURL == nil {
+                        model.message = cameraFailure ?? "The camera was switched on, but no camera video was recorded. The screen recording is fine."
+                    }
                     do { try await model.library.register(url, metadata: metadata) }
                     catch { model.message = "The recording is safe, but its edit metadata could not be saved: \(error.localizedDescription)" }
                 } catch {
