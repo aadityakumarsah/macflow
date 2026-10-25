@@ -231,6 +231,7 @@ struct ProjectDocument: Codable {
     var customBackground: CustomBackground? = nil
     var exportOptions: ExportOptions? = nil
     var grade: GradeSettings? = nil
+    var cameraMove: CameraMoveSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
 }

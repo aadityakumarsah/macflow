@@ -144,6 +144,43 @@ struct CursorAppearance: Codable, Equatable {
     }
 }
 
+/// A move of the frame itself through space, rather than of the camera within
+/// the recording.
+enum CameraMove: String, Codable, CaseIterable, Identifiable {
+    case none = "None"
+    case glide = "Glide across"
+    case unfold = "Unfold"
+    case pullBack = "Pull back"
+
+    var id: String { rawValue }
+
+    var detail: String {
+        switch self {
+        case .none: "The frame sits square to the viewer."
+        case .glide: "Tilts into perspective and travels across the detail."
+        case .unfold: "Opens out of a tilt until it is square to you."
+        case .pullBack: "Starts close and withdraws to show the whole picture."
+        }
+    }
+}
+
+struct CameraMoveSettings: Codable, Equatable {
+    var move: CameraMove = .none
+    /// How far the frame leans, 0 flat and 1 steep.
+    var tilt: Double = 0.4
+    /// How far it travels or withdraws.
+    var amount: Double = 0.5
+    /// Depth of field: the receding edge softens by this much.
+    var focusBlur: Double = 0.35
+    /// Seconds the move takes. It plays once, from the start of the trim.
+    var duration: Double = 2.6
+    var curve: MotionCurve = .smooth
+    /// Keeps the move running for the whole clip rather than settling.
+    var holds: Bool = false
+
+    var isActive: Bool { move != .none }
+}
+
 /// A look applied to the whole frame, before the background shows through.
 enum ColorGrade: String, Codable, CaseIterable, Identifiable {
     case none = "None"

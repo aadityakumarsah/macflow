@@ -468,6 +468,8 @@ struct CanvasInspector: View {
             Divider()
             BackgroundInspector()
             Divider()
+            CameraMoveInspector()
+            Divider()
             GradeInspector()
             Divider()
             WindowAppearanceInspector()

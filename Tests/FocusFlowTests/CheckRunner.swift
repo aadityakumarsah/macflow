@@ -56,6 +56,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testBundledBackgroundsResolveAndDecode()
             try tests.testColourGradesAlterTheFrameOnly()
             try tests.testScrollBlurSoftensMovingContentOnly()
+            try tests.testCameraMovesTiltAndSettle()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }

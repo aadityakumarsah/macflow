@@ -3,6 +3,7 @@ import AVFoundation
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreText
+import Metal
 
 struct ExportSettings {
     let background: BackgroundStyle
@@ -43,6 +44,7 @@ struct ExportSettings {
     var cursorPointScale: Double = 1
     var customBackground = CustomBackground()
     var grade = GradeSettings()
+    var cameraMove = CameraMoveSettings()
     var exportOptions = ExportOptions()
 }
 
@@ -198,7 +200,18 @@ final class CompositionInstruction: NSObject, AVVideoCompositionInstructionProto
 }
 
 final class FocusFlowCompositor: NSObject, AVVideoCompositing {
-    private let context = CIContext(options: [.cacheIntermediates: false])
+    /// Metal-backed where the hardware allows. The default context falls back
+    /// to the CPU for parts of a long filter chain, and this chain is long —
+    /// which is what made the preview stutter as effects were added.
+    private let context: CIContext = {
+        if let device = MTLCreateSystemDefaultDevice() {
+            return CIContext(mtlDevice: device, options: [
+                .cacheIntermediates: false,
+                .priorityRequestLow: false,
+            ])
+        }
+        return CIContext(options: [.cacheIntermediates: false])
+    }()
 
     /// The last few source frames, newest last.
     ///
@@ -399,6 +412,9 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         }
         let motion = settings.motion
         let progress = MotionCurve.smooth.value((time - settings.trimStart) / max(0.1, motion.duration))
+        if settings.cameraMove.isActive {
+            source = applyCameraMove(source, at: time, canvas: canvas, settings: settings)
+        }
         if motion.entrance != .none {
             var transform = CGAffineTransform.identity
             if motion.entrance == .rise { transform = CGAffineTransform(translationX: 0, y: -(1 - progress) * canvas.height * 0.12) }
@@ -474,6 +490,108 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 kCIInputIntensityKey: settings.vignette * 1.8,
                 "inputFalloff": 0.5,
             ]).cropped(to: result.extent)
+        }
+
+        return result
+    }
+
+    /// Leans the framed recording into perspective and moves it through space.
+    ///
+    /// `CIPerspectiveTransform` maps the four corners of the image onto an
+    /// arbitrary quad, which is exactly a tilt: pull one edge in and push the
+    /// other out and the frame recedes. The receding edge is then softened
+    /// with a graduated blur, so the depth reads as depth rather than as a
+    /// skewed rectangle.
+    private func applyCameraMove(_ image: CIImage, at time: Double, canvas: CGRect, settings: ExportSettings) -> CIImage {
+        let move = settings.cameraMove
+        let span = max(0.2, move.duration)
+        let elapsed = time - settings.trimStart
+        guard elapsed >= 0 else { return image }
+
+        let raw = move.holds ? min(1, elapsed / max(0.2, settings.trimEnd - settings.trimStart)) : min(1, elapsed / span)
+        let progress = move.curve.value(raw)
+        // Settled, and not holding: nothing left to do, so skip the filters.
+        if !move.holds, raw >= 1 { return image }
+
+        let tilt = max(0, min(1, move.tilt))
+        let amount = max(0, min(1, move.amount))
+        let frame = image.extent
+        guard frame.width > 1, frame.height > 1 else { return image }
+
+        // Corner insets as a fraction of the frame, per move.
+        var leanLeft = 0.0, leanRight = 0.0, leanTop = 0.0
+        var shiftX = 0.0, scale = 1.0
+
+        switch move.move {
+        case .none:
+            return image
+        case .glide:
+            // Holds its lean and travels across.
+            leanRight = tilt * 0.16
+            shiftX = (progress - 0.5) * amount * frame.width * 0.22
+            scale = 1 + tilt * 0.06
+        case .unfold:
+            // Opens out of the lean as it plays.
+            let remaining = 1 - progress
+            leanLeft = tilt * 0.22 * remaining
+            leanTop = tilt * 0.10 * remaining
+            scale = 1 - 0.06 * remaining
+        case .pullBack:
+            // Starts close, withdraws, keeping a slight lean.
+            leanTop = tilt * 0.07
+            scale = (1 + amount * 0.3) - amount * 0.3 * progress
+        }
+
+        let dxRight = frame.width * leanRight
+        let dxLeft = frame.width * leanLeft
+        let dyTop = frame.height * leanTop
+
+        // Corners run bottom-left, bottom-right, top-right, top-left.
+        let perspective = CIFilter.perspectiveTransform()
+        perspective.inputImage = image
+        perspective.bottomLeft = CGPoint(x: frame.minX + dxLeft, y: frame.minY)
+        perspective.bottomRight = CGPoint(x: frame.maxX - dxRight, y: frame.minY)
+        perspective.topRight = CGPoint(x: frame.maxX - dxRight * 0.35, y: frame.maxY - dyTop)
+        perspective.topLeft = CGPoint(x: frame.minX + dxLeft * 0.35, y: frame.maxY - dyTop)
+
+        guard var result = perspective.outputImage else { return image }
+
+        if scale != 1 || shiftX != 0 {
+            let centre = CGPoint(x: canvas.midX, y: canvas.midY)
+            let transform = CGAffineTransform(translationX: centre.x + shiftX, y: centre.y)
+                .scaledBy(x: scale, y: scale)
+                .translatedBy(x: -centre.x, y: -centre.y)
+            result = result.transformed(by: transform)
+        }
+
+        // Depth of field across the receding axis. Skipped when there is no
+        // lean to justify it, since a graduated blur is not cheap.
+        let lean = max(dxLeft, max(dxRight, dyTop))
+        if move.focusBlur > 0.01 && lean > frame.width * 0.004 {
+            let strength = max(0, min(1, move.focusBlur))
+            let radius = max(1.0, min(14.0, Double(frame.width) / 1920 * 13 * strength))
+            let gradient = CIFilter.linearGradient()
+            // Sharp where the frame is nearest, soft where it recedes.
+            let recedingRight = dxRight >= dxLeft
+            gradient.point0 = CGPoint(x: recedingRight ? result.extent.minX : result.extent.maxX, y: result.extent.midY)
+            gradient.point1 = CGPoint(x: recedingRight ? result.extent.maxX : result.extent.minX, y: result.extent.midY)
+            // White keeps the frame sharp under CIBlendWithMask, so the near
+            // edge is white and the receding one black. (The opposite of what
+            // CIMaskedVariableBlur wanted, where white meant more blur.)
+            gradient.color0 = CIColor(red: 1, green: 1, blue: 1)
+            gradient.color1 = CIColor(red: 0, green: 0, blue: 0)
+            if let mask = gradient.outputImage?.cropped(to: result.extent) {
+                // Blur once and fade it in through the gradient, rather than
+                // CIMaskedVariableBlur, which evaluates a different radius per
+                // pixel and costs many times more for the same look.
+                let blurred = result.clampedToExtent()
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
+                    .cropped(to: result.extent)
+                result = result.applyingFilter("CIBlendWithMask", parameters: [
+                    kCIInputBackgroundImageKey: blurred,
+                    kCIInputMaskImageKey: mask,
+                ]).cropped(to: result.extent)
+            }
         }
 
         return result

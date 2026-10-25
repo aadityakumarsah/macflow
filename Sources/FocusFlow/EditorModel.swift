@@ -24,6 +24,7 @@ final class EditorModel: ObservableObject {
     }
     @Published var customBackground = CustomBackground() { willSet { remember() } didSet { changed() } }
     @Published var grade = GradeSettings() { willSet { remember() } didSet { changed() } }
+    @Published var cameraMove = CameraMoveSettings() { willSet { remember() } didSet { changed() } }
     /// Only meaningful while `ratio` is `.custom`.
     @Published var customRatio = CGSize(width: 16, height: 10) {
         willSet { remember() }
@@ -189,7 +190,7 @@ final class EditorModel: ObservableObject {
         frameAppearance = FrameAppearance(); motionAppearance = MotionAppearance(); cursorAppearance = CursorAppearance()
         customBackground = CustomBackground(); exportOptions = ExportOptions()
         customRatio = CGSize(width: 16, height: 10)
-        grade = GradeSettings()
+        grade = GradeSettings(); cameraMove = CameraMoveSettings()
         if let camera = self.metadata.cameraPresentation {
             cameraX = camera.x; cameraY = camera.y; cameraSize = camera.size; cameraShape = camera.shape; cameraMirrored = camera.mirrored
         }
@@ -360,10 +361,11 @@ final class EditorModel: ObservableObject {
         exportOptions = d.exportOptions ?? ExportOptions()
         customRatio = CGSize(width: d.customRatioWidth ?? 16, height: d.customRatioHeight ?? 10)
         grade = d.grade ?? GradeSettings()
+        cameraMove = d.cameraMove ?? CameraMoveSettings()
         restoring = false
     }
     private func document() -> ProjectDocument {
-        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
+        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, cameraMove: cameraMove, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
     }
     private func readProject(at url: URL) -> ProjectDocument? { guard let data = try? Data(contentsOf: url) else { return nil }; return try? JSONDecoder().decode(ProjectDocument.self, from: data) }
     private func editsURL(for url: URL) -> URL { url.deletingPathExtension().appendingPathExtension("edits.json") }
@@ -377,7 +379,7 @@ final class EditorModel: ObservableObject {
         catch { message = error.localizedDescription }
     }
     func settings() -> ExportSettings {
-        ExportSettings(background: background, canvasSize: canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, exportOptions: exportOptions)
+        ExportSettings(background: background, canvasSize: canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions)
     }
     private func changed() {
         guard !restoring, let url = videoURL, duration > 0 else { return }

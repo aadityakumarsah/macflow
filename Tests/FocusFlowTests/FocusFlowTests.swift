@@ -1075,6 +1075,84 @@ final class FocusFlowTests {
         XCTAssertLessThan(transitional(seekPixels), transitional(moving))
     }
 
+    /// Each 3D move must actually displace the frame, in its own way, settle
+    /// when it is done, and cost nothing when switched off.
+    func testCameraMovesTiltAndSettle() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let source = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas)
+
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 6, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 10, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.trimStart = 0
+        settings.trimEnd = 8
+        settings.customBackground = CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 0, b: 0))
+
+        func frame(_ time: Double) throws -> [UInt8] {
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: time, settings: settings), from: canvas))
+            return pixels(image)
+        }
+        /// How many pixels along a row belong to the frame rather than the
+        /// black background — a cheap read of where the frame's edges are.
+        func litInRow(_ data: [UInt8], row: Int) -> Int {
+            var count = 0
+            for column in 0..<400 where Int(data[(row * 400 + column) * 4]) > 110 { count += 1 }
+            return count
+        }
+
+        settings.cameraMove = CameraMoveSettings(move: .none)
+        let flatTop = litInRow(try frame(0.3), row: 30)
+        let flatBottom = litInRow(try frame(0.3), row: 210)
+        // Square to the viewer, so top and bottom are the same width.
+        XCTAssertEqual(flatTop, flatBottom)
+
+        // Glide leans, so one end of the frame is narrower than the other.
+        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0.5, focusBlur: 0, duration: 4)
+        let glideTop = litInRow(try frame(0.3), row: 30)
+        let glideBottom = litInRow(try frame(0.3), row: 210)
+        XCTAssertTrue(glideTop != glideBottom || glideBottom != flatBottom)
+
+        // Unfold starts leaning and ends square.
+        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 2)
+        let openingEarly = litInRow(try frame(0.05), row: 120)
+        let openedLate = litInRow(try frame(1.98), row: 120)
+        XCTAssertTrue(openingEarly != openedLate)
+
+        // Pull back starts larger than it finishes.
+        settings.cameraMove = CameraMoveSettings(move: .pullBack, tilt: 0.3, amount: 1, focusBlur: 0, duration: 2)
+        let close = litInRow(try frame(0.05), row: 120)
+        let far = litInRow(try frame(1.95), row: 120)
+        XCTAssertGreaterThan(close, far)
+
+        // Once settled it must match the untouched frame, not drift.
+        settings.cameraMove = CameraMoveSettings(move: .unfold, tilt: 1, amount: 0.5, focusBlur: 0, duration: 1)
+        let settled = litInRow(try frame(5), row: 120)
+        settings.cameraMove = CameraMoveSettings(move: .none)
+        XCTAssertEqual(settled, litInRow(try frame(5), row: 120))
+
+        XCTAssertTrue(!CameraMoveSettings().isActive)
+        XCTAssertTrue(CameraMoveSettings(move: .glide).isActive)
+
+        // Focus blur must soften the edge that recedes, not the near one.
+        // Glide leans its right edge away, so that side should be the soft one.
+        settings.cameraMove = CameraMoveSettings(move: .glide, tilt: 1, amount: 0, focusBlur: 1, duration: 4)
+        let focused = try frame(0.3)
+        func edgeSharpness(_ data: [UInt8], column: Int) -> Int {
+            // Largest jump between neighbouring rows down a column: a sharp
+            // boundary gives a big one, a blurred boundary a small one.
+            var largest = 0
+            for row in 1..<239 {
+                let a = Int(data[(row * 400 + column) * 4])
+                let b = Int(data[((row + 1) * 400 + column) * 4])
+                largest = max(largest, abs(a - b))
+            }
+            return largest
+        }
+        XCTAssertGreaterThan(edgeSharpness(focused, column: 40), edgeSharpness(focused, column: 360))
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

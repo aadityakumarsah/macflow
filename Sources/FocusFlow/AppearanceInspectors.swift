@@ -504,3 +504,42 @@ struct GradeInspector: View {
         }
     }
 }
+
+/// 3D camera moves, surfaced in the Canvas panel beside the other look
+/// controls rather than buried in a separate tab.
+struct CameraMoveInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    var body: some View {
+        InspectorSection(title: "3D CAMERA MOVE") {
+            Picker("Move", selection: $model.cameraMove.move) {
+                ForEach(CameraMove.allCases) { Text($0.rawValue).tag($0) }
+            }.labelsHidden()
+
+            Text(model.cameraMove.move.detail)
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.cameraMove.isActive {
+                InspectorSlider(title: "Tilt", value: $model.cameraMove.tilt, range: 0...1, suffix: "")
+                InspectorSlider(title: model.cameraMove.move == .pullBack ? "Distance" : "Travel",
+                                value: $model.cameraMove.amount, range: 0...1, suffix: "")
+                InspectorSlider(title: "Focus blur", value: $model.cameraMove.focusBlur, range: 0...1, suffix: "")
+                InspectorSlider(title: "Duration", value: $model.cameraMove.duration, range: 0.4...8, suffix: "s")
+
+                Picker("Easing", selection: $model.cameraMove.curve) {
+                    ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
+                }
+
+                Toggle("Run for the whole clip", isOn: $model.cameraMove.holds)
+                    .help("Spreads the move across the entire recording instead of playing once and settling.")
+
+                Button {
+                    model.cameraMove = CameraMoveSettings()
+                } label: {
+                    Label("Reset move", systemImage: "arrow.uturn.backward")
+                }.font(.caption)
+            }
+        }
+    }
+}
