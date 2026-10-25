@@ -152,6 +152,7 @@ struct UpdateBanner: View {
 
 struct TopBar: View {
     @EnvironmentObject private var model: EditorModel
+    @EnvironmentObject private var updater: Updater
     @State private var confirmDelete = false
     var body: some View {
         HStack(spacing: 14) {
@@ -171,6 +172,19 @@ struct TopBar: View {
                     .disabled(!model.library.recordings.contains(where: { $0.url == model.videoURL }))
             } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).fixedSize().help("Project actions")
+            // Checking for updates lived only in the application menu, which is
+            // not where anyone looks. The badge appears when one is waiting.
+            Button {
+                Task { await updater.check(userInitiated: true) }
+            } label: {
+                Image(systemName: updater.pendingRelease != nil ? "arrow.down.circle.fill" : "arrow.down.circle")
+            }
+            .help(updater.pendingRelease != nil
+                  ? "An update is available — click to see it"
+                  : "Check for updates")
+            .foregroundStyle(updater.pendingRelease != nil ? AppTheme.green : Color.secondary)
+            .disabled(updater.isBusy)
+
             Button { model.toggleTheatreMode() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .help("Full screen preview ⌃⌘F")
                 .disabled(model.videoURL == nil)

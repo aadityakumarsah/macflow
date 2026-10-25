@@ -15,7 +15,11 @@ struct FocusFlowApp: App {
         }
         .windowStyle(.hiddenTitleBar)
 
-        Settings { SettingsView() }
+        Settings {
+            SettingsView()
+                .environmentObject(updater)
+                .environmentObject(model)
+        }
 
         .commands {
             CommandGroup(after: .appInfo) {

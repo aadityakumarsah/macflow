@@ -49,6 +49,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testProjectWithoutNewFieldsStillDecodes()
             print("Checking the updater…")
             try tests.testReleaseVersionOrdering()
+            await tests.testUpdaterStateDrivesTheVisibleControls()
             try tests.testReleaseParsingAcceptsGitHubDiskImagesOnly()
             try tests.testUpdateSwapReplacesBundleAndRestoresOnFailure()
             print("Checking key storage and editor controls…")

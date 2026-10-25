@@ -1290,6 +1290,48 @@ final class FocusFlowTests {
         XCTAssertEqual(restored?.typingEvents?.count, typing.count)
     }
 
+    /// The toolbar badge and the Settings button both read the updater's
+    /// state, so that state has to mean what they assume.
+    @MainActor func testUpdaterStateDrivesTheVisibleControls() {
+        let updater = Updater()
+
+        // Nothing waiting, so nothing to badge and nothing to install.
+        XCTAssertNil(updater.pendingRelease)
+        XCTAssertTrue(!updater.isBusy)
+
+        let release = AvailableRelease(
+            version: SemanticVersion("9.9.9")!,
+            downloadURL: URL(string: "https://github.com/a/b/releases/download/v9.9.9/FocusFlow-9.9.9.dmg")!,
+            notes: "",
+            pageURL: nil)
+
+        updater.applyStateForTesting(.available(release))
+        XCTAssertEqual(updater.pendingRelease?.version.description, "9.9.9")
+        XCTAssertTrue(!updater.isBusy)
+
+        // Dismissing hides the bar but must not discard the offer, or the
+        // toolbar badge and the install button would vanish with it.
+        updater.dismissed = true
+        XCTAssertEqual(updater.pendingRelease?.version.description, "9.9.9")
+
+        // Busy states must disable the controls rather than allow a second run.
+        for busy in [Updater.State.checking, .downloading(0.4), .installing] {
+            updater.applyStateForTesting(busy)
+            XCTAssertTrue(updater.isBusy)
+            XCTAssertNil(updater.pendingRelease)
+        }
+
+        // A reported outcome clears back to idle when dismissed.
+        updater.applyStateForTesting(.failed("nope"))
+        XCTAssertTrue(!updater.isBusy)
+        updater.clearStatus()
+        XCTAssertNil(updater.pendingRelease)
+
+        updater.applyStateForTesting(.upToDate)
+        updater.clearStatus()
+        XCTAssertNil(updater.pendingRelease)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

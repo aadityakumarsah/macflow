@@ -119,6 +119,10 @@ final class Updater: ObservableObject {
         }
     }
 
+    /// Lets the checks drive the state machine the visible controls read,
+    /// without a network round trip.
+    func applyStateForTesting(_ newState: State) { state = newState }
+
     /// Returns the banner to nothing, after a one-off status message.
     func clearStatus() {
         switch state {

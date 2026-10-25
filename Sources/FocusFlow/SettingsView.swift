@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            UpdatesSettingsPane()
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
             AISettingsPane()
                 .tabItem { Label("AI", systemImage: "sparkles") }
             CaptureSettingsPane()
@@ -150,5 +152,98 @@ private struct CaptureSettingsPane: View {
             Spacer()
         }
         .padding(22)
+    }
+}
+
+/// Checking for updates, somewhere it can be found.
+///
+/// It was only ever in the application menu, which is not where anyone looks
+/// for it.
+private struct UpdatesSettingsPane: View {
+    @EnvironmentObject private var updater: Updater
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Updates")
+                .font(.system(size: 13, weight: .semibold))
+
+            HStack(spacing: 8) {
+                Text("You have version")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(updater.currentVersion.description)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await updater.check(userInitiated: true) }
+                } label: {
+                    if updater.isBusy {
+                        HStack(spacing: 7) {
+                            ProgressView().controlSize(.small)
+                            Text("Checking…")
+                        }
+                    } else {
+                        Label("Check for updates", systemImage: "arrow.down.circle")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.green)
+                .disabled(updater.isBusy)
+
+                if let release = updater.pendingRelease {
+                    Button("Install \(release.version.description) and relaunch") {
+                        updater.install(release)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            status
+
+            Divider()
+
+            Text("FocusFlow also checks on its own when it launches, and every few hours while it is open. A newer version appears in a bar under the toolbar. Nothing is ever installed without you pressing a button.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link("Release notes on GitHub ↗",
+                 destination: URL(string: "https://github.com/aadityakumarsah/macflow/releases")!)
+                .font(.caption)
+
+            Spacer()
+        }
+        .padding(22)
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch updater.state {
+        case .idle:
+            Text("Press the button to check now.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .checking:
+            Text("Asking GitHub for the latest release…")
+                .font(.caption).foregroundStyle(.secondary)
+        case .upToDate:
+            Label("This is the latest version.", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(AppTheme.green)
+        case let .available(release):
+            Label("Version \(release.version.description) is available.", systemImage: "arrow.down.circle.fill")
+                .font(.caption).foregroundStyle(AppTheme.green)
+        case let .downloading(progress):
+            HStack(spacing: 8) {
+                ProgressView(value: progress).frame(width: 140)
+                Text("\(Int(progress * 100))%").font(.caption.monospacedDigit())
+            }
+        case .installing:
+            Label("Installing. FocusFlow will reopen on its own.", systemImage: "gearshape")
+                .font(.caption).foregroundStyle(.secondary)
+        case let .failed(reason):
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
