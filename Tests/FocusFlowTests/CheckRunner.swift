@@ -52,6 +52,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testAPIKeyStorageAndValidation()
             await tests.testSplitIsOfferedOnlyWhenItCanAct()
             tests.testCustomAspectRatioGeometry()
+            try tests.testColourGradesAlterTheFrameOnly()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }

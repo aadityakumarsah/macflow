@@ -60,14 +60,21 @@ enum MotionEngine {
         let y = min(1 - size, max(0, cy / weight - size / 2))
         return CGRect(x: x, y: y, width: size, height: size)
     }
+    /// How long a zoom lingers after the click that caused it, and how long
+    /// it takes to settle at each end. The hold is what decides when the
+    /// frame starts pulling back, so it is the number to shorten for a
+    /// quicker release.
+    static let clickZoomHold: Double = 1.15
+    static let clickZoomTransition: Double = 0.6
+
     static func autoZooms(clicks: [RecordedClick], duration: Double) -> [EditSegment] {
         var result: [EditSegment] = []
         for click in clicks.sorted(by: { $0.time < $1.time }) where click.time >= 0 && click.time < duration {
             if let i = result.indices.last, click.time <= result[i].end + 0.5 {
-                result[i].duration = min(duration, click.time + 1.45) - result[i].start
+                result[i].duration = min(duration, click.time + clickZoomHold) - result[i].start
             } else {
                 let start = max(0, click.time - 0.6)
-                result.append(EditSegment(kind: .zoom, start: start, duration: min(duration - start, click.time + 1.45 - start), intensity: 1.65, x: click.x, y: click.y, followsCursor: true, transition: 0.7))
+                result.append(EditSegment(kind: .zoom, start: start, duration: min(duration - start, click.time + clickZoomHold - start), intensity: 1.65, x: click.x, y: click.y, followsCursor: true, transition: clickZoomTransition))
             }
         }
         return result

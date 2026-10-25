@@ -173,6 +173,7 @@ final class BrowserRecorderBridge: ObservableObject {
             if path == "/heartbeat" { respond(200, "text/plain", Data()); return }
             // The browser drops paused time from the video, so the pointer
             // timeline has to drop it too or every later click lands late.
+            if path == "/started" { pointer.markRecordingStarted(); respond(200, "text/plain", Data()); return }
             if path == "/pause" { pointer.pause(); respond(200, "text/plain", Data()); return }
             if path == "/resume" { pointer.resume(); respond(200, "text/plain", Data()); return }
             if path == "/release" {

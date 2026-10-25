@@ -465,3 +465,31 @@ struct ExportInspector: View {
         }
     }
 }
+
+struct GradeInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    var body: some View {
+        InspectorSection(title: "COLOUR") {
+            Picker("Grade", selection: $model.grade.grade) {
+                ForEach(ColorGrade.allCases) { Text($0.rawValue).tag($0) }
+            }.labelsHidden()
+
+            InspectorSlider(title: "Exposure", value: $model.grade.exposure, range: -2...2, suffix: " EV")
+            InspectorSlider(title: "Contrast", value: $model.grade.contrast, range: 0.5...1.8, suffix: "×")
+            InspectorSlider(title: "Vignette", value: $model.grade.vignette, range: 0...1, suffix: "")
+
+            if !model.grade.isIdentity {
+                Button {
+                    model.grade = GradeSettings()
+                } label: {
+                    Label("Reset colour", systemImage: "arrow.uturn.backward")
+                }
+                .font(.caption)
+            }
+
+            Text("The grade applies to the recording, not the background behind it.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}

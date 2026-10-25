@@ -123,6 +123,9 @@ async function start() {
     screenRecorder = recorder(new MediaStream(tracks), screenChunks, '/screen');
     cameraRecorder = camera?.active ? recorder(camera, cameraChunks, '/camera') : null;
     started = performance.now(); screenRecorder.start(1000); cameraRecorder?.start(1000);
+    // Tell the app the recorder is actually running, so its pointer timeline
+    // starts where the video does rather than where the request did.
+    post('/started','').catch(() => {});
     heartbeat = setInterval(() => post('/heartbeat','').catch(() => {}),5000);
     state = 'recording'; $('badge').textContent = '● RECORDING'; $('record').hidden = true; $('pause').hidden = $('stop').hidden = false;
     timer = setInterval(() => {

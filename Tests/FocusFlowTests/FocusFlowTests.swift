@@ -885,6 +885,72 @@ final class FocusFlowTests {
         XCTAssertNil(document?.customRatioWidth)
     }
 
+    /// Each grade must actually change the frame, in the direction its name
+    /// promises, and must leave the background behind the frame alone.
+    func testColourGradesAlterTheFrameOnly() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 480, height: 270)
+        // A mid saturated colour so saturation and tint both show.
+        let source = CIImage(color: CIColor(red: 0.6, green: 0.35, blue: 0.3)).cropped(to: canvas)
+
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 12, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 10, cameraShape: .circle)
+        settings.showCursor = false
+        settings.customBackground = CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 1, b: 0))
+
+        func render(_ grade: GradeSettings) throws -> [UInt8] {
+            settings.grade = grade
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 0, settings: settings), from: canvas))
+            return pixels(image)
+        }
+
+        // Centre of the frame, well inside the padding.
+        func centre(_ data: [UInt8]) -> [Int] {
+            let offset = ((270 / 2) * 480 + 240) * 4
+            return [Int(data[offset]), Int(data[offset + 1]), Int(data[offset + 2])]
+        }
+        // Top-left corner is background, which the grade must not touch.
+        func corner(_ data: [UInt8]) -> [Int] { [Int(data[0]), Int(data[1]), Int(data[2])] }
+
+        let plain = try render(GradeSettings())
+        let plainCentre = centre(plain), plainCorner = corner(plain)
+        // The background is the solid green we asked for.
+        XCTAssertGreaterThan(plainCorner[1], 180)
+
+        // Noir strips colour: the channels converge.
+        let noir = try render(GradeSettings(grade: .noir))
+        let n = centre(noir)
+        XCTAssertLessThan(abs(n[0] - n[1]) + abs(n[1] - n[2]), 24)
+        // And it leaves the background alone.
+        XCTAssertEqual(corner(noir), plainCorner)
+
+        // Vivid pushes saturation the other way: channels spread further apart.
+        let vivid = centre(try render(GradeSettings(grade: .vivid)))
+        let plainSpread = abs(plainCentre[0] - plainCentre[2])
+        XCTAssertGreaterThan(abs(vivid[0] - vivid[2]), plainSpread)
+
+        // Frost and Golden pull in opposite directions on blue vs red.
+        let frost = centre(try render(GradeSettings(grade: .frost)))
+        let golden = centre(try render(GradeSettings(grade: .golden)))
+        XCTAssertGreaterThan(frost[2] - golden[2], 6)
+
+        // Exposure lifts, and its absence does not.
+        let bright = centre(try render(GradeSettings(grade: .none, exposure: 1.2)))
+        XCTAssertGreaterThan(bright[0], plainCentre[0])
+        let dark = centre(try render(GradeSettings(grade: .none, exposure: -1.2)))
+        XCTAssertLessThan(dark[0], plainCentre[0])
+
+        // A vignette darkens the frame's edge relative to its middle.
+        let vignetted = try render(GradeSettings(grade: .none, vignette: 1))
+        let edgeOffset = ((270 / 2) * 480 + 40) * 4
+        let edge = Int(vignetted[edgeOffset])
+        XCTAssertLessThan(edge, centre(vignetted)[0])
+
+        // An identity grade must be a true no-op.
+        XCTAssertTrue(GradeSettings().isIdentity)
+        XCTAssertTrue(!GradeSettings(grade: .noir).isIdentity)
+        XCTAssertEqual(centre(try render(GradeSettings())), plainCentre)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

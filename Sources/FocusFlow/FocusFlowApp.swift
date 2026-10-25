@@ -30,6 +30,19 @@ struct FocusFlowApp: App {
                 .keyboardShortcut("f", modifiers: [.control, .command])
                 .disabled(model.videoURL == nil)
             }
+            // Delete removes the selected effect, which is what every other
+            // timeline does and what the key is expected to do here.
+            CommandGroup(after: .pasteboard) {
+                Button("Delete Effect") { model.deleteSelected() }
+                    .keyboardShortcut(.delete, modifiers: [])
+                    .disabled(model.selectedSegmentID == nil)
+                Button("Duplicate Effect") { model.duplicateSelected() }
+                    .keyboardShortcut("d", modifiers: .command)
+                    .disabled(model.selectedSegmentID == nil)
+                Button("Split Effect at Playhead") { model.splitSelected() }
+                    .keyboardShortcut("b", modifiers: .command)
+                    .disabled(!model.canSplitSelected)
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { model.undo() }.keyboardShortcut("z").disabled(!model.canUndo)
                 Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)

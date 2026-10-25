@@ -128,6 +128,67 @@ struct CursorAppearance: Codable, Equatable {
     }
 }
 
+/// A look applied to the whole frame, before the background shows through.
+enum ColorGrade: String, Codable, CaseIterable, Identifiable {
+    case none = "None"
+    case cinematic = "Cinematic"
+    case noir = "Noir"
+    case vintage = "Vintage"
+    case frost = "Frost"
+    case golden = "Golden"
+    case midnight = "Midnight"
+    case vivid = "Vivid"
+    case dreamy = "Dreamy"
+
+    var id: String { rawValue }
+
+    /// Saturation, contrast and brightness handed to CIColorControls.
+    var controls: (saturation: Double, contrast: Double, brightness: Double) {
+        switch self {
+        case .none: (1, 1, 0)
+        case .cinematic: (0.88, 1.12, -0.02)
+        case .noir: (0, 1.22, -0.01)
+        case .vintage: (0.72, 0.94, 0.04)
+        case .frost: (0.82, 1.06, 0.03)
+        case .golden: (1.08, 1.04, 0.02)
+        case .midnight: (0.78, 1.16, -0.06)
+        case .vivid: (1.35, 1.08, 0)
+        case .dreamy: (1.1, 0.9, 0.05)
+        }
+    }
+
+    /// A wash laid over the frame, as red/green/blue plus its strength.
+    var tint: (r: Double, g: Double, b: Double, amount: Double)? {
+        switch self {
+        case .none, .vivid: nil
+        case .cinematic: (0.05, 0.12, 0.28, 0.1)
+        case .noir: (0.02, 0.02, 0.04, 0.05)
+        case .vintage: (0.46, 0.32, 0.12, 0.12)
+        case .frost: (0.42, 0.68, 0.92, 0.11)
+        case .golden: (0.95, 0.65, 0.18, 0.1)
+        case .midnight: (0.06, 0.10, 0.34, 0.16)
+        case .dreamy: (0.85, 0.62, 0.85, 0.09)
+        }
+    }
+
+    /// A soft bloom suits a dreamy look and nothing else here.
+    var bloom: Double { self == .dreamy ? 0.6 : 0 }
+}
+
+struct GradeSettings: Codable, Equatable {
+    var grade: ColorGrade = .none
+    /// Stops of exposure, the way a camera would express it.
+    var exposure: Double = 0
+    /// A multiplier on the grade's own contrast.
+    var contrast: Double = 1
+    /// Darkening at the edges, 0 for none.
+    var vignette: Double = 0
+
+    var isIdentity: Bool {
+        grade == .none && exposure == 0 && contrast == 1 && vignette == 0
+    }
+}
+
 struct FrameLayout {
     let outer: CGRect
     let content: CGRect

@@ -54,6 +54,20 @@ final class BrowserPointerCapture {
         self.timer = timer
     }
 
+    /// Moves time zero to now, discarding anything already collected.
+    ///
+    /// `begin` runs when the page asks to start, but the browser's recorder
+    /// starts after that round trip returns — so samples taken in between sit
+    /// before the video's first frame and drag the cursor behind.
+    func markRecordingStarted() {
+        guard timer != nil else { return }
+        start = Date()
+        pausedTotal = 0
+        clicks = []
+        samples = []
+        lastButtonDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
+    }
+
     func pause() {
         guard timer != nil, pausedSince == nil else { return }
         pausedSince = Date()

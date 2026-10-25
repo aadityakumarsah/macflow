@@ -42,6 +42,7 @@ struct ExportSettings {
     var cursor = CursorAppearance()
     var cursorPointScale: Double = 1
     var customBackground = CustomBackground()
+    var grade = GradeSettings()
     var exportOptions = ExportOptions()
 }
 
@@ -350,6 +351,9 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             source = opacity(source.transformed(by: transform), progress)
         }
         if motion.fadeOut { source = opacity(source, MotionCurve.smooth.value((settings.trimEnd - time) / max(0.1, motion.duration))) }
+        // Graded before the background goes behind it: the background is the
+        // user's own colour choice and should not take the wash.
+        if !settings.grade.isIdentity { source = applyGrade(source, settings.grade, canvas: canvas) }
         let backdrop = makeBackground(settings: settings, source: original, extent: canvas)
         var result = source.composited(over: settings.motion.ambientGraphics == false ? backdrop : animatedBackdrop(backdrop, canvas: canvas, time: time, settings: settings)).cropped(to: canvas)
         if settings.motion.ambientGraphics != false {
@@ -366,6 +370,54 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             result = applyCamera(camera, over: result, settings: settings, canvas: canvas)
         }
         return result.cropped(to: canvas)
+    }
+
+    /// Applies the chosen look: colour controls, a tint wash, exposure and a
+    /// vignette. The frame's alpha is used as the mask for the wash, so the
+    /// rounded corners and the shadow behind them survive.
+    private func applyGrade(_ image: CIImage, _ settings: GradeSettings, canvas: CGRect) -> CIImage {
+        var result = image
+        let grade = settings.grade
+        let controls = grade.controls
+
+        let contrast = max(0.2, controls.contrast * max(0.1, settings.contrast))
+        result = result.applyingFilter("CIColorControls", parameters: [
+            kCIInputSaturationKey: controls.saturation,
+            kCIInputContrastKey: contrast,
+            kCIInputBrightnessKey: controls.brightness,
+        ])
+
+        if settings.exposure != 0 {
+            result = result.applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: settings.exposure])
+        }
+
+        if let tint = grade.tint, tint.amount > 0 {
+            let wash = CIImage(color: CIColor(red: tint.r, green: tint.g, blue: tint.b, alpha: 1))
+                .cropped(to: result.extent)
+            let masked = wash.applyingFilter("CIBlendWithAlphaMask", parameters: [
+                kCIInputBackgroundImageKey: CIImage(color: .clear).cropped(to: result.extent),
+                kCIInputMaskImageKey: result,
+            ])
+            result = opacity(masked, tint.amount).composited(over: result)
+        }
+
+        if grade.bloom > 0 {
+            result = result.applyingFilter("CIBloom", parameters: [
+                kCIInputRadiusKey: max(canvas.width, canvas.height) / 180,
+                kCIInputIntensityKey: grade.bloom,
+            ]).cropped(to: result.extent)
+        }
+
+        if settings.vignette > 0 {
+            result = result.applyingFilter("CIVignetteEffect", parameters: [
+                kCIInputCenterKey: CIVector(x: result.extent.midX, y: result.extent.midY),
+                kCIInputRadiusKey: max(result.extent.width, result.extent.height) * 0.62,
+                kCIInputIntensityKey: settings.vignette * 1.8,
+                "inputFalloff": 0.5,
+            ]).cropped(to: result.extent)
+        }
+
+        return result
     }
 
     private func opacity(_ image: CIImage, _ alpha: Double) -> CIImage {

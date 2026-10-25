@@ -230,6 +230,7 @@ struct ProjectDocument: Codable {
     var cursorAppearance: CursorAppearance? = nil
     var customBackground: CustomBackground? = nil
     var exportOptions: ExportOptions? = nil
+    var grade: GradeSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
 }

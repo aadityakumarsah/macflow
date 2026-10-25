@@ -60,6 +60,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var relativeCaptureRect = CGRect.zero
     private var recordingStart = Date()
     private(set) var firstFrameDate: Date?
+    private var didRebaseToFirstFrame = false
     private var targetPID: pid_t?
     private var targetWindowID: CGWindowID?
     private var lastFrameUpdate = Date.distantPast
@@ -198,7 +199,10 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         lastPreviewPTS = -Double.infinity
         isRecording = true
         elapsed = 0
-        recordingStart = firstFrameDate ?? Date()
+        // Provisional: the video's zero is the first frame, which has not
+        // arrived yet. Everything stamped before it is rebased below.
+        recordingStart = Date()
+        didRebaseToFirstFrame = false
         lastLeftButtonDown = false
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -242,6 +246,32 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         let savedAsset = AVURLAsset(url: url)
         guard (try? await savedAsset.load(.isPlayable)) == true else { throw RecorderError.unreadableOutput }
         return url
+    }
+
+    /// Shifts everything captured before the first video frame onto the
+    /// video's own clock. Runs once, on the few samples taken during startup.
+    @MainActor
+    private func rebaseTimeline(to firstFrame: Date) {
+        guard !didRebaseToFirstFrame else { return }
+        didRebaseToFirstFrame = true
+        let delta = firstFrame.timeIntervalSince(recordingStart)
+        recordingStart = firstFrame
+        guard delta > 0.001 else { return }
+
+        // A sample taken before the first frame has no frame to sit on, so it
+        // is dropped rather than clamped onto zero where it would pile up.
+        pointerSamples = pointerSamples.compactMap { sample in
+            let time = sample.time - delta
+            return time >= 0 ? PointerSample(time: time, x: sample.x, y: sample.y, shape: sample.shape) : nil
+        }
+        clicks = clicks.compactMap { click in
+            let time = click.time - delta
+            return time >= 0 ? RecordedClick(time: time, x: click.x, y: click.y) : nil
+        }
+        keystrokes = keystrokes.compactMap { key in
+            let time = key.time - delta
+            return time >= 0 ? KeystrokeEvent(time: time, text: key.text) : nil
+        }
     }
 
     @MainActor
@@ -323,10 +353,16 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
                 }
             }
             if !startedSession {
-                firstFrameDate = Date()
+                let arrived = Date()
+                firstFrameDate = arrived
                 writer.startSession(atSourceTime: pts)
                 firstPTS = pts
                 startedSession = true
+                // ScreenCaptureKit takes a moment to deliver its first frame.
+                // Until now samples were timed from the capture request, which
+                // is earlier than the video's zero, so the drawn cursor
+                // trailed the real one by that gap. Rebase onto the frame.
+                Task { @MainActor [weak self] in self?.rebaseTimeline(to: arrived) }
             }
             if videoInput?.isReadyForMoreMediaData == true { videoInput?.append(sampleBuffer) }
         } else if outputType == .audio, startedSession, audioInput?.isReadyForMoreMediaData == true {
