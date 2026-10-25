@@ -558,8 +558,11 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
         let raw = move.holds ? min(1, elapsed / max(0.2, settings.trimEnd - settings.trimStart)) : min(1, elapsed / span)
         let progress = move.curve.value(raw)
-        // Settled, and not holding: nothing left to do, so skip the filters.
-        if !move.holds, raw >= 1 { return image }
+        // Settled, and not holding: nothing of the move is left. Where the
+        // frame has been placed by hand stays, though — that is not a move,
+        // it is where the frame stands.
+        let settled = !move.holds && raw >= 1
+        if settled, !move.isPlaced, !move.hasStandaloneBlur { return image }
 
         let tilt = max(0, min(1, move.tilt))
         let amount = max(0, min(1, move.amount))
@@ -570,9 +573,9 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         var leanLeft = 0.0, leanRight = 0.0, leanTop = 0.0
         var shiftX = 0.0, scale = 1.0
 
-        switch move.move {
+        switch settled ? .none : move.move {
         case .none:
-            return image
+            break
         case .glide:
             // Holds its lean and travels across.
             leanRight = tilt * 0.2
@@ -590,26 +593,68 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             scale = (1 + amount * 0.3) - amount * 0.3 * progress
         }
 
+        // Turning and leaning by hand, on top of whatever the move is doing.
+        // An edge that recedes is pulled in and, because it is further away,
+        // is also shorter than the edge facing the viewer.
+        let yaw = max(-1, min(1, move.yaw)), pitch = max(-1, min(1, move.pitch))
+        leanRight += max(0, yaw) * 0.26
+        leanLeft += max(0, -yaw) * 0.26
+        leanTop += max(0, pitch) * 0.2
+        let leanBottom = max(0, -pitch) * 0.2
+
         let dxRight = frame.width * leanRight
         let dxLeft = frame.width * leanLeft
         let dyTop = frame.height * leanTop
+        let dyBottom = frame.height * leanBottom
+        let squashRight = frame.height * max(0, yaw) * 0.12
+        let squashLeft = frame.height * max(0, -yaw) * 0.12
+        let squashTop = frame.width * max(0, pitch) * 0.12
+        let squashBottom = frame.width * max(0, -pitch) * 0.12
 
         // Corners run bottom-left, bottom-right, top-right, top-left.
         let perspective = CIFilter.perspectiveTransform()
         perspective.inputImage = image
-        perspective.bottomLeft = CGPoint(x: frame.minX + dxLeft, y: frame.minY)
-        perspective.bottomRight = CGPoint(x: frame.maxX - dxRight, y: frame.minY)
-        perspective.topRight = CGPoint(x: frame.maxX - dxRight * 0.35, y: frame.maxY - dyTop)
-        perspective.topLeft = CGPoint(x: frame.minX + dxLeft * 0.35, y: frame.maxY - dyTop)
+        perspective.bottomLeft = CGPoint(x: frame.minX + dxLeft + squashBottom, y: frame.minY + dyBottom + squashLeft)
+        perspective.bottomRight = CGPoint(x: frame.maxX - dxRight - squashBottom, y: frame.minY + dyBottom + squashRight)
+        perspective.topRight = CGPoint(x: frame.maxX - dxRight * 0.35 - squashTop, y: frame.maxY - dyTop - squashRight)
+        perspective.topLeft = CGPoint(x: frame.minX + dxLeft * 0.35 + squashTop, y: frame.maxY - dyTop - squashLeft)
 
         guard var result = perspective.outputImage else { return image }
 
-        if scale != 1 || shiftX != 0 {
+        // Roll, slide and push in — the rest of standing the frame somewhere.
+        let zoom = max(0.2, min(3, move.zoom))
+        let roll = max(-1, min(1, move.roll)) * .pi / 5
+        let dx = shiftX + move.panX * frame.width * 0.5
+        let dy = move.panY * frame.height * 0.5
+        if scale * zoom != 1 || dx != 0 || dy != 0 || roll != 0 {
             let centre = CGPoint(x: canvas.midX, y: canvas.midY)
-            let transform = CGAffineTransform(translationX: centre.x + shiftX, y: centre.y)
-                .scaledBy(x: scale, y: scale)
+            let transform = CGAffineTransform(translationX: centre.x + dx, y: centre.y + dy)
+                .rotated(by: roll)
+                .scaledBy(x: scale * zoom, y: scale * zoom)
                 .translatedBy(x: -centre.x, y: -centre.y)
             result = result.transformed(by: transform)
+        }
+
+        let strength = max(0, min(1, move.focusBlur))
+        switch move.blur {
+        case .none: return result
+        case .radial:
+            guard strength > 0.01 else { return result }
+            return result.clampedToExtent().applyingFilter("CIZoomBlur", parameters: [
+                kCIInputCenterKey: CIVector(x: canvas.midX, y: canvas.midY),
+                "inputAmount": max(1, Double(frame.width) / 1920 * 42 * strength),
+            ]).cropped(to: result.extent)
+        case .directional:
+            guard strength > 0.01 else { return result }
+            return result.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
+                kCIInputRadiusKey: max(1, Double(frame.width) / 1920 * 32 * strength),
+                kCIInputAngleKey: move.blurAngle * .pi / 180,
+            ]).cropped(to: result.extent)
+        case .tiltShift:
+            guard strength > 0.01 else { return result }
+            return tiltShifted(result, strength: strength, focus: move.blurFocus, band: move.blurBand)
+        case .depth:
+            break
         }
 
         // Depth of field across the receding axis. Skipped when there is no
@@ -643,6 +688,40 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         }
 
         return result
+    }
+
+    /// A sharp band across the frame with soft ground above and below it,
+    /// which is what a tilted lens does and why a scene shot through one
+    /// reads as a model of itself.
+    private func tiltShifted(_ image: CIImage, strength: Double, focus: Double, band: Double) -> CIImage {
+        let extent = image.extent
+        guard extent.height > 2 else { return image }
+        let centre = extent.minY + extent.height * max(0, min(1, focus))
+        let half = extent.height * max(0.02, min(0.9, band)) / 2
+        let feather = max(2, extent.height * 0.12)
+        let white = CIColor(red: 1, green: 1, blue: 1), black = CIColor(red: 0, green: 0, blue: 0)
+
+        func edge(from: Double, to: Double) -> CIImage? {
+            let gradient = CIFilter.linearGradient()
+            gradient.point0 = CGPoint(x: extent.midX, y: from)
+            gradient.point1 = CGPoint(x: extent.midX, y: to)
+            gradient.color0 = white
+            gradient.color1 = black
+            return gradient.outputImage?.cropped(to: extent)
+        }
+        // White inside the band: under CIBlendWithMask white keeps the sharp
+        // frame, so the two falls to black are what softens.
+        guard let below = edge(from: centre - half, to: centre - half - feather),
+              let above = edge(from: centre + half, to: centre + half + feather) else { return image }
+        let mask = below.applyingFilter("CIDarkenBlendMode", parameters: [kCIInputBackgroundImageKey: above])
+
+        let blurred = image.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(1.0, Double(extent.width) / 1920 * 22 * strength)])
+            .cropped(to: extent)
+        return image.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: blurred,
+            kCIInputMaskImageKey: mask,
+        ]).cropped(to: extent)
     }
 
     private func opacity(_ image: CIImage, _ alpha: Double) -> CIImage {

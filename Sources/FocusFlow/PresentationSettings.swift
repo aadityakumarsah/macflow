@@ -192,8 +192,48 @@ enum CameraMove: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How the frame is softened once it is standing in space.
+enum FrameBlur: String, Codable, CaseIterable, Identifiable {
+    case none = "None"
+    case depth = "Depth of field"
+    case radial = "Radial"
+    case directional = "Directional"
+    case tiltShift = "Tilt shift"
+    var id: String { rawValue }
+    var detail: String {
+        switch self {
+        case .none: "No softening."
+        case .depth: "Sharp where the frame is nearest, soft where it recedes."
+        case .radial: "Softens outwards from the middle, as though rushing forward."
+        case .directional: "Smears along one angle, like a camera whipping past."
+        case .tiltShift: "A sharp band across the frame, soft above and below."
+        }
+    }
+}
+
 struct CameraMoveSettings: Codable, Equatable {
     var move: CameraMove = .none
+
+    // Where the frame stands, whether or not a move is playing. These are the
+    // frame in three dimensions: lean it back, turn it, roll it, slide it,
+    // push in. All zero, and the frame is square to the viewer as before.
+    /// Leans the top away (positive) or the bottom (negative).
+    var pitch: Double = 0
+    /// Turns the right edge away (positive) or the left (negative).
+    var yaw: Double = 0
+    /// Rolls the frame, a fifth of a turn either way at the extremes.
+    var roll: Double = 0
+    var panX: Double = 0
+    var panY: Double = 0
+    /// Pushes in or pulls back, 1 being where the frame sits by itself.
+    var zoom: Double = 1
+
+    var blur: FrameBlur = .depth
+    /// Directional blur only: the angle it smears along, in degrees.
+    var blurAngle: Double = 0
+    /// Tilt shift only: where the sharp band sits, and how wide it is.
+    var blurFocus: Double = 0.5
+    var blurBand: Double = 0.3
     /// How far the frame leans, 0 flat and 1 steep.
     var tilt: Double = 0.55
     /// How far it travels or withdraws.
@@ -210,7 +250,53 @@ struct CameraMoveSettings: Codable, Equatable {
     /// and looking at the middle of a recording showed nothing at all.
     var holds: Bool = true
 
-    var isActive: Bool { move != .none }
+    var isPlaced: Bool {
+        pitch != 0 || yaw != 0 || roll != 0 || panX != 0 || panY != 0 || zoom != 1
+    }
+    /// Blur that does not need a lean to justify it, unlike depth of field.
+    var hasStandaloneBlur: Bool {
+        focusBlur > 0.01 && (blur == .radial || blur == .directional || blur == .tiltShift)
+    }
+    var isActive: Bool { move != .none || isPlaced || hasStandaloneBlur }
+
+    /// Written out by hand so that a field added later does not stop a
+    /// project saved before it from opening. A missing key is the default,
+    /// not a failure.
+    /// The move's own settings, since writing an initialiser of any kind
+    /// takes the one Swift would have written away. Where the frame stands
+    /// and how it is blurred are set afterwards, as the inspector does.
+    init(move: CameraMove = .none, tilt: Double = 0.55, amount: Double = 0.5,
+         focusBlur: Double = 0.35, duration: Double = 2.6,
+         curve: MotionCurve = .smooth, holds: Bool = true, blur: FrameBlur = .depth) {
+        self.move = move
+        self.tilt = tilt
+        self.amount = amount
+        self.focusBlur = focusBlur
+        self.duration = duration
+        self.curve = curve
+        self.holds = holds
+        self.blur = blur
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        move = try values.decodeIfPresent(CameraMove.self, forKey: .move) ?? .none
+        pitch = try values.decodeIfPresent(Double.self, forKey: .pitch) ?? 0
+        yaw = try values.decodeIfPresent(Double.self, forKey: .yaw) ?? 0
+        roll = try values.decodeIfPresent(Double.self, forKey: .roll) ?? 0
+        panX = try values.decodeIfPresent(Double.self, forKey: .panX) ?? 0
+        panY = try values.decodeIfPresent(Double.self, forKey: .panY) ?? 0
+        zoom = try values.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
+        blur = try values.decodeIfPresent(FrameBlur.self, forKey: .blur) ?? .depth
+        blurAngle = try values.decodeIfPresent(Double.self, forKey: .blurAngle) ?? 0
+        blurFocus = try values.decodeIfPresent(Double.self, forKey: .blurFocus) ?? 0.5
+        blurBand = try values.decodeIfPresent(Double.self, forKey: .blurBand) ?? 0.3
+        tilt = try values.decodeIfPresent(Double.self, forKey: .tilt) ?? 0.55
+        amount = try values.decodeIfPresent(Double.self, forKey: .amount) ?? 0.5
+        focusBlur = try values.decodeIfPresent(Double.self, forKey: .focusBlur) ?? 0.35
+        duration = try values.decodeIfPresent(Double.self, forKey: .duration) ?? 2.6
+        curve = try values.decodeIfPresent(MotionCurve.self, forKey: .curve) ?? .smooth
+        holds = try values.decodeIfPresent(Bool.self, forKey: .holds) ?? true
+    }
 }
 
 /// A look applied to the whole frame, before the background shows through.

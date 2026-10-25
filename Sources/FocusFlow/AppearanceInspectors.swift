@@ -520,11 +520,10 @@ struct CameraMoveInspector: View {
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if model.cameraMove.isActive {
+            if model.cameraMove.move != .none {
                 InspectorSlider(title: "Tilt", value: $model.cameraMove.tilt, range: 0...1, suffix: "")
                 InspectorSlider(title: model.cameraMove.move == .pullBack ? "Distance" : "Travel",
                                 value: $model.cameraMove.amount, range: 0...1, suffix: "")
-                InspectorSlider(title: "Focus blur", value: $model.cameraMove.focusBlur, range: 0...1, suffix: "")
                 InspectorSlider(title: "Duration", value: $model.cameraMove.duration, range: 0.4...8, suffix: "s")
 
                 Picker("Easing", selection: $model.cameraMove.curve) {
@@ -533,6 +532,49 @@ struct CameraMoveInspector: View {
 
                 Toggle("Run for the whole clip", isOn: $model.cameraMove.holds)
                     .help("Spreads the move across the entire recording instead of playing once and settling.")
+            }
+
+            // Where the frame stands, with or without a move playing. A move
+            // is a performance; this is the camera being put somewhere.
+            Divider()
+            Text("PLACE THE FRAME").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            InspectorSlider(title: "Tilt (lean back)", value: $model.cameraMove.pitch, range: -1...1, suffix: "")
+            InspectorSlider(title: "Turn (left / right)", value: $model.cameraMove.yaw, range: -1...1, suffix: "")
+            InspectorSlider(title: "Rotate", value: $model.cameraMove.roll, range: -1...1, suffix: "")
+            InspectorSlider(title: "Pan across", value: $model.cameraMove.panX, range: -1...1, suffix: "")
+            InspectorSlider(title: "Pan up / down", value: $model.cameraMove.panY, range: -1...1, suffix: "")
+            InspectorSlider(title: "Push in", value: $model.cameraMove.zoom, range: 0.6...1.8, suffix: "×")
+            if model.cameraMove.isPlaced {
+                Button("Stand it square") {
+                    model.cameraMove.pitch = 0; model.cameraMove.yaw = 0; model.cameraMove.roll = 0
+                    model.cameraMove.panX = 0; model.cameraMove.panY = 0; model.cameraMove.zoom = 1
+                }.font(.caption)
+            }
+
+            Divider()
+            Picker("Blur", selection: $model.cameraMove.blur) {
+                ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Text(model.cameraMove.blur.detail)
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.cameraMove.blur != .none {
+                InspectorSlider(title: "Blur amount", value: $model.cameraMove.focusBlur, range: 0...1, suffix: "")
+                if model.cameraMove.blur == .directional {
+                    InspectorSlider(title: "Angle", value: $model.cameraMove.blurAngle, range: 0...360, suffix: "°")
+                }
+                if model.cameraMove.blur == .tiltShift {
+                    InspectorSlider(title: "Sharp band at", value: $model.cameraMove.blurFocus, range: 0...1, suffix: "")
+                    InspectorSlider(title: "Band width", value: $model.cameraMove.blurBand, range: 0.05...0.9, suffix: "")
+                }
+                if model.cameraMove.blur == .depth && model.cameraMove.move == .none && !model.cameraMove.isPlaced {
+                    Text("Depth of field needs a lean to soften along. Tilt or turn the frame, or choose a move.")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if model.cameraMove.isActive {
 
                 Button {
                     model.cameraMove = CameraMoveSettings()
