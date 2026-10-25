@@ -55,11 +55,15 @@ final class BrowserPointerCapture {
         // recording can never follow the caret. Only the instant is kept —
         // no character, no key code — and only while Chrome is in front.
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            // Stamped as the key arrives, not after the hop onto the main
+            // actor: a busy main thread would otherwise file the keypress
+            // later than it happened and drag the slide behind the text.
+            let pressedAt = Date()
             Task { @MainActor in
                 guard let self, self.timer != nil, self.pausedSince == nil else { return }
                 guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == BrowserPointerCapture.chromeBundleID else { return }
                 guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return }
-                let time = Date().timeIntervalSince(self.start) - self.pausedTotal
+                let time = pressedAt.timeIntervalSince(self.start) - self.pausedTotal
                 if time >= 0 { self.typingEvents.append(TypingEvent(time: time)) }
             }
         }

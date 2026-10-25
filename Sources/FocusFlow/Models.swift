@@ -44,6 +44,11 @@ struct EditSegment: Identifiable, Codable, Equatable {
     var curve: MotionCurve? = nil
     var endX: Double? = nil
     var endY: Double? = nil
+    /// For `.typing`: the share of the segment the slide takes. A run of
+    /// typing is followed by a hold, and the caret stops advancing with the
+    /// last keypress, so the travel finishes here and the frame is still for
+    /// the remainder. Nil travels across the whole segment.
+    var travelFraction: Double? = nil
     var text: String? = nil
     /// Selection edits anchor the camera at the drag start and follow the
     /// growing selected range using the separately recorded pointer samples.

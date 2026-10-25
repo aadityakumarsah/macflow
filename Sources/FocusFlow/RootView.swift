@@ -567,6 +567,12 @@ struct SegmentInspector: View {
                     InspectorSlider(title: "Focus X", value: Binding(get: { segment.x }, set: { v in model.updateSelected { $0.x = v } }), range: 0...1, suffix: "")
                     InspectorSlider(title: "Focus Y", value: Binding(get: { segment.y }, set: { v in model.updateSelected { $0.y = v } }), range: 0...1, suffix: "")
                 }
+                if segment.kind == .typing {
+                    // Where the slide ends. The caret's position is estimated
+                    // from the number of keys, so one run in a recording
+                    // sometimes needs correcting without redoing them all.
+                    InspectorSlider(title: "Slides to X", value: Binding(get: { segment.endX ?? segment.x }, set: { v in model.updateSelected { $0.endX = v } }), range: 0...1, suffix: "")
+                }
                 SegmentMotionInspector(segment: segment)
                 if [.blur, .spotlight, .pixelate, .outline].contains(segment.kind) {
                     InspectorSlider(title: "Region width", value: Binding(get: { segment.regionWidth }, set: { v in model.updateSelected { $0.width = v } }), range: 0.02...1, suffix: "")

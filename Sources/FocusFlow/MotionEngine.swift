@@ -45,9 +45,16 @@ enum MotionEngine {
                 targetZoom = max(1.15, targetZoom)
             } else if segment.kind == .typing {
                 // Slides from where typing began toward where the caret has
-                // reached. endX carries the far end; the clamp below keeps the
-                // viewport inside the frame whatever is asked for.
-                let progress = (segment.curve ?? .smooth).value((time - segment.start) / max(0.01, segment.duration))
+                // reached. A caret advances a character per key, so the slide
+                // is linear and finishes with the last keypress: the rest of
+                // the segment is the hold, where the frame must sit still.
+                // Easing it across the whole segment instead left the frame
+                // behind the text for the first half of a run, ahead of it for
+                // the second, and still drifting after typing had stopped.
+                // endX carries the far end; the clamp below keeps the viewport
+                // inside the frame whatever is asked for.
+                let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
+                let progress = min(1, max(0, (time - segment.start) / max(0.01, travelling)))
                 x += ((segment.endX ?? x) - x) * progress
                 y = segment.endY ?? y
             } else if segment.kind == .pan {
@@ -98,13 +105,29 @@ enum MotionEngine {
         return runs
     }
 
-    /// First and last keypress of each run long enough to be followed. This is
-    /// the stretch a click zoom must not sit inside; the hold that follows a
-    /// run is deliberately excluded, so a click on Send still gets its own.
-    static func typingKeySpans(_ typing: [TypingEvent], duration: Double, gap: Double) -> [(Double, Double)] {
+    /// The runs that are worth following — and so the runs that own their
+    /// stretch of the timeline. One or two keys is a correction, not a passage
+    /// of typing, and a run too short to carry a segment is left alone.
+    static func followableRuns(_ typing: [TypingEvent], duration: Double, settings: TypingFollowSettings) -> [[Double]] {
         let times = typing.map(\.time).filter { $0 >= 0 && $0 < duration }
-        return typingRuns(times, gap: gap).compactMap { run in
-            guard run.count >= 4, let first = run.first, let last = run.last else { return nil }
+        return typingRuns(times, gap: settings.gap).filter { run in
+            guard run.count >= 4, let first = run.first, let last = run.last else { return false }
+            let start = max(0, first - 0.25)
+            return min(duration - start, (last + settings.hold) - start) >= 0.5
+        }
+    }
+
+    /// First and last keypress of each followed run. This is the stretch a
+    /// click zoom must not sit inside; the hold that follows a run is
+    /// deliberately excluded, so a click on Send still gets its own.
+    ///
+    /// With the follow switched off, no run owns anything and nothing is
+    /// excluded — turning the effect off must not silently delete the click
+    /// zooms it would have replaced.
+    static func typingKeySpans(_ typing: [TypingEvent], duration: Double, settings: TypingFollowSettings) -> [(Double, Double)] {
+        guard settings.enabled else { return [] }
+        return followableRuns(typing, duration: duration, settings: settings).compactMap { run in
+            guard let first = run.first, let last = run.last else { return nil }
             return (first - 0.3, last)
         }
     }
@@ -124,27 +147,36 @@ enum MotionEngine {
                               duration: Double,
                               settings: TypingFollowSettings) -> [EditSegment] {
         guard settings.enabled, !typing.isEmpty, duration > 0 else { return [] }
-        let ordered = typing.map(\.time).filter { $0 >= 0 && $0 < duration }.sorted()
-        guard !ordered.isEmpty else { return [] }
-
-        let runs = MotionEngine.typingRuns(ordered, gap: settings.gap)
+        // `.last` reads an order, so the clicks have to be in one: metadata
+        // arrives in time order, but nothing in the type says so.
+        let orderedClicks = clicks.sorted { $0.time < $1.time }
 
         var result: [EditSegment] = []
-        for run in runs {
-            // One or two keys is a correction, not a passage of typing.
-            guard run.count >= 4, let first = run.first, let last = run.last else { continue }
-            let length = min(duration - max(0, first - 0.25), (last + settings.hold) - max(0, first - 0.25))
-            guard length >= 0.5 else { continue }
+        for run in followableRuns(typing, duration: duration, settings: settings) {
+            guard let first = run.first, let last = run.last else { continue }
+            let start = max(0, first - 0.25)
+            let length = min(duration - start, (last + settings.hold) - start)
 
-            // Anchor: the last click before typing started, else the pointer.
-            let anchorClick = clicks.last { $0.time <= first + 0.1 }
+            // Anchor: the last click before typing started, which is where the
+            // caret was put, else where the pointer was. With neither there is
+            // nothing to anchor to, and a guess would zoom somewhere arbitrary
+            // for the length of the run, so the run is left alone.
+            let anchorClick = orderedClicks.last { $0.time <= first + 0.1 }
             let anchorSample = CursorMotion.sample(at: first, samples: samples, smoothed: true)
-            let anchorX = anchorClick?.x ?? anchorSample?.x ?? 0.3
-            let anchorY = anchorClick?.y ?? anchorSample?.y ?? 0.5
+            guard let anchorX = anchorClick?.x ?? anchorSample?.x,
+                  let anchorY = anchorClick?.y ?? anchorSample?.y else { continue }
 
-            let travel = min(settings.maxTravel, Double(run.count) * settings.advancePerKey)
+            // How far the caret has gone is measured by nothing, so it is
+            // estimated from the number of keys. When the cap bites, the slide
+            // reaches it at the key where it would have been reached and holds
+            // there; stretching the capped distance across the whole run would
+            // quietly change what travel per key means for a long passage.
+            let perKey = max(0.0001, settings.advancePerKey)
+            let travel = min(settings.maxTravel, Double(run.count) * perKey)
+            let keysToCap = Int((travel / perKey).rounded(.up))
+            let travelEnds = keysToCap < run.count ? run[max(1, keysToCap)] : last
             result.append(EditSegment(kind: .typing,
-                                      start: max(0, first - 0.25),
+                                      start: start,
                                       duration: length,
                                       intensity: max(1.05, min(4, settings.zoom)),
                                       x: anchorX,
@@ -152,7 +184,8 @@ enum MotionEngine {
                                       transition: 0.45,
                                       curve: settings.curve,
                                       endX: min(1, anchorX + travel),
-                                      endY: anchorY))
+                                      endY: anchorY,
+                                      travelFraction: min(1, max(0.05, (travelEnds - start) / max(0.01, length)))))
         }
         return result
     }
@@ -202,7 +235,7 @@ enum MotionEngine {
         // the clicks rather than the zooms matters, because a click zoom starts
         // a little before its click — judging it by that start would also throw
         // away the click on Send, which is the point of the whole sequence.
-        let typingSpans = typingKeySpans(typing, duration: duration, gap: typingFollow.gap)
+        let typingSpans = typingKeySpans(typing, duration: duration, settings: typingFollow)
         let validClicks = clicks.filter { click in
             click.time >= 0 && click.time < duration &&
             !selections.contains { click.time >= $0.0.time - 0.18 && click.time <= $0.1.time + 0.1 } &&

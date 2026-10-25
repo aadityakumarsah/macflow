@@ -564,11 +564,11 @@ struct TypingFollowInspector: View {
                 InspectorSlider(title: "Hold after", value: $model.typingFollow.hold, range: 0...2.5, suffix: "s")
                 InspectorSlider(title: "Pause splits run", value: $model.typingFollow.gap, range: 0.3...3, suffix: "s")
 
-                Picker("Easing", selection: $model.typingFollow.curve) {
+                Picker("Ease in and out", selection: $model.typingFollow.curve) {
                     ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
                 }
 
-                Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. Adjust **Travel per key** if it runs ahead of or behind the text.")
+                Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. It keeps pace with them and stops with the last one. Adjust **Travel per key** if it runs ahead of or behind the text.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

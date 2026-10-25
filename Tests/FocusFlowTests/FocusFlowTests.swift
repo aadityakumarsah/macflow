@@ -1224,6 +1224,50 @@ final class FocusFlowTests {
         // And it is zoomed in while doing so.
         XCTAssertLessThan(Double(late.width), 1)
 
+        // The slide keeps pace with the keys. Easing it across the segment
+        // instead left the frame behind the text through the first half of a
+        // run and ahead of it through the second, and kept it drifting after
+        // the typing had stopped — so: equal stretches of typing move the
+        // frame by equal amounts, and the hold does not move it at all.
+        var even = TypingFollowSettings()
+        even.gap = 1.0
+        even.hold = 0.8
+        even.advancePerKey = 0.008
+        even.maxTravel = 0.5
+        let steady = (0..<30).map { TypingEvent(time: 2 + Double($0) * 0.12) }   // 2.00 … 5.48
+        let middle = [RecordedClick(time: 1.8, x: 0.45, y: 0.5)]
+        guard let run = MotionEngine.typingFollows(typing: steady, clicks: middle, samples: samples,
+                                                   duration: 12, settings: even).first else {
+            XCTFail("a steady run of typing produced no follow"); return
+        }
+        func centre(_ time: Double) -> Double {
+            Double(MotionEngine.viewport(at: time, segments: [run], samples: samples,
+                                         crop: ContentRegion()).midX)
+        }
+        let typed = 5.48 - 2.0
+        let firstQuarter = centre(2 + typed * 0.25) - centre(2)
+        let thirdQuarter = centre(2 + typed * 0.75) - centre(2 + typed * 0.5)
+        XCTAssertGreaterThan(firstQuarter, 0.01)
+        XCTAssertEqual(firstQuarter, thirdQuarter, accuracy: firstQuarter * 0.2)
+
+        // It arrives where the keys say, with the last key, and then holds.
+        XCTAssertEqual(centre(5.48), 0.45 + Double(steady.count) * even.advancePerKey, accuracy: 0.01)
+        XCTAssertEqual(centre(5.8), centre(5.48), accuracy: 0.0001)
+
+        // Capped, the slide stops where the cap is reached rather than being
+        // stretched thin across the whole run: travel per key means the same
+        // thing for a long passage as for a short one.
+        var tight = even
+        tight.maxTravel = 0.08                                  // reached after 10 keys
+        guard let clipped = MotionEngine.typingFollows(typing: steady, clicks: middle, samples: samples,
+                                                       duration: 12, settings: tight).first,
+              let fraction = clipped.travelFraction else {
+            XCTFail("a capped run produced no follow"); return
+        }
+        XCTAssertLessThan(fraction, 0.5)
+        let atCap = clipped.start + fraction * clipped.duration
+        XCTAssertEqual(atCap, 2 + 10 * 0.12, accuracy: 0.2)
+
         // A couple of stray keys is a correction, not a passage of typing.
         let stray = [TypingEvent(time: 3), TypingEvent(time: 3.1)]
         XCTAssertTrue(MotionEngine.typingFollows(typing: stray, clicks: clicks, samples: samples,
@@ -1376,9 +1420,28 @@ final class FocusFlowTests {
         // While Send survives alongside it.
         XCTAssertTrue(withInterrupt.contains { $0.kind == .zoom && abs($0.x - 0.78) < 0.01 })
 
+        // Switched off, the typing owns nothing: a click made while typing
+        // keeps the zoom it would have had, rather than being deleted for a
+        // follow that is never built. Late enough in the run to be a zoom of
+        // its own rather than an extension of the one before it.
+        let late = RecordedClick(time: 2.6, x: 0.62, y: 0.3)
+        let followed = MotionEngine.autoEdits(clicks: [caret, late, send], samples: samples,
+                                              duration: 8, typing: typing, typingFollow: settings)
+        XCTAssertTrue(!followed.contains { $0.kind == .zoom && abs($0.x - 0.62) < 0.01 })
+
+        var off = settings
+        off.enabled = false
+        let withoutFollow = MotionEngine.autoEdits(clicks: [caret, late, send], samples: samples,
+                                                   duration: 8, typing: typing, typingFollow: off)
+        XCTAssertTrue(!withoutFollow.contains { $0.kind == .typing })
+        if !withoutFollow.contains(where: { $0.kind == .zoom && abs($0.x - 0.62) < 0.01 }) {
+            XCTFail("turning the follow off deleted the click zoom it was meant to replace")
+        }
+        XCTAssertTrue(MotionEngine.typingKeySpans(typing, duration: 8, settings: off).isEmpty)
+
         // The span that excludes clicks must end at the last keypress, not at
         // the end of the hold.
-        let spans = MotionEngine.typingKeySpans(typing, duration: 8, gap: settings.gap)
+        let spans = MotionEngine.typingKeySpans(typing, duration: 8, settings: settings)
         XCTAssertEqual(spans.count, 1)
         if let span = spans.first {
             XCTAssertLessThan(span.1, 3.1)
