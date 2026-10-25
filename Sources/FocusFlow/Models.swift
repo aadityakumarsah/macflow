@@ -49,6 +49,11 @@ struct EditSegment: Identifiable, Codable, Equatable {
     /// last keypress, so the travel finishes here and the frame is still for
     /// the remainder. Nil travels across the whole segment.
     var travelFraction: Double? = nil
+    /// For `.typing`: how far the caret travels before the frame moves, in
+    /// frame widths, and how long the frame then takes to catch up. Nil, or
+    /// zero, slides continuously with the caret.
+    var followBand: Double? = nil
+    var followSettle: Double? = nil
     var text: String? = nil
     /// Selection edits anchor the camera at the drag start and follow the
     /// growing selected range using the separately recorded pointer samples.

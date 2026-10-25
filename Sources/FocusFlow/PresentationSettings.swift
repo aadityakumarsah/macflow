@@ -155,6 +155,16 @@ struct TypingFollowSettings: Codable, Equatable {
     var advancePerKey: Double = 0.011
     /// The furthest it will travel from where typing began.
     var maxTravel: Double = 0.42
+    /// How far the caret may wander before the frame moves at all, as a share
+    /// of what is on screen. Holding still and then catching up is how a
+    /// camera follows anything — Apple's own Zoom moves the screen image only
+    /// once the focus item is near an edge, and every follow camera worth the
+    /// name has a dead zone. A frame that creeps along with every keystroke
+    /// reads as drift, and it makes an estimated caret position look wrong in
+    /// a way a still frame does not. Zero follows continuously.
+    var deadZone: Double = 0.45
+    /// How long the frame takes to catch up once the caret has left the zone.
+    var catchUp: Double = 0.45
     /// Seconds of stillness that ends a run of typing.
     var gap: Double = 1.1
     /// How long the frame holds after the last keypress before releasing.

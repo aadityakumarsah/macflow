@@ -1234,6 +1234,7 @@ final class FocusFlowTests {
         even.hold = 0.8
         even.advancePerKey = 0.008
         even.maxTravel = 0.5
+        even.deadZone = 0          // continuous, which is what this part measures
         let steady = (0..<30).map { TypingEvent(time: 2 + Double($0) * 0.12) }   // 2.00 … 5.48
         let middle = [RecordedClick(time: 1.8, x: 0.45, y: 0.5)]
         guard let run = MotionEngine.typingFollows(typing: steady, clicks: middle, samples: samples,
@@ -1253,6 +1254,41 @@ final class FocusFlowTests {
         // It arrives where the keys say, with the last key, and then holds.
         XCTAssertEqual(centre(5.48), 0.45 + Double(steady.count) * even.advancePerKey, accuracy: 0.01)
         XCTAssertEqual(centre(5.8), centre(5.48), accuracy: 0.0001)
+
+        // With a dead zone — the default, and how a camera follows anything —
+        // the frame does not creep. It holds while the caret crosses the band,
+        // catches up in one move, and holds again, and it never runs past the
+        // distance the keys account for.
+        var zoned = even
+        zoned.deadZone = 0.5
+        zoned.catchUp = 0.4
+        guard let held = MotionEngine.typingFollows(typing: steady, clicks: middle, samples: samples,
+                                                    duration: 12, settings: zoned).first,
+              let band = held.followBand else {
+            XCTFail("a dead-zone run produced no follow"); return
+        }
+        func heldCentre(_ time: Double) -> Double {
+            Double(MotionEngine.viewport(at: time, segments: [held], samples: samples,
+                                         crop: ContentRegion()).midX)
+        }
+        // Still at the start: the caret is crossing the first half-band.
+        XCTAssertEqual(heldCentre(2.3), heldCentre(2.0), accuracy: 0.0005)
+        // And it has moved by the end of the run, by about a whole band.
+        let shifted = heldCentre(5.48) - heldCentre(2.0)
+        XCTAssertGreaterThan(shifted, band * 0.8)
+        XCTAssertLessThan(shifted, (held.endX ?? 0) - held.x + 0.0001)
+
+        // Somewhere in the run there is a stretch where nothing moves at all,
+        // which is the whole point of a dead zone.
+        let steps = stride(from: 2.0, through: 5.48, by: 0.04).map(heldCentre)
+        let still = zip(steps, steps.dropFirst()).filter { abs($0.1 - $0.0) < 0.0002 }.count
+        if still < steps.count / 3 {
+            XCTFail("the frame crept along with the typing instead of holding and catching up")
+        }
+        // It never runs backwards.
+        if zip(steps, steps.dropFirst()).contains(where: { $0.1 < $0.0 - 0.0002 }) {
+            XCTFail("the frame moved backwards during a run of typing")
+        }
 
         // Capped, the slide stops where the cap is reached rather than being
         // stretched thin across the whole run: travel per key means the same

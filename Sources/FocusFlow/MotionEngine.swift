@@ -55,7 +55,13 @@ enum MotionEngine {
                 // inside the frame whatever is asked for.
                 let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
                 let progress = min(1, max(0, (time - segment.start) / max(0.01, travelling)))
-                x += ((segment.endX ?? x) - x) * progress
+                let total = (segment.endX ?? x) - x
+                x += MotionEngine.followedCaret(distance: total * progress,
+                                                total: total,
+                                                band: segment.followBand ?? 0,
+                                                settle: segment.followSettle ?? 0.45,
+                                                over: travelling,
+                                                curve: segment.curve ?? .smooth)
                 y = segment.endY ?? y
             } else if segment.kind == .pan {
                 let progress = (segment.curve ?? .smooth).value((time - segment.start) / max(0.01, segment.duration))
@@ -84,6 +90,37 @@ enum MotionEngine {
         let y = min(1 - size, max(0, cy / weight - size / 2))
         return CGRect(x: x, y: y, width: size, height: size)
     }
+    /// Where the frame sits when the caret has travelled `distance`.
+    ///
+    /// Not on the caret. A frame that slides a little with every keystroke
+    /// reads as drift rather than as a camera move, and it puts an estimated
+    /// caret position — which is all this can ever be — under constant
+    /// scrutiny. So the frame holds while the caret crosses a band of what is
+    /// on screen, and when the caret reaches the edge of that band the frame
+    /// catches up by one band, putting the caret back at the other side with
+    /// the words just written still in view. Hold, move, hold: the way Apple's
+    /// own Zoom follows the focus item, and the dead zone every follow camera
+    /// has. A band of zero slides continuously, for anyone who wants that.
+    ///
+    /// `over` is how long the caret takes to cross the whole distance, which
+    /// is what turns a catch-up in seconds into a share of a band.
+    static func followedCaret(distance: Double, total: Double, band: Double,
+                              settle: Double, over: Double, curve: MotionCurve) -> Double {
+        guard band > 0.001, total > 0.001 else { return distance }
+        // Seconds the caret spends crossing one band, and so how much of a
+        // band the frame is still moving for.
+        let bandTime = over * band / total
+        let share = min(1, max(0.05, settle / max(0.01, bandTime)))
+        // Half a band of grace first: the caret starts in the middle of the
+        // frame, so it reaches the edge after half a band, and every band
+        // thereafter.
+        let bands = distance / band + 0.5
+        let crossed = bands.rounded(.down)
+        let through = bands - crossed
+        let moved = max(0, crossed - 1 + curve.value(min(1, through / share)))
+        return min(total, band * moved)
+    }
+
     /// How long a zoom lingers after the click that caused it, and how long
     /// it takes to settle at each end. The hold is what decides when the
     /// frame starts pulling back, so it is the number to shorten for a
@@ -175,17 +212,23 @@ enum MotionEngine {
             let travel = min(settings.maxTravel, Double(run.count) * perKey)
             let keysToCap = Int((travel / perKey).rounded(.up))
             let travelEnds = keysToCap < run.count ? run[max(1, keysToCap)] : last
+            let zoom = max(1.05, min(4, settings.zoom))
             result.append(EditSegment(kind: .typing,
                                       start: start,
                                       duration: length,
-                                      intensity: max(1.05, min(4, settings.zoom)),
+                                      intensity: zoom,
                                       x: anchorX,
                                       y: anchorY,
                                       transition: 0.45,
                                       curve: settings.curve,
                                       endX: min(1, anchorX + travel),
                                       endY: anchorY,
-                                      travelFraction: min(1, max(0.05, (travelEnds - start) / max(0.01, length)))))
+                                      travelFraction: min(1, max(0.05, (travelEnds - start) / max(0.01, length))),
+                                      // The band is a share of what is on
+                                      // screen, which is what the zoom leaves
+                                      // of the frame.
+                                      followBand: max(0, settings.deadZone) / zoom,
+                                      followSettle: max(0.05, settings.catchUp)))
         }
         return result
     }

@@ -561,6 +561,8 @@ struct TypingFollowInspector: View {
                 InspectorSlider(title: "Zoom", value: $model.typingFollow.zoom, range: 1.05...3.2, suffix: "×")
                 InspectorSlider(title: "Travel per key", value: $model.typingFollow.advancePerKey, range: 0.002...0.03, suffix: "")
                 InspectorSlider(title: "Max travel", value: $model.typingFollow.maxTravel, range: 0.05...0.8, suffix: "")
+                InspectorSlider(title: "Hold still until", value: $model.typingFollow.deadZone, range: 0...1, suffix: "")
+                InspectorSlider(title: "Catch up over", value: $model.typingFollow.catchUp, range: 0.15...1.2, suffix: "s")
                 InspectorSlider(title: "Hold after", value: $model.typingFollow.hold, range: 0...2.5, suffix: "s")
                 InspectorSlider(title: "Pause splits run", value: $model.typingFollow.gap, range: 0.3...3, suffix: "s")
 
@@ -568,7 +570,7 @@ struct TypingFollowInspector: View {
                     ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
                 }
 
-                Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. It keeps pace with them and stops with the last one. Adjust **Travel per key** if it runs ahead of or behind the text.")
+                Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. The frame holds still while the caret crosses **Hold still until** — a share of what is on screen — and then catches up in one move, rather than creeping along with every keystroke. Zero follows the caret continuously. Adjust **Travel per key** if the frame moves ahead of or behind the text.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
