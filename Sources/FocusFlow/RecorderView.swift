@@ -362,6 +362,7 @@ struct RecorderView: View {
                     let cameraURL = await cameraRecorder.stop()
                     cameraRecorder.shutdown()
                     var metadata = RecordingMetadata(clicks: recorder.clicks, pointerSamples: recorder.pointerSamples, keystrokes: recorder.keystrokes, sourceWidth: recorder.sourceSize.width, sourceHeight: recorder.sourceSize.height, sourceName: recorder.sourceName, cameraFileName: cameraURL?.lastPathComponent, cameraTimeOffset: recorder.firstFrameDate.flatMap { start in cameraRecorder.recordingStartedAt.map { start.timeIntervalSince($0) } }, sourcePointWidth: recorder.sourcePointSize.width, sourcePointHeight: recorder.sourcePointSize.height)
+                    metadata.typingEvents = recorder.typingEvents
                     metadata.embeddedCursor = false
                     self.completedURL = url
                     self.completedMetadata = metadata

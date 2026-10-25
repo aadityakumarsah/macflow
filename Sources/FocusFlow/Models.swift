@@ -2,17 +2,18 @@ import Foundation
 import CoreGraphics
 
 enum SegmentKind: String, Codable, CaseIterable, Identifiable {
-    case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline
+    case zoom, speed, blur, camera, pan, spotlight, callout, pixelate, outline, typing
     var id: String { rawValue }
-    static let availableCases: [SegmentKind] = [.zoom, .spotlight, .outline, .callout, .blur, .pixelate]
+    static let availableCases: [SegmentKind] = [.zoom, .typing, .spotlight, .outline, .callout, .blur, .pixelate]
     var title: String { rawValue.capitalized }
     var symbol: String {
-        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled" }
+        switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled"; case .typing: "text.cursor" }
     }
     var detail: String {
         switch self {
         case .zoom: "Move closer to a detail"
         case .pan: "Glide across the frame"
+        case .typing: "Follow the typing"
         case .spotlight: "Dim everything around a detail"
         case .outline: "Draw an accent frame"
         case .callout: "Add a short text label"
@@ -232,8 +233,18 @@ struct ProjectDocument: Codable {
     var exportOptions: ExportOptions? = nil
     var grade: GradeSettings? = nil
     var cameraMove: CameraMoveSettings? = nil
+    var typingFollow: TypingFollowSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
+}
+
+/// When a key was pressed, and nothing else.
+///
+/// Typing cannot be followed without knowing that it is happening, but what
+/// was typed is none of the app's business — so only the instant is kept. No
+/// character, no key code, nothing that could reconstruct the text.
+struct TypingEvent: Codable, Equatable {
+    var time: Double
 }
 
 struct RecordedClick: Codable {
@@ -276,6 +287,7 @@ struct RecordingMetadata: Codable {
     var sourcePointWidth: Double? = nil
     var sourcePointHeight: Double? = nil
     var embeddedCursor: Bool? = nil
+    var typingEvents: [TypingEvent]? = nil
 
     static let empty = RecordingMetadata(clicks: [], pointerSamples: [], keystrokes: [], sourceWidth: 0, sourceHeight: 0, sourceName: "", cameraFileName: nil)
 
@@ -292,7 +304,7 @@ struct RecordingMetadata: Codable {
         self.sourcePointWidth = sourcePointWidth; self.sourcePointHeight = sourcePointHeight
     }
 
-    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight, embeddedCursor }
+    enum CodingKeys: String, CodingKey { case clicks, pointerSamples, keystrokes, sourceWidth, sourceHeight, sourceName, cameraFileName, cameraTimeOffset, cameraPresentation, sourcePointWidth, sourcePointHeight, embeddedCursor, typingEvents }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         clicks = try values.decodeIfPresent([RecordedClick].self, forKey: .clicks) ?? []
@@ -307,5 +319,6 @@ struct RecordingMetadata: Codable {
         sourcePointWidth = try values.decodeIfPresent(Double.self, forKey: .sourcePointWidth)
         sourcePointHeight = try values.decodeIfPresent(Double.self, forKey: .sourcePointHeight)
         embeddedCursor = try values.decodeIfPresent(Bool.self, forKey: .embeddedCursor)
+        typingEvents = try values.decodeIfPresent([TypingEvent].self, forKey: .typingEvents)
     }
 }

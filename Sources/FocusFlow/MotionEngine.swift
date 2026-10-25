@@ -33,7 +33,7 @@ enum MotionEngine {
     static func viewport(at time: Double, segments: [EditSegment], samples: [PointerSample], crop: ContentRegion) -> CGRect {
         let r = crop.bounded
         var weight = 0.0, zoomSum = 0.0, cx = 0.0, cy = 0.0
-        for segment in segments where segment.kind == .zoom || segment.kind == .pan {
+        for segment in segments where segment.kind == .zoom || segment.kind == .pan || segment.kind == .typing {
             let w = envelope(segment, time: time)
             guard w > 0 else { continue }
             var x = segment.x, y = segment.y
@@ -43,6 +43,13 @@ enum MotionEngine {
                 x = region.midX; y = region.midY
                 targetZoom = min(targetZoom, 0.86 / region.width, 0.72 / region.height)
                 targetZoom = max(1.15, targetZoom)
+            } else if segment.kind == .typing {
+                // Slides from where typing began toward where the caret has
+                // reached. endX carries the far end; the clamp below keeps the
+                // viewport inside the frame whatever is asked for.
+                let progress = (segment.curve ?? .smooth).value((time - segment.start) / max(0.01, segment.duration))
+                x += ((segment.endX ?? x) - x) * progress
+                y = segment.endY ?? y
             } else if segment.kind == .pan {
                 let progress = (segment.curve ?? .smooth).value((time - segment.start) / max(0.01, segment.duration))
                 x += ((segment.endX ?? 0.7) - x) * progress * 0.55
@@ -77,6 +84,63 @@ enum MotionEngine {
     static let clickZoomHold: Double = 1.15
     static let clickZoomTransition: Double = 0.6
 
+    /// Turns runs of typing into segments that follow the caret.
+    ///
+    /// Where typing happens is not reported by anything: the pointer usually
+    /// sits still while someone types, and only the insertion point moves. So
+    /// a run is anchored at the last click before it — which is where the
+    /// caret was put — and travels right by an amount standing in for the
+    /// characters since. It is an estimate of a position nothing measures,
+    /// which is why how far it travels is adjustable and why the travel is
+    /// capped rather than trusted.
+    static func typingFollows(typing: [TypingEvent],
+                              clicks: [RecordedClick],
+                              samples: [PointerSample],
+                              duration: Double,
+                              settings: TypingFollowSettings) -> [EditSegment] {
+        guard settings.enabled, !typing.isEmpty, duration > 0 else { return [] }
+        let ordered = typing.map(\.time).filter { $0 >= 0 && $0 < duration }.sorted()
+        guard !ordered.isEmpty else { return [] }
+
+        // Split into runs separated by a pause.
+        var runs: [[Double]] = []
+        var current: [Double] = []
+        for time in ordered {
+            if let last = current.last, time - last > settings.gap {
+                runs.append(current); current = []
+            }
+            current.append(time)
+        }
+        if !current.isEmpty { runs.append(current) }
+
+        var result: [EditSegment] = []
+        for run in runs {
+            // One or two keys is a correction, not a passage of typing.
+            guard run.count >= 4, let first = run.first, let last = run.last else { continue }
+            let length = min(duration - max(0, first - 0.25), (last + settings.hold) - max(0, first - 0.25))
+            guard length >= 0.5 else { continue }
+
+            // Anchor: the last click before typing started, else the pointer.
+            let anchorClick = clicks.last { $0.time <= first + 0.1 }
+            let anchorSample = CursorMotion.sample(at: first, samples: samples, smoothed: true)
+            let anchorX = anchorClick?.x ?? anchorSample?.x ?? 0.3
+            let anchorY = anchorClick?.y ?? anchorSample?.y ?? 0.5
+
+            let travel = min(settings.maxTravel, Double(run.count) * settings.advancePerKey)
+            result.append(EditSegment(kind: .typing,
+                                      start: max(0, first - 0.25),
+                                      duration: length,
+                                      intensity: max(1.05, min(4, settings.zoom)),
+                                      x: anchorX,
+                                      y: anchorY,
+                                      transition: 0.45,
+                                      curve: settings.curve,
+                                      endX: min(1, anchorX + travel),
+                                      endY: anchorY))
+        }
+        return result
+    }
+
     static func autoZooms(clicks: [RecordedClick], duration: Double) -> [EditSegment] {
         var result: [EditSegment] = []
         for click in clicks.sorted(by: { $0.time < $1.time }) where click.time >= 0 && click.time < duration {
@@ -93,7 +157,11 @@ enum MotionEngine {
     /// Build a restrained mix of motion from actual interactions. Text drags
     /// use the recorded I-beam and button state. Legacy captures without a
     /// button state cannot reliably distinguish a selection from hovering.
-    static func autoEdits(clicks: [RecordedClick], samples: [PointerSample], duration: Double) -> [EditSegment] {
+    static func autoEdits(clicks: [RecordedClick],
+                          samples: [PointerSample],
+                          duration: Double,
+                          typing: [TypingEvent] = [],
+                          typingFollow: TypingFollowSettings = TypingFollowSettings()) -> [EditSegment] {
         guard duration > 0 else { return [] }
         let ordered = samples.sorted { $0.time < $1.time }
         var selections: [(PointerSample, PointerSample)] = []
@@ -137,6 +205,16 @@ enum MotionEngine {
                                       transition: clickZoomTransition))
         }
 
+        let follows = typingFollows(typing: typing, clicks: clicks, samples: samples,
+                                    duration: duration, settings: typingFollow)
+        if !follows.isEmpty {
+            // A click zoom inside a typing run would pull against the slide,
+            // so the run owns its stretch of the timeline.
+            result.removeAll { zoom in
+                follows.contains { $0.start - 0.3 <= zoom.start && zoom.start <= $0.end }
+            }
+            result.append(contentsOf: follows)
+        }
         return result.sorted { $0.start < $1.start }
     }
 }

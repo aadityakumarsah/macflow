@@ -50,6 +50,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var pointerTimer: Timer?
     private var monitor: Any?
     private(set) var clicks: [RecordedClick] = []
+    private(set) var typingEvents: [TypingEvent] = []
     private(set) var pointerSamples: [PointerSample] = []
     private(set) var keystrokes: [KeystrokeEvent] = []
     private(set) var sourceSize = CGSize.zero
@@ -96,6 +97,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         var height: Int
         targetPID = nil; targetWindowID = nil
         firstFrameDate = nil
+        typingEvents = []
         switch resolvedTarget {
         case .display(let display):
             filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: [])
@@ -272,6 +274,10 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
             let time = key.time - delta
             return time >= 0 ? KeystrokeEvent(time: time, text: key.text) : nil
         }
+        typingEvents = typingEvents.compactMap { event in
+            let time = event.time - delta
+            return time >= 0 ? TypingEvent(time: time) : nil
+        }
     }
 
     @MainActor
@@ -305,6 +311,14 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private func recordKeystroke(_ event: NSEvent) {
         guard isRecording else { return }
         if let targetPID, NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID { return }
+
+        // That a key was pressed, and when. Following typing needs to know it
+        // is happening; it does not need to know what was written, so no
+        // character and no key code is kept — only the instant.
+        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            typingEvents.append(TypingEvent(time: Date().timeIntervalSince(recordingStart)))
+        }
+
         // Store shortcut badges only; never collect ordinary typed text.
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false,
               let characters = event.charactersIgnoringModifiers, !characters.isEmpty else { return }

@@ -543,3 +543,50 @@ struct CameraMoveInspector: View {
         }
     }
 }
+
+/// Typing follow: the frame zooms to the line being written and slides along
+/// with the caret. Everything about it is adjustable after the fact, because
+/// where the caret actually is cannot be measured — only estimated.
+struct TypingFollowInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    private var captured: Int { model.recordingMetadata.typingEvents?.count ?? 0 }
+
+    var body: some View {
+        InspectorSection(title: "TYPING") {
+            Toggle("Follow typing", isOn: $model.typingFollow.enabled)
+                .help("Zooms to the line being written and slides horizontally as the caret advances.")
+
+            if model.typingFollow.enabled {
+                InspectorSlider(title: "Zoom", value: $model.typingFollow.zoom, range: 1.05...3.2, suffix: "×")
+                InspectorSlider(title: "Travel per key", value: $model.typingFollow.advancePerKey, range: 0.002...0.03, suffix: "")
+                InspectorSlider(title: "Max travel", value: $model.typingFollow.maxTravel, range: 0.05...0.8, suffix: "")
+                InspectorSlider(title: "Hold after", value: $model.typingFollow.hold, range: 0...2.5, suffix: "s")
+                InspectorSlider(title: "Pause splits run", value: $model.typingFollow.gap, range: 0.3...3, suffix: "s")
+
+                Picker("Easing", selection: $model.typingFollow.curve) {
+                    ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
+                }
+
+                Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. Adjust **Travel per key** if it runs ahead of or behind the text.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if model.videoURL != nil {
+                Text(captured > 0
+                     ? "\(captured) keypresses recorded with this video."
+                     : "No typing was recorded with this video, so there is nothing to follow.")
+                    .font(.caption2)
+                    .foregroundStyle(captured > 0 ? Color.secondary : Color.orange)
+            }
+
+            Button { model.rebuildAutomaticEdit() } label: {
+                Label("Rebuild automatic edit", systemImage: "sparkles")
+            }
+            .font(.caption)
+            .disabled(model.videoURL == nil)
+            .help("Regenerates click zooms and typing follows with the current settings.")
+        }
+    }
+}

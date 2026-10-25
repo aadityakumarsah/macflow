@@ -29,6 +29,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testEditableCursorSizeHighlightAndClickRendering()
             tests.testAutomaticEditsProduceZoomsOnly()
             tests.testClickZoomHoldsStillUntilThePointerLeavesTheFrame()
+            tests.testTypingFollowTracksRunsAndStaysInFrame()
             try tests.testPixelateAndOutlineRenderInsideSelectedRegion()
             await tests.testCursorResetIsUndoable()
             try await tests.testRecordedCursorNeverGetsSecondOverlay()

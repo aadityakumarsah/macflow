@@ -144,6 +144,24 @@ struct CursorAppearance: Codable, Equatable {
     }
 }
 
+/// Following the caret while someone types.
+struct TypingFollowSettings: Codable, Equatable {
+    var enabled: Bool = true
+    /// How close the frame gets to the line being written.
+    var zoom: Double = 1.9
+    /// How far the frame travels per keypress, as a fraction of the width.
+    /// A caret advances by roughly one character, and this is the stand-in
+    /// for a character width — the recording does not report one.
+    var advancePerKey: Double = 0.011
+    /// The furthest it will travel from where typing began.
+    var maxTravel: Double = 0.42
+    /// Seconds of stillness that ends a run of typing.
+    var gap: Double = 1.1
+    /// How long the frame holds after the last keypress before releasing.
+    var hold: Double = 0.7
+    var curve: MotionCurve = .smooth
+}
+
 /// A move of the frame itself through space, rather than of the camera within
 /// the recording.
 enum CameraMove: String, Codable, CaseIterable, Identifiable {

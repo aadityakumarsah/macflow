@@ -1153,6 +1153,89 @@ final class FocusFlowTests {
         XCTAssertGreaterThan(edgeSharpness(focused, column: 40), edgeSharpness(focused, column: 360))
     }
 
+    /// Typing follow has to find runs of typing, anchor each at the insertion
+    /// point, travel right with the keys, stay inside the frame, and leave a
+    /// recording with no typing completely alone.
+    func testTypingFollowTracksRunsAndStaysInFrame() {
+        var settings = TypingFollowSettings()
+        settings.gap = 1.0
+        settings.advancePerKey = 0.01
+        settings.maxTravel = 0.4
+
+        // Two bursts, well apart, with a click before each.
+        let firstRun = (0..<20).map { TypingEvent(time: 2 + Double($0) * 0.12) }
+        let secondRun = (0..<12).map { TypingEvent(time: 9 + Double($0) * 0.12) }
+        let clicks = [RecordedClick(time: 1.6, x: 0.22, y: 0.4),
+                      RecordedClick(time: 8.7, x: 0.3, y: 0.7)]
+        let samples = (0..<80).map { PointerSample(time: Double($0) * 0.2, x: 0.5, y: 0.5) }
+
+        let follows = MotionEngine.typingFollows(typing: firstRun + secondRun, clicks: clicks,
+                                                 samples: samples, duration: 14, settings: settings)
+        XCTAssertEqual(follows.count, 2)
+        XCTAssertTrue(follows.allSatisfy { $0.kind == .typing })
+
+        // Anchored where the caret was put, not where the pointer sat.
+        XCTAssertEqual(follows[0].x, 0.22, accuracy: 0.001)
+        XCTAssertEqual(follows[0].y, 0.4, accuracy: 0.001)
+        XCTAssertEqual(follows[1].y, 0.7, accuracy: 0.001)
+
+        // Travels rightward, further for the longer burst.
+        XCTAssertGreaterThan(follows[0].endX ?? 0, follows[0].x)
+        XCTAssertGreaterThan((follows[0].endX ?? 0) - follows[0].x,
+                             (follows[1].endX ?? 0) - follows[1].x)
+
+        // Travel is capped, so a very long passage cannot run off the edge.
+        var capped = settings
+        capped.maxTravel = 0.1
+        let long = (0..<400).map { TypingEvent(time: 1 + Double($0) * 0.05) }
+        let cappedFollows = MotionEngine.typingFollows(typing: long, clicks: clicks, samples: samples,
+                                                      duration: 40, settings: capped)
+        XCTAssertTrue(cappedFollows.allSatisfy { ($0.endX ?? 0) - $0.x <= 0.1001 })
+        XCTAssertTrue(cappedFollows.allSatisfy { ($0.endX ?? 0) <= 1 })
+
+        // Whatever is asked for, the rendered viewport stays inside the frame.
+        for follow in cappedFollows + follows {
+            for step in 0...10 {
+                let time = follow.start + follow.duration * Double(step) / 10
+                let box = MotionEngine.viewport(at: time, segments: [follow], samples: samples, crop: ContentRegion())
+                XCTAssertTrue(box.minX >= -0.0001 && box.maxX <= 1.0001)
+                XCTAssertTrue(box.minY >= -0.0001 && box.maxY <= 1.0001)
+            }
+        }
+
+        // The frame actually moves across the run, rather than sitting still.
+        let follow = follows[0]
+        let early = MotionEngine.viewport(at: follow.start + 0.3, segments: [follow], samples: samples, crop: ContentRegion())
+        let late = MotionEngine.viewport(at: follow.end - 0.3, segments: [follow], samples: samples, crop: ContentRegion())
+        XCTAssertGreaterThan(Double(late.midX), Double(early.midX))
+        // And it is zoomed in while doing so.
+        XCTAssertLessThan(Double(late.width), 1)
+
+        // A couple of stray keys is a correction, not a passage of typing.
+        let stray = [TypingEvent(time: 3), TypingEvent(time: 3.1)]
+        XCTAssertTrue(MotionEngine.typingFollows(typing: stray, clicks: clicks, samples: samples,
+                                                 duration: 10, settings: settings).isEmpty)
+
+        // Switched off, or with nothing typed, it produces nothing.
+        var disabled = settings
+        disabled.enabled = false
+        XCTAssertTrue(MotionEngine.typingFollows(typing: firstRun, clicks: clicks, samples: samples,
+                                                 duration: 14, settings: disabled).isEmpty)
+        XCTAssertTrue(MotionEngine.typingFollows(typing: [], clicks: clicks, samples: samples,
+                                                 duration: 14, settings: settings).isEmpty)
+
+        // In the full automatic pass, a typing run owns its stretch: no click
+        // zoom is left inside it to fight the slide.
+        let edits = MotionEngine.autoEdits(clicks: clicks + [RecordedClick(time: 2.5, x: 0.5, y: 0.5)],
+                                           samples: samples, duration: 14,
+                                           typing: firstRun + secondRun, typingFollow: settings)
+        let typingSpans = edits.filter { $0.kind == .typing }
+        XCTAssertEqual(typingSpans.count, 2)
+        for span in typingSpans {
+            XCTAssertTrue(!edits.contains { $0.kind == .zoom && $0.start >= span.start - 0.3 && $0.start <= span.end })
+        }
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in
