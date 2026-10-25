@@ -199,6 +199,49 @@ final class CompositionInstruction: NSObject, AVVideoCompositionInstructionProto
 
 final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     private let context = CIContext(options: [.cacheIntermediates: false])
+
+    /// The last few source frames, newest last.
+    ///
+    /// Content motion — a scroll — moves the page while the viewport stays
+    /// still, so it cannot be measured from the camera path. Mixing the
+    /// neighbouring frames in gives it a real shutter instead, which is what
+    /// stops scrolling strobing. Requests can arrive on more than one thread,
+    /// hence the lock.
+    private let historyLock = NSLock()
+    private var history: [(time: Double, image: CIImage)] = []
+
+    private func rememberAndBlend(_ image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
+        historyLock.lock()
+        defer { historyLock.unlock() }
+
+        let wanted = settings.motion.scrollBlur != false
+        let strength = max(0, min(1, settings.motion.scrollBlurStrength ?? 0.5))
+        let step = 1 / Double(max(1, settings.exportOptions.frameRate.rawValue))
+
+        // A seek or a jump leaves the history unrelated to this frame.
+        if let last = history.last, time <= last.time || time - last.time > step * 2.5 {
+            history.removeAll(keepingCapacity: true)
+        }
+
+        var result = image
+        if wanted && strength > 0.01 {
+            let depth = settings.motion.scrollBlurLong == true ? 2 : 1
+            let usable = history.suffix(depth).reversed()
+            // Each neighbour contributes less than the one before it.
+            var weight = strength * 0.5
+            for neighbour in usable {
+                result = result.applyingFilter("CIMix", parameters: [
+                    kCIInputBackgroundImageKey: neighbour.image,
+                    kCIInputAmountKey: weight,
+                ]).cropped(to: image.extent)
+                weight *= 0.55
+            }
+        }
+
+        history.append((time, image))
+        if history.count > 3 { history.removeFirst(history.count - 3) }
+        return result
+    }
     var sourcePixelBufferAttributes: [String: Any]? = [
         kCVPixelBufferPixelFormatTypeKey as String: [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
     ]
@@ -207,8 +250,21 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     ]
     private var renderContext: AVVideoCompositionRenderContext?
 
-    func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) { renderContext = newRenderContext }
-    func cancelAllPendingVideoCompositionRequests() { context.clearCaches() }
+    /// Exposes the blending path to the checks, which have no AVFoundation
+    /// request to drive it with.
+    func blendForTesting(_ image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
+        rememberAndBlend(image, at: time, settings: settings)
+    }
+
+    func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {
+        renderContext = newRenderContext
+        historyLock.lock(); history.removeAll(); historyLock.unlock()
+    }
+
+    func cancelAllPendingVideoCompositionRequests() {
+        context.clearCaches()
+        historyLock.lock(); history.removeAll(); historyLock.unlock()
+    }
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         autoreleasepool {
@@ -220,7 +276,10 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let settings = instruction.settings
             let canvas = CGRect(origin: .zero, size: settings.canvasSize)
             let time = request.compositionTime.seconds * settings.playbackRate
-            let source = normalized(CIImage(cvPixelBuffer: sourceBuffer).transformed(by: instruction.screenTransform))
+            var source = normalized(CIImage(cvPixelBuffer: sourceBuffer).transformed(by: instruction.screenTransform))
+            // Applied to the recording only: the cursor and the window frame
+            // are drawn later and must stay sharp.
+            source = rememberAndBlend(source, at: request.compositionTime.seconds, settings: settings)
             let camera = (instruction.cameraTrackID == kCMPersistentTrackID_Invalid ? nil : request.sourceFrame(byTrackID: instruction.cameraTrackID)).map {
                 normalized(CIImage(cvPixelBuffer: $0).transformed(by: instruction.cameraTransform))
             }

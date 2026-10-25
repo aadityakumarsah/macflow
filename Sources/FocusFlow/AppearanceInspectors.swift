@@ -30,9 +30,20 @@ struct MotionAppearanceInspector: View {
     var body: some View {
         InspectorSection(title: "MOTION") {
             Toggle("Animated canvas and progress line", isOn: Binding(get: { model.motionAppearance.ambientGraphics != false }, set: { model.motionAppearance.ambientGraphics = $0 }))
-            Toggle("Automatic motion blur", isOn: Binding(get: { model.motionAppearance.automaticMotionBlur != false }, set: { model.motionAppearance.automaticMotionBlur = $0 }))
+            Toggle("Camera motion blur", isOn: Binding(get: { model.motionAppearance.automaticMotionBlur != false }, set: { model.motionAppearance.automaticMotionBlur = $0 }))
+                .help("Blurs the zooms and camera moves FocusFlow applies.")
             if model.motionAppearance.automaticMotionBlur != false {
-                InspectorSlider(title: "Blur strength", value: Binding(get: { model.motionAppearance.motionBlurStrength ?? 0.55 }, set: { model.motionAppearance.motionBlurStrength = $0 }), range: 0...1, suffix: "")
+                InspectorSlider(title: "Camera blur", value: Binding(get: { model.motionAppearance.motionBlurStrength ?? 0.55 }, set: { model.motionAppearance.motionBlurStrength = $0 }), range: 0...1, suffix: "")
+            }
+
+            Toggle("Smooth scrolling", isOn: Binding(get: { model.motionAppearance.scrollBlur != false }, set: { model.motionAppearance.scrollBlur = $0 }))
+                .help("Mixes the neighbouring frames into each one, giving scrolling a real shutter so it stops strobing.")
+            if model.motionAppearance.scrollBlur != false {
+                InspectorSlider(title: "Shutter", value: Binding(get: { model.motionAppearance.scrollBlurStrength ?? 0.5 }, set: { model.motionAppearance.scrollBlurStrength = $0 }), range: 0...1, suffix: "")
+                Toggle("Long shutter", isOn: Binding(get: { model.motionAppearance.scrollBlurLong == true }, set: { model.motionAppearance.scrollBlurLong = $0 }))
+                    .help("Blends two neighbouring frames instead of one. Smoother on fast scrolls, slower to export.")
+                Text("Exporting at 60 fps smooths scrolling further.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             Picker("Entrance", selection: $model.motionAppearance.entrance) { ForEach(EntranceStyle.allCases) { Text($0.rawValue).tag($0) } }
             Toggle("Fade out at end", isOn: $model.motionAppearance.fadeOut)

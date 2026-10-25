@@ -64,6 +64,19 @@ struct MotionAppearance: Codable, Equatable {
     var ambientGraphics: Bool? = false
     var automaticMotionBlur: Bool? = true
     var motionBlurStrength: Double? = 0.55
+
+    /// Blur from the content itself moving — scrolling, mostly.
+    ///
+    /// Separate from the blur above, which is driven by the camera moves
+    /// FocusFlow applies. A scroll moves the page while the viewport stays
+    /// put, so that one never sees it, and scrolling strobes instead.
+    var scrollBlur: Bool? = true
+    /// How much of the neighbouring frames is mixed in: a shutter angle in
+    /// all but name.
+    var scrollBlurStrength: Double? = 0.5
+    /// Blend two neighbours rather than one. Smoother on fast scrolls, and
+    /// twice the work per frame.
+    var scrollBlurLong: Bool? = false
 }
 enum PointerStyle: String, Codable, CaseIterable, Identifiable {
     case macOS = "macOS", light = "Pearl", dark = "Obsidian", accent = "Accent"

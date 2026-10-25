@@ -1001,6 +1001,80 @@ final class FocusFlowTests {
         XCTAssertNil(BuiltInBackground.url(for: "/some/local/file.png"))
     }
 
+    /// Scroll blur has to come from the frames themselves, because a scroll
+    /// moves the page while the viewport stays put — the camera path cannot
+    /// see it. So: moving content must soften, still content must not.
+    func testScrollBlurSoftensMovingContentOnly() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 320, height: 240)
+
+        // A hard horizontal edge, which is what a scroll smears.
+        func striped(offsetY: CGFloat) -> CIImage {
+            let dark = CIImage(color: CIColor(red: 0.05, green: 0.05, blue: 0.05)).cropped(to: canvas)
+            let band = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95))
+                .cropped(to: CGRect(x: 0, y: 120 + offsetY, width: 320, height: 60))
+            return band.composited(over: dark)
+        }
+
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 10, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.automaticMotionBlur = false
+        settings.motion.scrollBlur = true
+        settings.motion.scrollBlurStrength = 1
+
+        /// Feeds frames through the compositor's own blending path in order.
+        func run(offsets: [CGFloat], settings: ExportSettings) throws -> [UInt8] {
+            let compositor = FocusFlowCompositor()
+            var last: CIImage = striped(offsetY: 0)
+            for (index, offset) in offsets.enumerated() {
+                let blended = compositor.blendForTesting(striped(offsetY: offset),
+                                                         at: Double(index) / 30.0,
+                                                         settings: settings)
+                last = blended
+            }
+            let image = try XCTUnwrap(context.createCGImage(last, from: canvas))
+            return pixels(image)
+        }
+
+        // How many rows are neither black nor white — the smeared edge.
+        func transitional(_ data: [UInt8]) -> Int {
+            var count = 0
+            for row in 0..<240 {
+                let v = Int(data[(row * 320 + 160) * 4])
+                if v > 40 && v < 215 { count += 1 }
+            }
+            return count
+        }
+
+        // Content moving 12px per frame.
+        let moving = try run(offsets: [0, 12, 24, 36], settings: settings)
+        // The same content, standing still.
+        let still = try run(offsets: [0, 0, 0, 0], settings: settings)
+
+        XCTAssertGreaterThan(transitional(moving), transitional(still) + 4)
+
+        // Turned off, moving content must be as crisp as still content.
+        var off = settings
+        off.motion.scrollBlur = false
+        let movingUnblurred = try run(offsets: [0, 12, 24, 36], settings: off)
+        XCTAssertLessThan(transitional(movingUnblurred), transitional(moving))
+
+        // Strength must actually scale it.
+        var weak = settings
+        weak.motion.scrollBlurStrength = 0.15
+        let gentle = try run(offsets: [0, 12, 24, 36], settings: weak)
+        XCTAssertLessThanOrEqual(transitional(gentle), transitional(moving))
+
+        // A jump in time is a seek: the previous frame is unrelated and must
+        // not be smeared into this one.
+        let compositor = FocusFlowCompositor()
+        _ = compositor.blendForTesting(striped(offsetY: 0), at: 0, settings: settings)
+        let afterSeek = compositor.blendForTesting(striped(offsetY: 60), at: 9, settings: settings)
+        let seekPixels = pixels(try XCTUnwrap(context.createCGImage(afterSeek, from: canvas)))
+        XCTAssertLessThan(transitional(seekPixels), transitional(moving))
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in
