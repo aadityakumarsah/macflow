@@ -950,6 +950,24 @@ final class FocusFlowTests {
         XCTAssertEqual(beforeStart.start, 0, accuracy: 0.0001)
         let pastEnd = TimelineDrag.resized(origin: segment, leading: false, pointer: 99, duration: duration)
         XCTAssertEqual(pastEnd.start + pastEnd.length, duration, accuracy: 0.0001)
+
+        // A press on the video track is one thing or the other, decided where
+        // it lands: near an end it moves that end, anywhere else it scrubs.
+        // One gesture, so there is nothing for two to disagree about.
+        func press(_ x: Double, from: Double = 4, to: Double = 16) -> TimelineDrag.Grab {
+            TimelineDrag.grab(at: x, trimStart: from, trimEnd: to, duration: 20, width: 400, radius: 13)
+        }
+        XCTAssertEqual(press(80), .start)            // the start sits at 80
+        XCTAssertEqual(press(88), .start)            // and a little to its right
+        XCTAssertEqual(press(320), .end)             // the end sits at 320
+        XCTAssertEqual(press(200), .scrub)           // the middle is a scrub
+        XCTAssertEqual(press(110), .scrub)           // past the grab radius
+        // Where the two are on top of each other, the nearer one wins and
+        // neither is ambiguous.
+        XCTAssertEqual(press(100, from: 5, to: 5.4), .start)
+        XCTAssertEqual(press(112, from: 5, to: 5.4), .end)
+        // Nothing to grab on an empty timeline.
+        XCTAssertEqual(TimelineDrag.grab(at: 40, trimStart: 0, trimEnd: 0, duration: 0, width: 400, radius: 13), .scrub)
     }
 
     /// A custom ratio has to produce the shape asked for, at a sane pixel
@@ -1263,6 +1281,103 @@ final class FocusFlowTests {
             return largest
         }
         XCTAssertGreaterThan(edgeSharpness(focused, column: 40), edgeSharpness(focused, column: 360))
+
+        // The frame can also just be stood somewhere, with no move playing.
+        // Each of these is a different shape on screen from square-on.
+        func shape(_ place: (inout CameraMoveSettings) -> Void) throws -> (Int, Int) {
+            var move = CameraMoveSettings(move: .none, focusBlur: 0)
+            move.blur = .none
+            place(&move)
+            settings.cameraMove = move
+            let data = try frame(0.3)
+            return (litInRow(data, row: 30), litInRow(data, row: 210))
+        }
+        let square = try shape { _ in }
+        XCTAssertEqual(square.0, square.1)
+
+        // Leaning the top away makes the top edge the narrow one, and leaning
+        // the other way turns it over.
+        let leaned = try shape { $0.pitch = 1 }
+        XCTAssertLessThan(leaned.0, leaned.1)
+        let leanedBack = try shape { $0.pitch = -1 }
+        XCTAssertGreaterThan(leanedBack.0, leanedBack.1)
+        // Turning, rolling, panning and pushing in all move the frame. Row
+        // widths cannot see a vertical pan — the frame is just as wide a
+        // little higher up — so these are read off the whole picture.
+        func picture(_ place: (inout CameraMoveSettings) -> Void) throws -> [UInt8] {
+            var move = CameraMoveSettings(move: .none, focusBlur: 0)
+            move.blur = .none
+            place(&move)
+            settings.cameraMove = move
+            return try frame(0.3)
+        }
+        let squarePicture = try picture { _ in }
+        func differs(_ place: (inout CameraMoveSettings) -> Void) throws -> Bool {
+            let image = try picture(place)
+            var total = 0.0
+            for index in stride(from: 0, to: image.count, by: 41) {
+                total += abs(Double(image[index]) - Double(squarePicture[index]))
+            }
+            return total / Double(image.count / 41) > 0.5
+        }
+        XCTAssertTrue(try differs { $0.yaw = 1 })
+        XCTAssertTrue(try differs { $0.roll = 0.6 })
+        XCTAssertTrue(try differs { $0.panY = 0.5 })
+        XCTAssertTrue(try differs { $0.panX = 0.5 })
+        XCTAssertTrue(try differs { $0.zoom = 1.5 })
+        // And standing it square again is the frame it started as.
+        XCTAssertTrue(!(try differs { $0.zoom = 1 }))
+
+        // Each blur softens, and none of them is the same picture as another.
+        func blurred(_ style: FrameBlur) throws -> [UInt8] {
+            var move = CameraMoveSettings(move: .none, focusBlur: 1)
+            move.blur = style
+            move.yaw = 0.6                       // a lean, so depth has an axis
+            settings.cameraMove = move
+            return try frame(0.3)
+        }
+        let plain = try blurred(.none)
+        var seen: [[UInt8]] = [plain]
+        for style in [FrameBlur.depth, .radial, .directional, .tiltShift] {
+            let image = try blurred(style)
+            func difference(_ other: [UInt8]) -> Double {
+                var total = 0.0
+                for index in stride(from: 0, to: image.count, by: 41) { total += abs(Double(image[index]) - Double(other[index])) }
+                return total / Double(image.count / 41)
+            }
+            if difference(plain) < 0.4 { XCTFail("\(style.rawValue) blur left the frame untouched") }
+            for earlier in seen where difference(earlier) < 0.4 {
+                XCTFail("\(style.rawValue) blur renders the same as another style")
+            }
+            seen.append(image)
+        }
+
+        // A tilt shift's sharp band is sharper than the ground above it.
+        var band = CameraMoveSettings(move: .none, focusBlur: 1)
+        band.blur = .tiltShift
+        band.blurFocus = 0.5
+        band.blurBand = 0.2
+        settings.cameraMove = band
+        let shifted = try frame(0.3)
+        func rowDetail(_ data: [UInt8], row: Int) -> Int {
+            var largest = 0
+            for column in 1..<399 {
+                let a = Int(data[(row * 400 + column) * 4]), b = Int(data[(row * 400 + column + 1) * 4])
+                largest = max(largest, abs(a - b))
+            }
+            return largest
+        }
+        XCTAssertGreaterThan(rowDetail(shifted, row: 120), rowDetail(shifted, row: 20))
+
+        // A project written before any of this still opens, and gets the
+        // defaults rather than a failure.
+        let legacyMove = Data("{\"move\":\"Glide across\",\"tilt\":0.8,\"amount\":0.4,\"focusBlur\":0.2,\"duration\":3,\"curve\":\"Silky\",\"holds\":true}".utf8)
+        let restored = try JSONDecoder().decode(CameraMoveSettings.self, from: legacyMove)
+        XCTAssertEqual(restored.move, .glide)
+        XCTAssertEqual(restored.tilt, 0.8, accuracy: 0.0001)
+        XCTAssertEqual(restored.zoom, 1, accuracy: 0.0001)
+        XCTAssertEqual(restored.blur, .depth)
+        XCTAssertTrue(!restored.isPlaced)
     }
 
     /// Typing follow has to find runs of typing, anchor each at the insertion

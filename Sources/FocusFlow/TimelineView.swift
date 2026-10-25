@@ -3,6 +3,10 @@ import SwiftUI
 struct TimelineView: View {
     @EnvironmentObject private var model: EditorModel
     private let labelWidth: CGFloat = 76
+    /// What the press that started on the video track is doing: moving one of
+    /// its ends, or scrubbing. Decided once, where the press landed, and kept
+    /// for the whole drag so the video cannot change what it is doing halfway.
+    @State private var trimDrag: TimelineDrag.Grab = .none
     private var visibleKinds: [SegmentKind] {
         SegmentKind.availableCases.filter { kind in model.segments.contains { $0.kind == kind } }
     }
@@ -44,20 +48,20 @@ struct TimelineView: View {
                                 Rectangle().fill(AppTheme.panel.opacity(0.7)).frame(width: width * model.trimStart / model.duration)
                                 Rectangle().fill(AppTheme.panel.opacity(0.7)).frame(width: width * (1 - model.trimEnd / model.duration)).offset(x: width * model.trimEnd / model.duration)
                             }
+                            // Where the video starts and ends, marked on the
+                            // video itself. They are drawn here and dragged by
+                            // the track's own gesture below, rather than being
+                            // views with gestures of their own: a handle on top
+                            // of a track that also scrubs gives two gestures a
+                            // claim on the same press, and which one answers is
+                            // anybody's guess.
+                            if model.duration > 0 {
+                                TrimMark(at: model.trimStart, fullWidth: width, held: trimDrag == .start)
+                                TrimMark(at: model.trimEnd, fullWidth: width, held: trimDrag == .end, trailing: true)
+                            }
                         }.frame(width: width, height: 32)
                             .contentShape(Rectangle())
-                            .gesture(DragGesture(minimumDistance: 0).onChanged { model.seek(to: Double($0.location.x / width) * model.duration) })
-                            // Where the video starts and ends, dragged on the
-                            // video itself. The buttons below do the same from
-                            // the playhead, but nobody looks for a button to
-                            // do what the edge of a clip is for.
-                            .overlay(alignment: .leading) {
-                                if model.duration > 0 {
-                                    TrimHandle(edge: .start, fullWidth: width)
-                                    TrimHandle(edge: .end, fullWidth: width)
-                                }
-                            }
-                            .coordinateSpace(name: TrimHandle.space)
+                            .gesture(videoTrackDrag(width: width))
                     }
                     ForEach(visibleKinds) { kind in row(kind: kind, width: width) }
                 }
@@ -84,6 +88,39 @@ struct TimelineView: View {
         }.frame(height: CGFloat(146 + visibleKinds.count * 33)).background(AppTheme.panel)
         .onDeleteCommand { model.deleteSelected() }
     }
+    /// Near enough to an end to mean that end. Generous, because an edge is
+    /// a line and a pointer is a hand.
+    private static let grabRadius: CGFloat = 13
+
+    private func videoTrackDrag(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let x = value.location.x
+                if trimDrag == .none {
+                    trimDrag = TimelineDrag.grab(at: Double(value.startLocation.x),
+                                                 trimStart: model.trimStart, trimEnd: model.trimEnd,
+                                                 duration: model.duration, width: Double(width),
+                                                 radius: Double(Self.grabRadius))
+                }
+                let at = Double(x / max(1, width)) * model.duration
+                switch trimDrag {
+                case .start: model.setTrimStart(to: at)
+                case .end: model.setTrimEnd(to: at)
+                default: model.seek(to: at)
+                }
+            }
+            .onEnded { _ in
+                // Land the playhead on the edge just set, so the frame you are
+                // starting or ending on is the one on screen.
+                switch trimDrag {
+                case .start: model.seek(to: model.trimStart)
+                case .end: model.seek(to: model.trimEnd)
+                default: break
+                }
+                trimDrag = .none
+            }
+    }
+
     func ruler(width: CGFloat) -> some View {
         ZStack(alignment: .leading) {
             ForEach(0..<7) { i in
@@ -106,55 +143,38 @@ struct TimelineView: View {
     func format(_ seconds: Double) -> String { String(format: "%02d:%02d", Int(max(0, seconds)) / 60, Int(max(0, seconds)) % 60) }
 }
 
-/// One end of the kept stretch of video, dragged along the video track.
-struct TrimHandle: View {
-    enum Edge { case start, end }
-    static let space = "videoTrack"
-    @EnvironmentObject private var model: EditorModel
-    let edge: Edge
+/// One end of the kept stretch of video. Drawn, not dragged: the track
+/// itself reads the press and decides whether an end is being moved.
+struct TrimMark: View {
+    let at: Double
     let fullWidth: CGFloat
-    @State private var dragging = false
-
-    private var time: Double { edge == .start ? model.trimStart : model.trimEnd }
+    var held = false
+    var trailing = false
+    @EnvironmentObject private var model: EditorModel
 
     var body: some View {
-        let position = fullWidth * time / max(0.001, model.duration)
+        let position = fullWidth * at / max(0.001, model.duration)
         RoundedRectangle(cornerRadius: 3)
-            .fill(dragging ? AppTheme.green : AppTheme.green.opacity(0.85))
-            .frame(width: 9, height: 32)
+            .fill(held ? AppTheme.green : AppTheme.green.opacity(0.9))
+            .frame(width: 10, height: 32)
             .overlay {
                 VStack(spacing: 2) {
-                    ForEach(0..<2, id: \.self) { _ in Capsule().fill(.white.opacity(0.9)).frame(width: 1, height: 9) }
+                    ForEach(0..<2, id: \.self) { _ in Capsule().fill(.white.opacity(0.9)).frame(width: 1, height: 10) }
                 }
             }
-            .overlay(alignment: edge == .start ? .bottomLeading : .bottomTrailing) {
-                if dragging {
-                    Text(format(time)).font(.system(size: 9, design: .monospaced))
+            .overlay(alignment: trailing ? .trailing : .leading) {
+                if held {
+                    Text(String(format: "%d:%04.1f", Int(max(0, at)) / 60, at.truncatingRemainder(dividingBy: 60)))
+                        .font(.system(size: 9, design: .monospaced))
                         .padding(.horizontal, 4).padding(.vertical, 1)
                         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 3))
-                        .fixedSize().offset(y: 18)
+                        .fixedSize().offset(y: 24)
                 }
             }
-            // Half the handle hangs outside the kept stretch, so neither one
+            // Each mark sits just outside the stretch it bounds, so neither
             // covers the frame it is pointing at.
-            .offset(x: edge == .start ? position : position - 9)
-            .contentShape(Rectangle().inset(by: -6))
-            .onHover { NSCursor.resizeLeftRight.set(); if !$0 { NSCursor.arrow.set() } }
-            // Measured against the track rather than the handle: the handle
-            // is offset, and a dragged view's own space moves with it.
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(TrimHandle.space))
-                    .onChanged { value in
-                        dragging = true
-                        let at = Double(value.location.x) / Double(fullWidth) * model.duration
-                        if edge == .start { model.setTrimStart(to: at) } else { model.setTrimEnd(to: at) }
-                    }
-                    .onEnded { _ in dragging = false; model.seek(to: edge == .start ? model.trimStart : model.trimEnd) }
-            )
-            .help(edge == .start ? "Where the video starts" : "Where the video ends")
-    }
-    private func format(_ seconds: Double) -> String {
-        String(format: "%d:%04.1f", Int(max(0, seconds)) / 60, seconds.truncatingRemainder(dividingBy: 60))
+            .offset(x: trailing ? position - 10 : position)
+            .allowsHitTesting(false)
     }
 }
 
@@ -164,6 +184,21 @@ struct TrimHandle: View {
 /// whether an effect can be moved at all, and they were wrong in a way no
 /// amount of looking at the drawing code would show.
 enum TimelineDrag {
+    /// What a press on the video track is doing.
+    enum Grab { case none, start, end, scrub }
+
+    /// Which of the two ends a press is near enough to mean, if either.
+    /// Decided once where the press lands, so a drag cannot change its mind
+    /// halfway across the track.
+    static func grab(at x: Double, trimStart: Double, trimEnd: Double,
+                     duration: Double, width: Double, radius: Double) -> Grab {
+        guard duration > 0, width > 0 else { return .scrub }
+        let toStart = abs(x - width * trimStart / duration)
+        let toEnd = abs(x - width * trimEnd / duration)
+        guard min(toStart, toEnd) <= radius else { return .scrub }
+        return toStart <= toEnd ? .start : .end
+    }
+
     /// Moved bodily, keeping the point it was picked up by under the pointer.
     static func moved(origin: EditSegment, pointer: Double, grabbedAt offset: Double, duration: Double) -> Double {
         max(0, min(duration - origin.duration, pointer - offset))

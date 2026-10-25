@@ -12,6 +12,7 @@ func XCTFail(_ message: String, file: StaticString = #filePath, line: UInt = #li
 func XCTAssertTrue(_ value: Bool, file: StaticString = #filePath, line: UInt = #line) { if !value { XCTFail("Expected true", file: file, line: line) } }
 func XCTAssertNil<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) { if value != nil { XCTFail("Expected nil", file: file, line: line) } }
 func XCTAssertEqual<T: Equatable>(_ a: T, _ b: T, file: StaticString = #filePath, line: UInt = #line) { if a != b { XCTFail("\(a) != \(b)", file: file, line: line) } }
+func XCTAssertNotEqual<T: Equatable>(_ a: T, _ b: T, file: StaticString = #filePath, line: UInt = #line) { if a == b { XCTFail("\(a) == \(b), expected them to differ", file: file, line: line) } }
 func XCTAssertEqual(_ a: Double, _ b: Double, accuracy: Double, file: StaticString = #filePath, line: UInt = #line) { if abs(a - b) > accuracy { XCTFail("\(a) != \(b) ± \(accuracy)", file: file, line: line) } }
 func XCTAssertLessThan<T: Comparable>(_ a: T, _ b: T, file: StaticString = #filePath, line: UInt = #line) { if !(a < b) { XCTFail("\(a) is not less than \(b)", file: file, line: line) } }
 func XCTAssertLessThanOrEqual<T: Comparable>(_ a: T, _ b: T, file: StaticString = #filePath, line: UInt = #line) { if !(a <= b) { XCTFail("\(a) is not at most \(b)", file: file, line: line) } }
