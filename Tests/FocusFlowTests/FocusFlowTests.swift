@@ -911,6 +911,47 @@ final class FocusFlowTests {
         XCTAssertEqual(model.trimEnd, 10, accuracy: 0.0001)
     }
 
+    /// Dragging an effect along the timeline, and by its ends. The sums were
+    /// measured against the block itself, which moves with the drag, so a
+    /// block jumped once and then stuck wherever the pointer had got to.
+    func testTimelineDragFollowsThePointer() {
+        let segment = EditSegment(kind: .zoom, start: 4, duration: 2, intensity: 1.6, x: 0.5, y: 0.5)
+        let duration = 20.0
+
+        // Picked up two thirds of the way along and carried: the point under
+        // the pointer stays under the pointer, however far it travels.
+        let grab = 1.3
+        for pointer in stride(from: 1.4, through: 18.0, by: 0.7) {
+            let start = TimelineDrag.moved(origin: segment, pointer: pointer, grabbedAt: grab, duration: duration)
+            XCTAssertEqual(start, pointer - grab, accuracy: 0.0001)
+        }
+
+        // It cannot be carried out of the recording at either end.
+        XCTAssertEqual(TimelineDrag.moved(origin: segment, pointer: 0, grabbedAt: grab, duration: duration), 0, accuracy: 0.0001)
+        XCTAssertEqual(TimelineDrag.moved(origin: segment, pointer: 40, grabbedAt: grab, duration: duration), 18, accuracy: 0.0001)
+
+        // Dragged by the front: the edge goes to the pointer, the back stays.
+        let front = TimelineDrag.resized(origin: segment, leading: true, pointer: 2.5, duration: duration)
+        XCTAssertEqual(front.start, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(front.start + front.length, segment.end, accuracy: 0.0001)
+
+        // Dragged by the back: the front stays, the length follows.
+        let back = TimelineDrag.resized(origin: segment, leading: false, pointer: 9, duration: duration)
+        XCTAssertEqual(back.start, 4, accuracy: 0.0001)
+        XCTAssertEqual(back.length, 5, accuracy: 0.0001)
+
+        // Neither end can be pushed through the other, or off the recording.
+        let crossed = TimelineDrag.resized(origin: segment, leading: true, pointer: 12, duration: duration)
+        XCTAssertEqual(crossed.start, segment.end - 0.1, accuracy: 0.0001)
+        XCTAssertGreaterThan(crossed.length, 0.09)
+        let backwards = TimelineDrag.resized(origin: segment, leading: false, pointer: 1, duration: duration)
+        XCTAssertGreaterThan(backwards.length, 0.09)
+        let beforeStart = TimelineDrag.resized(origin: segment, leading: true, pointer: -5, duration: duration)
+        XCTAssertEqual(beforeStart.start, 0, accuracy: 0.0001)
+        let pastEnd = TimelineDrag.resized(origin: segment, leading: false, pointer: 99, duration: duration)
+        XCTAssertEqual(pastEnd.start + pastEnd.length, duration, accuracy: 0.0001)
+    }
+
     /// A custom ratio has to produce the shape asked for, at a sane pixel
     /// count, with even dimensions — and never a degenerate canvas.
     func testCustomAspectRatioGeometry() {

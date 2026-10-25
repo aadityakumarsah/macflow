@@ -72,7 +72,9 @@ struct TimelineView: View {
                 }
             }
             HStack {
-                Text("Drag the video's edges to set where it starts and ends").font(.caption2).foregroundStyle(.tertiary)
+                Text("Drag the video's edges to set where it starts and ends")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .help("Space play · ← → step a frame, with Shift a second · I in · O out · S split · [ ] jump to the ends")
                 Spacer()
                 Button("Set in") { model.setTrimStart() }
                 Text("\(model.trimStart, specifier: "%.1f") – \(model.trimEnd, specifier: "%.1f") s").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
@@ -98,6 +100,7 @@ struct TimelineView: View {
                 RoundedRectangle(cornerRadius: 5).fill(AppTheme.elevated)
                 ForEach(model.segments.filter { $0.kind == kind }) { SegmentBlock(segment: $0, fullWidth: width) }
             }.frame(width: width, height: 27).clipped()
+            .coordinateSpace(name: SegmentBlock.space)
         }
     }
     func format(_ seconds: Double) -> String { String(format: "%02d:%02d", Int(max(0, seconds)) / 60, Int(max(0, seconds)) % 60) }
@@ -155,25 +158,71 @@ struct TrimHandle: View {
     }
 }
 
+/// Where a dragged effect ends up.
+///
+/// Apart from the view so it can be checked: these are the sums that decide
+/// whether an effect can be moved at all, and they were wrong in a way no
+/// amount of looking at the drawing code would show.
+enum TimelineDrag {
+    /// Moved bodily, keeping the point it was picked up by under the pointer.
+    static func moved(origin: EditSegment, pointer: Double, grabbedAt offset: Double, duration: Double) -> Double {
+        max(0, min(duration - origin.duration, pointer - offset))
+    }
+    /// Dragged by one end. The edge goes to the pointer, the other end stays,
+    /// and the effect keeps a tenth of a second of itself.
+    static func resized(origin: EditSegment, leading: Bool, pointer: Double, duration: Double) -> (start: Double, length: Double) {
+        if leading {
+            let start = min(origin.end - 0.1, max(0, pointer))
+            return (start, origin.end - start)
+        }
+        return (origin.start, max(0.1, min(duration - origin.start, pointer - origin.start)))
+    }
+}
+
 struct SegmentBlock: View {
+    /// The track the block sits on. Every drag is measured against it.
+    ///
+    /// Not against the block: the block is placed with an offset that the
+    /// drag itself changes, so its own coordinate space travels with the
+    /// pointer. A translation measured there collapses towards nothing as
+    /// soon as the block starts following — the block jumps once and then
+    /// sticks, which is what made these impossible to move.
+    static let space = "timelineTrack"
     @EnvironmentObject private var model: EditorModel
     let segment: EditSegment
     let fullWidth: CGFloat
     @State private var dragOrigin: EditSegment?
+    /// How far into the block it was picked up, so it does not jump to put
+    /// its start under the pointer.
+    @State private var grabOffset: Double?
     var color: Color {
         switch segment.kind { case .zoom: AppTheme.green; case .pan: .blue; case .spotlight: .orange; case .callout: .pink; default: .purple }
     }
+    /// Where a point on the track falls in the recording.
+    private func time(_ x: CGFloat) -> Double {
+        Double(x) / Double(max(1, fullWidth)) * model.duration
+    }
+
     var body: some View {
-        let width = max(16, CGFloat(segment.duration / max(model.duration, 0.1)) * fullWidth)
+        // Wide enough that both ends and the middle can be taken hold of,
+        // however short the effect is.
+        let width = max(34, CGFloat(segment.duration / max(model.duration, 0.1)) * fullWidth)
         HStack(spacing: 0) {
             handle(leading: true)
             Text(width > 55 ? segment.kind.title : "").font(.system(size: 9, weight: .semibold)).lineLimit(1)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 2).onChanged { value in
-                    select(); if dragOrigin == nil { dragOrigin = segment }
-                    guard let origin = dragOrigin else { return }
-                    model.updateSelected { $0.start = max(0, min(model.duration - origin.duration, origin.start + Double(value.translation.width / fullWidth) * model.duration)) }
-                }.onEnded { _ in dragOrigin = nil })
+                .onHover { NSCursor.openHand.push(); if !$0 { NSCursor.pop() } }
+                .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(SegmentBlock.space)).onChanged { value in
+                    select()
+                    if dragOrigin == nil {
+                        dragOrigin = segment
+                        grabOffset = time(value.startLocation.x) - segment.start
+                    }
+                    guard let origin = dragOrigin, let grabOffset else { return }
+                    let start = TimelineDrag.moved(origin: origin, pointer: time(value.location.x),
+                                                   grabbedAt: grabOffset, duration: model.duration)
+                    model.updateSelected { $0.start = start }
+                }.onEnded { _ in dragOrigin = nil; grabOffset = nil })
             handle(leading: false)
         }
         .foregroundStyle(color).frame(width: width, height: 23)
@@ -189,17 +238,18 @@ struct SegmentBlock: View {
         }
     }
     func select() { model.selectedSegmentID = segment.id; model.inspectorTab = "Segment" }
+    /// One end of the effect. The edge goes where the pointer is, which is
+    /// the only thing that reads as dragging an edge.
     func handle(leading: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 1).fill(color.opacity(0.5)).frame(width: 2, height: 10).padding(.horizontal, 4).frame(height: 23).contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+        RoundedRectangle(cornerRadius: 1.5).fill(color.opacity(0.8)).frame(width: 3, height: 13)
+            .padding(.horizontal, 5).frame(height: 23).contentShape(Rectangle())
+            .onHover { NSCursor.resizeLeftRight.push(); if !$0 { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named(SegmentBlock.space)).onChanged { value in
                 select(); if dragOrigin == nil { dragOrigin = segment }
                 guard let origin = dragOrigin else { return }
-                let delta = Double(value.translation.width / fullWidth) * model.duration
-                model.updateSelected {
-                    if leading {
-                        $0.start = min(origin.end - 0.1, max(0, origin.start + delta)); $0.duration = origin.end - $0.start
-                    } else { $0.duration = max(0.1, min(model.duration - origin.start, origin.duration + delta)) }
-                }
+                let edge = TimelineDrag.resized(origin: origin, leading: leading,
+                                                pointer: time(value.location.x), duration: model.duration)
+                model.updateSelected { $0.start = edge.start; $0.duration = edge.length }
             }.onEnded { _ in dragOrigin = nil })
     }
 }

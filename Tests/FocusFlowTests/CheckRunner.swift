@@ -58,6 +58,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testAPIKeyStorageAndValidation()
             await tests.testSplitIsOfferedOnlyWhenItCanAct()
             tests.testCustomAspectRatioGeometry()
+            tests.testTimelineDragFollowsThePointer()
             try tests.testBundledBackgroundsResolveAndDecode()
             try tests.testColourGradesAlterTheFrameOnly()
             try tests.testScrollBlurSoftensMovingContentOnly()

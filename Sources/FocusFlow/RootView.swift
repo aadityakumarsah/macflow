@@ -32,6 +32,7 @@ struct RootView: View {
         }
         .background(model.theatreMode ? Color.black : AppTheme.workspace)
         .tint(AppTheme.green)
+        .editorKeys()
         .sheet(isPresented: $model.showCropEditor) { CropEditor() }
         .sheet(isPresented: $model.showRecorder) { RecorderView() }
         .sheet(isPresented: $model.showLibrary) { RecordingLibraryView(library: model.library) }

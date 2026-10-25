@@ -35,10 +35,12 @@ struct FocusFlowApp: App {
                 .disabled(model.videoURL == nil)
             }
             // Delete removes the selected effect, which is what every other
-            // timeline does and what the key is expected to do here.
+            // timeline does. The key itself is handled by the editor rather
+            // than claimed here: a menu shortcut with no modifier takes the
+            // key from the whole window, so Delete was deleting an effect
+            // while a callout's text was being typed.
             CommandGroup(after: .pasteboard) {
                 Button("Delete Effect") { model.deleteSelected() }
-                    .keyboardShortcut(.delete, modifiers: [])
                     .disabled(model.selectedSegmentID == nil)
                 Button("Duplicate Effect") { model.duplicateSelected() }
                     .keyboardShortcut("d", modifiers: .command)
