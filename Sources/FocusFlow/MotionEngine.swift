@@ -84,6 +84,31 @@ enum MotionEngine {
     static let clickZoomHold: Double = 1.15
     static let clickZoomTransition: Double = 0.6
 
+    /// Groups keypress times into runs separated by a pause.
+    static func typingRuns(_ times: [Double], gap: Double) -> [[Double]] {
+        var runs: [[Double]] = []
+        var current: [Double] = []
+        for time in times.sorted() {
+            if let last = current.last, time - last > gap {
+                runs.append(current); current = []
+            }
+            current.append(time)
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
+    }
+
+    /// First and last keypress of each run long enough to be followed. This is
+    /// the stretch a click zoom must not sit inside; the hold that follows a
+    /// run is deliberately excluded, so a click on Send still gets its own.
+    static func typingKeySpans(_ typing: [TypingEvent], duration: Double, gap: Double) -> [(Double, Double)] {
+        let times = typing.map(\.time).filter { $0 >= 0 && $0 < duration }
+        return typingRuns(times, gap: gap).compactMap { run in
+            guard run.count >= 4, let first = run.first, let last = run.last else { return nil }
+            return (first - 0.3, last)
+        }
+    }
+
     /// Turns runs of typing into segments that follow the caret.
     ///
     /// Where typing happens is not reported by anything: the pointer usually
@@ -102,16 +127,7 @@ enum MotionEngine {
         let ordered = typing.map(\.time).filter { $0 >= 0 && $0 < duration }.sorted()
         guard !ordered.isEmpty else { return [] }
 
-        // Split into runs separated by a pause.
-        var runs: [[Double]] = []
-        var current: [Double] = []
-        for time in ordered {
-            if let last = current.last, time - last > settings.gap {
-                runs.append(current); current = []
-            }
-            current.append(time)
-        }
-        if !current.isEmpty { runs.append(current) }
+        let runs = MotionEngine.typingRuns(ordered, gap: settings.gap)
 
         var result: [EditSegment] = []
         for run in runs {
@@ -181,9 +197,16 @@ enum MotionEngine {
             else { finishRun(); if active { run = [sample] } }
         }
         finishRun()
+        // Clicks made *while* typing are dropped before any zoom is built from
+        // them: one would drag the frame off the line being written. Filtering
+        // the clicks rather than the zooms matters, because a click zoom starts
+        // a little before its click — judging it by that start would also throw
+        // away the click on Send, which is the point of the whole sequence.
+        let typingSpans = typingKeySpans(typing, duration: duration, gap: typingFollow.gap)
         let validClicks = clicks.filter { click in
             click.time >= 0 && click.time < duration &&
-            !selections.contains { click.time >= $0.0.time - 0.18 && click.time <= $0.1.time + 0.1 }
+            !selections.contains { click.time >= $0.0.time - 0.18 && click.time <= $0.1.time + 0.1 } &&
+            !typingSpans.contains { click.time >= $0.0 && click.time <= $0.1 }
         }.sorted { $0.time < $1.time }
         var result = autoZooms(clicks: validClicks, duration: duration)
 
@@ -207,14 +230,7 @@ enum MotionEngine {
 
         let follows = typingFollows(typing: typing, clicks: clicks, samples: samples,
                                     duration: duration, settings: typingFollow)
-        if !follows.isEmpty {
-            // A click zoom inside a typing run would pull against the slide,
-            // so the run owns its stretch of the timeline.
-            result.removeAll { zoom in
-                follows.contains { $0.start - 0.3 <= zoom.start && zoom.start <= $0.end }
-            }
-            result.append(contentsOf: follows)
-        }
+        result.append(contentsOf: follows)
         return result.sorted { $0.start < $1.start }
     }
 }

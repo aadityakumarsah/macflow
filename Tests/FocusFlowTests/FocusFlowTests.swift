@@ -1185,6 +1185,7 @@ final class FocusFlowTests {
                                                  samples: samples, duration: 14, settings: settings)
         XCTAssertEqual(follows.count, 2)
         XCTAssertTrue(follows.allSatisfy { $0.kind == .typing })
+        guard follows.count == 2 else { XCTFail("expected two typing runs"); return }
 
         // Anchored where the caret was put, not where the pointer sat.
         XCTAssertEqual(follows[0].x, 0.22, accuracy: 0.001)
@@ -1330,6 +1331,60 @@ final class FocusFlowTests {
         updater.applyStateForTesting(.upToDate)
         updater.clearStatus()
         XCTAssertNil(updater.pendingRelease)
+    }
+
+    /// The sequence that matters: type a message, then click Send. The typing
+    /// must be followed, and the click on Send must keep its own zoom and
+    /// ripple — it was being deleted as though it were part of the typing.
+    func testClickAfterTypingKeepsItsOwnZoom() {
+        var settings = TypingFollowSettings()
+        settings.gap = 1.1
+        settings.hold = 0.7
+
+        // Typing from 1.0 to 2.8, then Send clicked at 3.1 — inside the hold.
+        let typing = (0..<16).map { TypingEvent(time: 1 + Double($0) * 0.12) }
+        let caret = RecordedClick(time: 0.8, x: 0.2, y: 0.55)
+        let send = RecordedClick(time: 3.1, x: 0.78, y: 0.82)
+        let samples = (0..<60).map { PointerSample(time: Double($0) * 0.1, x: 0.5, y: 0.5) }
+
+        let edits = MotionEngine.autoEdits(clicks: [caret, send], samples: samples, duration: 8,
+                                           typing: typing, typingFollow: settings)
+
+        // The typing is followed.
+        let follows = edits.filter { $0.kind == .typing }
+        XCTAssertEqual(follows.count, 1)
+
+        // And Send kept a zoom of its own, aimed at the button.
+        let sendZooms = edits.filter { $0.kind == .zoom && $0.start > 2.0 }
+        XCTAssertEqual(sendZooms.count, 1)
+        if let sendZoom = sendZooms.first {
+            XCTAssertEqual(sendZoom.x, 0.78, accuracy: 0.001)
+            XCTAssertEqual(sendZoom.y, 0.82, accuracy: 0.001)
+            // It starts around the click, so the frame is there when it lands.
+            XCTAssertLessThan(sendZoom.start, 3.1)
+            XCTAssertGreaterThan(sendZoom.end, 3.1)
+        } else {
+            XCTFail("the click on Send lost its zoom")
+        }
+
+        // A click in the middle of the typing is still dropped: that one would
+        // drag the frame away from the line being written.
+        let interrupting = RecordedClick(time: 1.9, x: 0.6, y: 0.3)
+        let withInterrupt = MotionEngine.autoEdits(clicks: [caret, interrupting, send], samples: samples,
+                                                   duration: 8, typing: typing, typingFollow: settings)
+        XCTAssertTrue(!withInterrupt.contains { $0.kind == .zoom && abs($0.x - 0.6) < 0.01 })
+        // While Send survives alongside it.
+        XCTAssertTrue(withInterrupt.contains { $0.kind == .zoom && abs($0.x - 0.78) < 0.01 })
+
+        // The span that excludes clicks must end at the last keypress, not at
+        // the end of the hold.
+        let spans = MotionEngine.typingKeySpans(typing, duration: 8, gap: settings.gap)
+        XCTAssertEqual(spans.count, 1)
+        if let span = spans.first {
+            XCTAssertLessThan(span.1, 3.1)
+        } else {
+            XCTFail("no typing span was produced")
+        }
     }
 
     private func pixels(_ image: CGImage) -> [UInt8] {

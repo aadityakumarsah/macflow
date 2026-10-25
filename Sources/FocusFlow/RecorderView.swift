@@ -160,9 +160,15 @@ struct RecorderView: View {
                     }
                 }
             }
-            if !inputMonitoringReady && !recorder.isRecording && captureMode != .tab {
+            // Shown for tab recordings too. It used to be hidden there, which
+            // was right while tab capture had no pointer or key tracking — it
+            // has both now, and without this permission the keyboard monitor
+            // silently records nothing, so typing is never followed and
+            // nothing says why.
+            if !inputMonitoringReady && !recorder.isRecording {
                 HStack {
-                    Label("Input Monitoring enables click zooms and keystrokes. Screen recording still works without it.", systemImage: "exclamationmark.triangle.fill")
+                    Label("Input Monitoring is off, so click zooms and typing follow will not be created. Recording itself still works.",
+                          systemImage: "exclamationmark.triangle.fill")
                     Spacer()
                     Button("Open Settings") { openInputMonitoringSettings() }.buttonStyle(.link)
                 }.font(.caption).foregroundStyle(.orange)
