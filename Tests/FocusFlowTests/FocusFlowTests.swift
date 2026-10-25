@@ -881,6 +881,34 @@ final class FocusFlowTests {
         // Nothing selected is nothing to split.
         model.selectedSegmentID = nil
         XCTAssertTrue(!model.canSplitSelected)
+
+        // Where the video starts and ends, dragged to a time rather than
+        // taken from the playhead. Each end stops short of the other, and
+        // neither leaves the recording.
+        model.resetTrim()
+        model.setTrimStart(to: 3.5)
+        XCTAssertEqual(model.trimStart, 3.5, accuracy: 0.0001)
+        XCTAssertEqual(model.outputDuration, 6.5, accuracy: 0.0001)
+        model.setTrimEnd(to: 7)
+        XCTAssertEqual(model.trimEnd, 7, accuracy: 0.0001)
+
+        // Dragged past each other, or off either end.
+        model.setTrimStart(to: 9)
+        XCTAssertEqual(model.trimStart, 6.9, accuracy: 0.0001)
+        model.setTrimEnd(to: 0)
+        XCTAssertEqual(model.trimEnd, 7, accuracy: 0.0001)
+        model.setTrimStart(to: -4)
+        XCTAssertEqual(model.trimStart, 0, accuracy: 0.0001)
+        model.setTrimEnd(to: 99)
+        XCTAssertEqual(model.trimEnd, 10, accuracy: 0.0001)
+
+        // The buttons are the same thing from the playhead.
+        model.playhead = 2
+        model.setTrimStart()
+        XCTAssertEqual(model.trimStart, 2, accuracy: 0.0001)
+        model.resetTrim()
+        XCTAssertEqual(model.trimStart, 0, accuracy: 0.0001)
+        XCTAssertEqual(model.trimEnd, 10, accuracy: 0.0001)
     }
 
     /// A custom ratio has to produce the shape asked for, at a sane pixel

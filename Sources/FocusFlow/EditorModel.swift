@@ -323,8 +323,12 @@ final class EditorModel: ObservableObject {
 
     func toggleTheatreMode() { setTheatreMode(!theatreMode) }
 
-    func setTrimStart() { trimStart = max(0, min(playhead, trimEnd - 0.1)) }
-    func setTrimEnd() { trimEnd = min(duration, max(playhead, trimStart + 0.1)) }
+    func setTrimStart() { setTrimStart(to: playhead) }
+    func setTrimEnd() { setTrimEnd(to: playhead) }
+    /// Dragged on the timeline rather than taken from the playhead. Each end
+    /// stops short of the other, so the kept stretch cannot be closed up.
+    func setTrimStart(to time: Double) { trimStart = max(0, min(time, trimEnd - 0.1)) }
+    func setTrimEnd(to time: Double) { trimEnd = min(duration, max(time, trimStart + 0.1)) }
     func resetTrim() { trimStart = 0; trimEnd = duration }
 
     private func remember() {

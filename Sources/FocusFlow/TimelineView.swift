@@ -47,6 +47,17 @@ struct TimelineView: View {
                         }.frame(width: width, height: 32)
                             .contentShape(Rectangle())
                             .gesture(DragGesture(minimumDistance: 0).onChanged { model.seek(to: Double($0.location.x / width) * model.duration) })
+                            // Where the video starts and ends, dragged on the
+                            // video itself. The buttons below do the same from
+                            // the playhead, but nobody looks for a button to
+                            // do what the edge of a clip is for.
+                            .overlay(alignment: .leading) {
+                                if model.duration > 0 {
+                                    TrimHandle(edge: .start, fullWidth: width)
+                                    TrimHandle(edge: .end, fullWidth: width)
+                                }
+                            }
+                            .coordinateSpace(name: TrimHandle.space)
                     }
                     ForEach(visibleKinds) { kind in row(kind: kind, width: width) }
                 }
@@ -61,7 +72,7 @@ struct TimelineView: View {
                 }
             }
             HStack {
-                Text("Drag to move · pull edges to resize").font(.caption2).foregroundStyle(.tertiary)
+                Text("Drag the video's edges to set where it starts and ends").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
                 Button("Set in") { model.setTrimStart() }
                 Text("\(model.trimStart, specifier: "%.1f") – \(model.trimEnd, specifier: "%.1f") s").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
@@ -90,6 +101,58 @@ struct TimelineView: View {
         }
     }
     func format(_ seconds: Double) -> String { String(format: "%02d:%02d", Int(max(0, seconds)) / 60, Int(max(0, seconds)) % 60) }
+}
+
+/// One end of the kept stretch of video, dragged along the video track.
+struct TrimHandle: View {
+    enum Edge { case start, end }
+    static let space = "videoTrack"
+    @EnvironmentObject private var model: EditorModel
+    let edge: Edge
+    let fullWidth: CGFloat
+    @State private var dragging = false
+
+    private var time: Double { edge == .start ? model.trimStart : model.trimEnd }
+
+    var body: some View {
+        let position = fullWidth * time / max(0.001, model.duration)
+        RoundedRectangle(cornerRadius: 3)
+            .fill(dragging ? AppTheme.green : AppTheme.green.opacity(0.85))
+            .frame(width: 9, height: 32)
+            .overlay {
+                VStack(spacing: 2) {
+                    ForEach(0..<2, id: \.self) { _ in Capsule().fill(.white.opacity(0.9)).frame(width: 1, height: 9) }
+                }
+            }
+            .overlay(alignment: edge == .start ? .bottomLeading : .bottomTrailing) {
+                if dragging {
+                    Text(format(time)).font(.system(size: 9, design: .monospaced))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 3))
+                        .fixedSize().offset(y: 18)
+                }
+            }
+            // Half the handle hangs outside the kept stretch, so neither one
+            // covers the frame it is pointing at.
+            .offset(x: edge == .start ? position : position - 9)
+            .contentShape(Rectangle().inset(by: -6))
+            .onHover { NSCursor.resizeLeftRight.set(); if !$0 { NSCursor.arrow.set() } }
+            // Measured against the track rather than the handle: the handle
+            // is offset, and a dragged view's own space moves with it.
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named(TrimHandle.space))
+                    .onChanged { value in
+                        dragging = true
+                        let at = Double(value.location.x) / Double(fullWidth) * model.duration
+                        if edge == .start { model.setTrimStart(to: at) } else { model.setTrimEnd(to: at) }
+                    }
+                    .onEnded { _ in dragging = false; model.seek(to: edge == .start ? model.trimStart : model.trimEnd) }
+            )
+            .help(edge == .start ? "Where the video starts" : "Where the video ends")
+    }
+    private func format(_ seconds: Double) -> String {
+        String(format: "%d:%04.1f", Int(max(0, seconds)) / 60, seconds.truncatingRemainder(dividingBy: 60))
+    }
 }
 
 struct SegmentBlock: View {
