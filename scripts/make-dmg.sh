@@ -61,6 +61,7 @@ ln -s /Applications "$STAGE/Applications"
 # at WIN_W x WIN_H points instead of pixels.
 if [[ -x "$CHROME" ]]; then
     "$CHROME" --headless --disable-gpu --hide-scrollbars \
+        --user-data-dir="$WORK/chrome-profile" --no-first-run \
         --force-color-profile=srgb \
         --window-size=$((WIN_W * 2)),$((WIN_H * 2)) \
         --virtual-time-budget=6000 \
