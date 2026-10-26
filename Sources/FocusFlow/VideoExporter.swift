@@ -73,7 +73,7 @@ enum VideoExporter {
         updated.renderSize = settings.canvasSize
         updated.instructions = [CompositionInstruction(timeRange: old.timeRange, settings: settings,
             screenTrackID: old.screenTrackID, cameraTrackID: old.cameraTrackID,
-            screenTransform: old.screenTransform, cameraTransform: old.cameraTransform)]
+            screenTransform: old.screenTransform, cameraTransform: old.cameraTransform, timeMap: old.timeMap)]
         return updated
     }
 
@@ -189,13 +189,19 @@ enum VideoExporter {
                 cameraTransform = try await source.load(.preferredTransform)
             }
         }
-        let rate = max(0.25, min(3, settings.playbackRate))
-        edit.scaleTimeRange(CMTimeRange(start: .zero, duration: duration), toDuration: CMTimeMultiplyByFloat64(duration, multiplier: 1 / rate))
+        let timeMap = PlaybackTimeMap(duration: duration.seconds, rate: settings.playbackRate, segments: settings.segments)
+        // Work backwards so earlier source ranges retain their original coordinates.
+        // Scale all tracks together: screen, camera, speech, music and sound cues.
+        for span in timeMap.spans.reversed() where abs(span.rate - 1) > 0.000001 {
+            edit.scaleTimeRange(CMTimeRange(start: CMTime(seconds: span.sourceStart, preferredTimescale: 60000),
+                duration: CMTime(seconds: span.sourceEnd - span.sourceStart, preferredTimescale: 60000)),
+                toDuration: CMTime(seconds: span.outputEnd - span.outputStart, preferredTimescale: 60000))
+        }
         let composition = AVMutableVideoComposition()
         composition.renderSize = settings.canvasSize
         composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(settings.exportOptions.frameRate.rawValue))
         composition.customVideoCompositorClass = FocusFlowCompositor.self
-        composition.instructions = [CompositionInstruction(timeRange: CMTimeRange(start: .zero, duration: edit.duration), settings: settings, screenTrackID: screen.trackID, cameraTrackID: cameraID, screenTransform: screenTransform, cameraTransform: cameraTransform)]
+        composition.instructions = [CompositionInstruction(timeRange: CMTimeRange(start: .zero, duration: edit.duration), settings: settings, screenTrackID: screen.trackID, cameraTrackID: cameraID, screenTransform: screenTransform, cameraTransform: cameraTransform, timeMap: timeMap)]
         return (edit, composition, musicMix)
     }
 
@@ -254,8 +260,9 @@ enum VideoExporter {
             .appendingPathComponent(".focusflow-export-\(UUID().uuidString).\(options.format.fileExtension)")
         defer { try? FileManager.default.removeItem(at: temporary) }
 
-        let start = max(0, settings.trimStart / settings.playbackRate)
-        let end = min(asset.duration.seconds, settings.trimEnd / settings.playbackRate)
+        guard let timing = (composition.instructions.first as? CompositionInstruction)?.timeMap else { throw ExportError.unavailable }
+        let start = timing.outputTime(for: settings.trimStart)
+        let end = min(asset.duration.seconds, timing.outputTime(for: settings.trimEnd))
         guard end > start else { throw ExportError.failed("The trim range is empty.") }
         let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
                                 duration: CMTime(seconds: end - start, preferredTimescale: 600))
@@ -361,6 +368,12 @@ enum VideoExporter {
             writer.cancelWriting()
             throw ExportError.failed(reader.error?.localizedDescription ?? "The recording could not be read.")
         }
+        // Audio packets may straddle the reader's trim endpoint. Bound the
+        // writer session explicitly so AAC padding cannot lengthen the edit.
+        guard writer.status == .writing else {
+            throw ExportError.failed(writer.error?.localizedDescription ?? "The encoder stopped before the edit finished.")
+        }
+        writer.endSession(atSourceTime: range.end)
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw ExportError.failed(writer.error?.localizedDescription ?? "Unknown error")
@@ -379,13 +392,15 @@ final class CompositionInstruction: NSObject, AVVideoCompositionInstructionProto
     let requiredSourceTrackIDs: [NSValue]?
     let passthroughTrackID = CMPersistentTrackID(kCMPersistentTrackID_Invalid)
     let settings: ExportSettings
+    let timeMap: PlaybackTimeMap
     let screenTrackID: CMPersistentTrackID
     let cameraTrackID: CMPersistentTrackID
     let screenTransform: CGAffineTransform
     let cameraTransform: CGAffineTransform
-    init(timeRange: CMTimeRange, settings: ExportSettings, screenTrackID: CMPersistentTrackID, cameraTrackID: CMPersistentTrackID, screenTransform: CGAffineTransform = .identity, cameraTransform: CGAffineTransform = .identity) {
+    init(timeRange: CMTimeRange, settings: ExportSettings, screenTrackID: CMPersistentTrackID, cameraTrackID: CMPersistentTrackID, screenTransform: CGAffineTransform = .identity, cameraTransform: CGAffineTransform = .identity, timeMap: PlaybackTimeMap? = nil) {
         self.timeRange = timeRange
         self.settings = settings
+        self.timeMap = timeMap ?? PlaybackTimeMap(duration: timeRange.duration.seconds * settings.playbackRate, rate: settings.playbackRate, segments: settings.segments)
         self.screenTrackID = screenTrackID
         self.screenTransform = screenTransform
         self.cameraTransform = cameraTransform
@@ -517,7 +532,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             }
             let settings = instruction.settings
             let canvas = CGRect(origin: .zero, size: settings.canvasSize)
-            let time = request.compositionTime.seconds * settings.playbackRate
+            let time = instruction.timeMap.sourceTime(for: request.compositionTime.seconds)
             var source = normalized(CIImage(cvPixelBuffer: sourceBuffer).transformed(by: instruction.screenTransform))
             // Applied to the recording only: the cursor and the window frame
             // are drawn later and must stay sharp.

@@ -3,7 +3,7 @@ import SwiftUI
 /// Presets store ordinary editable poses. Older projects need no migration,
 /// and a manual adjustment can keep using the same strength control.
 enum ThreeDPreset: String, CaseIterable, Identifiable {
-    case orbit, rise, showcase, drift, push, tilt
+    case orbit, rise, showcase, drift, push, tilt, slideLeft, slideRight, slideUp, slideDown, zoomLeft, zoomRight, pullBack
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -13,6 +13,13 @@ enum ThreeDPreset: String, CaseIterable, Identifiable {
         case .drift: "Drift"
         case .push: "Push in"
         case .tilt: "Tilt reveal"
+        case .slideLeft: "Slide left"
+        case .slideRight: "Slide right"
+        case .slideUp: "Slide up"
+        case .slideDown: "Slide down"
+        case .zoomLeft: "Zoom left"
+        case .zoomRight: "Zoom right"
+        case .pullBack: "Pull back"
         }
     }
     var detail: String {
@@ -23,6 +30,13 @@ enum ThreeDPreset: String, CaseIterable, Identifiable {
         case .drift: "Float across the shot"
         case .push: "Move closer to the detail"
         case .tilt: "Lean back, then settle"
+        case .slideLeft: "Glide left and return"
+        case .slideRight: "Glide right and return"
+        case .slideUp: "Lift and settle back"
+        case .slideDown: "Drop and settle back"
+        case .zoomLeft: "Move closer on the left"
+        case .zoomRight: "Move closer on the right"
+        case .pullBack: "Pull away, then return"
         }
     }
     var pose: FramePose {
@@ -33,9 +47,16 @@ enum ThreeDPreset: String, CaseIterable, Identifiable {
         case .drift: FramePose(yaw: 0.18, roll: 0.06, panX: 0.16, zoom: 0.96)
         case .push: FramePose(pitch: 0.08, yaw: 0.12, zoom: 1.14)
         case .tilt: FramePose(pitch: 0.45, zoom: 0.94)
+        case .slideLeft: FramePose(panX: -0.3)
+        case .slideRight: FramePose(panX: 0.3)
+        case .slideUp: FramePose(panY: 0.3)
+        case .slideDown: FramePose(panY: -0.3)
+        case .zoomLeft: FramePose(panX: 0.22, zoom: 1.4)
+        case .zoomRight: FramePose(panX: -0.22, zoom: 1.4)
+        case .pullBack: FramePose(zoom: 0.7)
         }
     }
-    var sweeps: Bool { self != .showcase && self != .tilt }
+    var sweeps: Bool { [.orbit, .rise, .drift, .push].contains(self) }
 
     func apply(to segment: inout EditSegment) {
         segment.poseKeyframes = nil
@@ -62,6 +83,7 @@ struct ThreeDPresetPicker: View {
                  ? "Choose a look for this move."
                  : "Choose a look to add at the playhead.")
                 .font(.caption).foregroundStyle(.secondary)
+            ScrollView {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(ThreeDPreset.allCases) { preset in
                     Button {
@@ -81,6 +103,7 @@ struct ThreeDPresetPicker: View {
                     }.buttonStyle(.plain).accessibilityLabel("Apply \(preset.title) 3D move")
                 }
             }
+            }.frame(maxHeight: 460)
         }.padding(16).frame(width: 340)
             .disabled(model.videoURL == nil || model.duration <= 0)
     }

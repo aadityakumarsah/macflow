@@ -49,9 +49,9 @@ struct EditorKeys: ViewModifier {
         case 49:                                            // space
             model.togglePlayback()
         case 123:                                           // left
-            model.seek(to: model.playhead - (coarse ? 1 : 1.0 / 30))
+            if coarse { model.seek(to: model.playhead - 1) } else { model.stepFrame(-1) }
         case 124:                                           // right
-            model.seek(to: model.playhead + (coarse ? 1 : 1.0 / 30))
+            if coarse { model.seek(to: model.playhead + 1) } else { model.stepFrame(1) }
         case 51, 117:                                       // delete, forward delete
             guard model.selectedSegmentID != nil else { return false }
             model.deleteSelected()

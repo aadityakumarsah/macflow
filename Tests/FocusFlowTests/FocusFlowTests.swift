@@ -5,6 +5,63 @@ import CoreText
 import SwiftUI
 
 final class FocusFlowTests {
+    @MainActor func testNestedLayersAndRangeTiming() throws {
+        let fast = EditSegment(kind: .speed, start: 2, duration: 4, intensity: 2, x: 0.5, y: 0.5)
+        let slow = EditSegment(kind: .speed, start: 3, duration: 1, intensity: 0.5, x: 0.5, y: 0.5)
+        let timing = PlaybackTimeMap(duration: 10, rate: 1, segments: [fast, slow])
+        XCTAssertEqual(timing.outputDuration, 9.5, accuracy: 0.000001)
+        XCTAssertEqual(timing.outputTime(for: 4), 4.5, accuracy: 0.000001)
+        for frame in 0...600 {
+            let source = Double(frame) / 60
+            XCTAssertEqual(timing.sourceTime(for: timing.outputTime(for: source)), source, accuracy: 0.000001)
+        }
+        XCTAssertEqual(PlaybackTimeMap(duration: 10, rate: 2, segments: [fast, slow]).outputDuration, 4.75, accuracy: 0.000001)
+        XCTAssertEqual(TimelineDrag.snapped(2.02, to: [1, 2, 4], tolerance: 0.03), 2)
+        XCTAssertEqual(TimelineDrag.snapped(2.2, to: [1, 2, 4], tolerance: 0.03), 2.2)
+        let model = EditorModel(restoreLatest: false)
+        model.duration = 10; model.trimEnd = 10
+        model.videoURL = URL(fileURLWithPath: "/tmp/layer-check-nonexistent.mp4")
+        defer { model.videoURL = nil }
+        model.applyThreeDPreset(.orbit)
+        let parent = try XCTUnwrap(model.selectedSegment)
+        model.addThreeDLayer(nested: true)
+        let child = try XCTUnwrap(model.selectedSegment)
+        XCTAssertEqual(model.segments[0], parent)
+        XCTAssertTrue(child.start >= parent.start && child.end <= parent.end)
+        model.beginPoseGesture(); model.editedPose = FramePose(pitch: 0.3, panX: 0.2, zoom: 1.2); model.endPoseGesture()
+        let at = model.playhead
+        let local = model.editedPose
+        let combined = MotionEngine.stance(at: at, segments: model.segments).pose
+        XCTAssertEqual(combined, MotionEngine.stance(at: at, segments: [parent]).pose.added(local))
+        XCTAssertEqual(EffectLane.pack(model.segments).count, 2)
+        model.addThreeDLayer(nested: true)
+        XCTAssertEqual(model.segments.count, 3)
+        XCTAssertEqual(EffectLane.pack(model.segments).count, 3)
+        model.undo(); XCTAssertEqual(model.segments.count, 2)
+        model.selectThreeDLayer(child.id)
+        model.beginTimelineGesture()
+        let heldIDs = model.heldTimelineLanes?.map { $0.segments.map(\.id) }
+        model.updateSelected { $0.start = 5 }
+        XCTAssertEqual(model.heldTimelineLanes?.map { $0.segments.map(\.id) }, heldIDs)
+        model.endTimelineGesture()
+        XCTAssertNil(model.heldTimelineLanes)
+        model.undo()
+        XCTAssertEqual(model.selectedSegment?.start, child.start)
+        model.reversePosePath()
+        XCTAssertEqual(model.segments[0], parent)
+        model.speedSelectedRange(2)
+        XCTAssertEqual(model.selectedSegment?.kind, .speed)
+        XCTAssertEqual(model.selectedSegment?.start, child.start)
+        XCTAssertEqual(model.selectedSegment?.duration, child.duration)
+        XCTAssertLessThan(model.outputDuration, 10)
+        let before = model.outputDuration
+        model.updateSelected { $0.intensity = 0.5 }
+        XCTAssertGreaterThan(model.outputDuration, before)
+        XCTAssertEqual(model.segments[0], parent)
+        let decoded = try JSONDecoder().decode([EditSegment].self, from: JSONEncoder().encode(model.segments))
+        XCTAssertEqual(decoded, model.segments)
+    }
+
     @MainActor func testEditablePosePath() throws {
         let a = FramePose(yaw: -0.3, panX: -0.2, zoom: 0.8)
         let b = FramePose(pitch: 0.4, yaw: 0.5, panX: 0.3, zoom: 1.2)
@@ -160,6 +217,25 @@ final class FocusFlowTests {
         }
         XCTAssertTrue(!model.isPlaying)
         XCTAssertEqual(model.playhead, model.selectedSegment!.end, accuracy: 0.05)
+        model.seekPose(0.3)
+        let parentID = model.selectedSegmentID
+        model.addThreeDLayer(nested: true)
+        model.editedPose = FramePose(yaw: 0.15, zoom: 1.1)
+        try await settled()
+        XCTAssertTrue(model.player.currentItem?.asset === reused)
+        try snapshot(Frame3DBar().frame(width: 480), name: "3d-layers.png")
+        try snapshot(TimelineView().frame(width: 900), name: "3d-layer-timeline.png")
+        model.speedSelectedRange(2)
+        try await settled()
+        XCTAssertTrue(model.player.currentItem?.asset !== reused)
+        XCTAssertEqual(try await model.player.currentItem!.asset.load(.duration).seconds, model.timeMap.outputDuration, accuracy: 0.001)
+        model.seek(to: 1)
+        XCTAssertEqual(model.playhead, 1)
+        try snapshot(SegmentInspector().frame(width: 290).background(AppTheme.panel), name: "range-speed.png")
+        if let parentID { model.selectThreeDLayer(parentID) }
+        model.theatreMode = true
+        try snapshot(PreviewArea().frame(width: 1100, height: 720), name: "3d-fullscreen.png")
+        model.theatreMode = false
     }
 
     func testThreeDPresetsRenderAndRoundTrip() throws {
@@ -365,6 +441,26 @@ final class FocusFlowTests {
         XCTAssertEqual(duration, 0.6, accuracy: 0.06)
         let musicTracks = try await AVURLAsset(url: clean).loadTracks(withMediaType: .audio)
         XCTAssertGreaterThan(musicTracks.count, 0)
+        let rangeFast = EditSegment(kind: .speed, start: 0.6, duration: 0.6, intensity: 2, x: 0.5, y: 0.5)
+        let rangeSlow = EditSegment(kind: .speed, start: 0.9, duration: 0.1, intensity: 0.5, x: 0.5, y: 0.5)
+        var parentMove = EditSegment(kind: .perspective, start: 0.4, duration: 1.2, intensity: 1, x: 0.5, y: 0.5)
+        ThreeDPreset.slideLeft.apply(to: &parentMove)
+        var nestedMove = EditSegment(kind: .perspective, start: 0.6, duration: 0.6, intensity: 1, x: 0.5, y: 0.5)
+        nestedMove.poseKeyframes = [PoseKeyframe(time: 0, pose: .neutral), PoseKeyframe(time: 0.5, pose: FramePose(pitch: 0.2, zoom: 1.2)), PoseKeyframe(time: 1, pose: .neutral)]
+        settings.playbackRate = 1
+        settings.segments = [rangeFast, rangeSlow, parentMove, nestedMove]
+        let timed = directory.appendingPathComponent("range-speed.mp4")
+        try await VideoExporter.export(source: source, destination: timed, settings: settings) { _ in }
+        // 0.6 s unchanged + 0.5 s at 2x + 0.1 s at 0.5x = 1.05 s.
+        let timedAsset = AVURLAsset(url: timed)
+        XCTAssertEqual(try await timedAsset.load(.duration).seconds, 1.05, accuracy: 0.04)
+        XCTAssertGreaterThan(try await timedAsset.loadTracks(withMediaType: .audio).count, 0)
+        let generator = AVAssetImageGenerator(asset: timedAsset)
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let timedImage = try await generator.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+        XCTAssertEqual(timedImage.width, 640)
+        XCTAssertGreaterThan(zip(pixels(try await frame(clean)), pixels(timedImage)).filter { abs(Int($0) - Int($1)) > 10 }.count, 100)
+        settings.playbackRate = 2
         settings.segments = [EditSegment(kind: .blur, start: 0, duration: 2, intensity: 2, x: 0.35, y: 0.5, width: 0.25, height: 0.4)]
         let blurred = directory.appendingPathComponent("blurred.mp4")
         try await VideoExporter.export(source: source, destination: blurred, settings: settings) { _ in }

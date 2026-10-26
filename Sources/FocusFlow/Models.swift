@@ -7,7 +7,7 @@ enum SegmentKind: String, Codable, CaseIterable, Identifiable {
     /// `.spotlight` is deliberately absent: dimming everything but a patch
     /// looked worse than it helped. Existing projects still decode and render
     /// theirs; it simply cannot be added any more.
-    static let availableCases: [SegmentKind] = [.zoom, .typing, .perspective, .outline, .callout, .blur, .pixelate]
+    static let availableCases: [SegmentKind] = [.zoom, .pan, .speed, .typing, .perspective, .outline, .callout, .blur, .pixelate]
     var title: String { self == .perspective ? "3D camera" : rawValue.capitalized }
     var symbol: String {
         switch self { case .zoom: "plus.magnifyingglass"; case .speed: "bolt.fill"; case .blur: "drop.fill"; case .camera: "video.fill"; case .pan: "arrow.left.and.right"; case .spotlight: "flashlight.on.fill"; case .callout: "text.bubble"; case .pixelate: "square.grid.3x3.fill"; case .outline: "square.dashed.inset.filled"; case .typing: "text.cursor"; case .perspective: "cube.transparent" }

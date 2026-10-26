@@ -365,7 +365,7 @@ struct PreviewArea: View {
         // control; the editor layout leaves space for its surrounding chrome.
         let insetW: CGFloat = model.theatreMode ? 24 : 60
         let pathVisible = model.selectedSegment?.poseKeyframes?.isEmpty == false
-        let insetH: CGFloat = model.show3DCanvas ? (pathVisible ? 320 : 216) : (model.theatreMode ? 112 : 122)
+        let insetH: CGFloat = model.show3DCanvas ? (pathVisible ? 360 : 256) : (model.theatreMode ? 112 : 122)
         let maxW = max(100, available.width - insetW), maxH = max(100, available.height - insetH)
         return maxW / maxH > ratio ? CGSize(width: maxH * ratio, height: maxH) : CGSize(width: maxW, height: maxW / ratio)
     }
@@ -602,12 +602,20 @@ struct SegmentInspector: View {
                 Label(segment.kind.title, systemImage: segment.kind.symbol).font(.headline).foregroundStyle(AppTheme.green)
                 InspectorSlider(title: "Start", value: Binding(get: { segment.start }, set: { v in model.updateSelected { $0.start = v } }), range: 0...max(0.1, model.duration), suffix: "s")
                 InspectorSlider(title: "Duration", value: Binding(get: { segment.duration }, set: { v in model.updateSelected { $0.duration = v } }), range: 0.2...max(0.3, model.duration), suffix: "s")
-                if segment.kind != .perspective {
+                if segment.kind == .speed {
+                    InspectorSlider(title: "Range speed", value: Binding(get: { segment.intensity }, set: { v in model.updateSelected { $0.intensity = v } }), range: 0.25...4, suffix: "×")
+                    Text("Changes this range of video and audio. In overlaps, the newest speed range wins.").font(.caption2).foregroundStyle(.secondary)
+                }
+                if segment.kind != .perspective && segment.kind != .speed {
                     InspectorSlider(title: segment.kind == .zoom || segment.kind == .pan ? "Depth" : segment.kind == .callout ? "Text size" : "Amount", value: Binding(get: { segment.intensity }, set: { v in model.updateSelected { $0.intensity = v } }), range: 1...3, suffix: "×")
                 }
-                if segment.kind != .perspective && SegmentKind.availableCases.contains(segment.kind) {
+                if segment.kind != .perspective && segment.kind != .speed && SegmentKind.availableCases.contains(segment.kind) {
                     InspectorSlider(title: "Focus X", value: Binding(get: { segment.x }, set: { v in model.updateSelected { $0.x = v } }), range: 0...1, suffix: "")
                     InspectorSlider(title: "Focus Y", value: Binding(get: { segment.y }, set: { v in model.updateSelected { $0.y = v } }), range: 0...1, suffix: "")
+                }
+                if segment.kind == .pan {
+                    InspectorSlider(title: "Slide to X", value: Binding(get: { segment.endX ?? segment.x }, set: { v in model.updateSelected { $0.endX = v } }), range: 0...1, suffix: "")
+                    InspectorSlider(title: "Slide to Y", value: Binding(get: { segment.endY ?? segment.y }, set: { v in model.updateSelected { $0.endY = v } }), range: 0...1, suffix: "")
                 }
                 if segment.kind == .typing {
                     // Where the slide ends. The caret's position is estimated
@@ -617,6 +625,7 @@ struct SegmentInspector: View {
                 }
                 if segment.kind == .perspective {
                     ThreeDMoveControls(segment: segment)
+                    Button("Add nested 3D move") { model.addThreeDLayer(nested: true) }
                     if segment.poseKeyframes?.isEmpty != false {
                         DisclosureGroup("Fine tune") {
                             VStack(alignment: .leading, spacing: 12) {
@@ -651,7 +660,7 @@ struct SegmentInspector: View {
                         }
                     }
                 }
-                if segment.kind != .perspective { SegmentMotionInspector(segment: segment) }
+                if segment.kind != .perspective && segment.kind != .speed { SegmentMotionInspector(segment: segment) }
                 if [.blur, .spotlight, .pixelate, .outline].contains(segment.kind) {
                     InspectorSlider(title: "Region width", value: Binding(get: { segment.regionWidth }, set: { v in model.updateSelected { $0.width = v } }), range: 0.02...1, suffix: "")
                     InspectorSlider(title: "Region height", value: Binding(get: { segment.regionHeight }, set: { v in model.updateSelected { $0.height = v } }), range: 0.02...1, suffix: "")

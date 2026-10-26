@@ -7,8 +7,10 @@ struct TimelineView: View {
     /// its ends, or scrubbing. Decided once, where the press landed, and kept
     /// for the whole drag so the video cannot change what it is doing halfway.
     @State private var trimDrag: TimelineDrag.Grab = .none
-    private var visibleKinds: [SegmentKind] {
-        SegmentKind.availableCases.filter { kind in model.segments.contains { $0.kind == kind } }
+    private var lanes: [EffectLane] {
+        guard let held = model.heldTimelineLanes else { return EffectLane.pack(model.segments) }
+        let current = Dictionary(uniqueKeysWithValues: model.segments.map { ($0.id, $0) })
+        return held.map { EffectLane(kind: $0.kind, index: $0.index, segments: $0.segments.compactMap { current[$0.id] }) }
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +36,7 @@ struct TimelineView: View {
             }.buttonStyle(.plain).font(.caption).padding(.horizontal, 16).frame(height: 40).disabled(model.videoURL == nil)
             GeometryReader { geo in
                 let width = max(1, geo.size.width - labelWidth - 18)
+                ScrollView(.vertical) {
                 VStack(spacing: 6) {
                     ruler(width: width).padding(.leading, labelWidth)
                     HStack(spacing: 0) {
@@ -63,20 +66,21 @@ struct TimelineView: View {
                             .contentShape(Rectangle())
                             .gesture(videoTrackDrag(width: width))
                     }
-                    ForEach(visibleKinds) { kind in row(kind: kind, width: width) }
+                    ForEach(lanes) { lane in row(lane: lane, width: width) }
                 }
                 .padding(.horizontal, 9)
                 .overlay(alignment: .topLeading) {
                     if model.duration > 0 {
                         VStack(spacing: 0) {
                             RoundedRectangle(cornerRadius: 2).fill(AppTheme.green).frame(width: 8, height: 10)
-                            Rectangle().fill(AppTheme.green).frame(width: 1, height: CGFloat(62 + visibleKinds.count * 33))
+                            Rectangle().fill(AppTheme.green).frame(width: 1, height: CGFloat(62 + lanes.count * 33))
                         }.offset(x: 9 + labelWidth + width * model.playhead / model.duration - 4, y: 3).allowsHitTesting(false)
                     }
                 }
+                }
             }
             HStack {
-                Text("Drag the video's edges to set where it starts and ends")
+                Text("Edges snap to nearby edits · Hold Option to move freely")
                     .font(.caption2).foregroundStyle(.tertiary)
                     .help("Space play · ← → step a frame, with Shift a second · I in · O out · S split · [ ] jump to the ends")
                 Spacer()
@@ -85,7 +89,7 @@ struct TimelineView: View {
                 Button("Set out") { model.setTrimEnd() }
                 Button("Reset trim") { model.resetTrim() }
             }.font(.caption2).buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 12).disabled(model.videoURL == nil)
-        }.frame(height: CGFloat(146 + visibleKinds.count * 33)).background(AppTheme.panel)
+        }.frame(height: min(330, CGFloat(146 + lanes.count * 33))).background(AppTheme.panel)
         .onDeleteCommand { model.deleteSelected() }
     }
     /// Near enough to an end to mean that end. Generous, because an edge is
@@ -130,12 +134,12 @@ struct TimelineView: View {
         }.frame(width: width, height: 20, alignment: .leading).contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { model.seek(to: Double($0.location.x / width) * model.duration) })
     }
-    func row(kind: SegmentKind, width: CGFloat) -> some View {
+    func row(lane: EffectLane, width: CGFloat) -> some View {
         HStack(spacing: 0) {
-            Label(kind.title, systemImage: kind.symbol).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).frame(width: labelWidth, alignment: .leading)
+            Label(lane.title, systemImage: lane.kind.symbol).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).frame(width: labelWidth, alignment: .leading)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 5).fill(AppTheme.elevated)
-                ForEach(model.segments.filter { $0.kind == kind }) { SegmentBlock(segment: $0, fullWidth: width) }
+                ForEach(lane.segments) { SegmentBlock(segment: $0, fullWidth: width) }
             }.frame(width: width, height: 27).clipped()
             .coordinateSpace(name: SegmentBlock.space)
         }
@@ -237,6 +241,12 @@ struct SegmentBlock: View {
     private func time(_ x: CGFloat) -> Double {
         Double(x) / Double(max(1, fullWidth)) * model.duration
     }
+    private func snapped(_ value: Double) -> Double {
+        guard !NSEvent.modifierFlags.contains(.option) else { return value }
+        let edges: [Double] = [0, model.duration, model.trimStart, model.trimEnd, model.playhead]
+            + model.segments.filter { $0.id != segment.id }.flatMap { [$0.start, $0.end] }
+        return TimelineDrag.snapped(value, to: edges, tolerance: model.duration * 7 / max(1, Double(fullWidth)))
+    }
 
     var body: some View {
         // Wide enough that both ends and the middle can be taken hold of,
@@ -250,14 +260,17 @@ struct SegmentBlock: View {
                 .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(SegmentBlock.space)).onChanged { value in
                     select()
                     if dragOrigin == nil {
+                        model.beginTimelineGesture()
                         dragOrigin = segment
                         grabOffset = time(value.startLocation.x) - segment.start
                     }
                     guard let origin = dragOrigin, let grabOffset else { return }
                     let start = TimelineDrag.moved(origin: origin, pointer: time(value.location.x),
                                                    grabbedAt: grabOffset, duration: model.duration)
-                    model.updateSelected { $0.start = start }
-                }.onEnded { _ in dragOrigin = nil; grabOffset = nil })
+                    let snappedStart = snapped(start)
+                    let aligned = snappedStart != start ? snappedStart : snapped(start + origin.duration) - origin.duration
+                    model.updateSelected { $0.start = min(max(0, aligned), max(0, model.duration - origin.duration)) }
+                }.onEnded { _ in dragOrigin = nil; grabOffset = nil; model.endTimelineGesture() })
             handle(leading: false)
         }
         .foregroundStyle(color).frame(width: width, height: 23)
@@ -267,6 +280,14 @@ struct SegmentBlock: View {
         .onTapGesture { select(); model.seek(to: segment.start + min(0.5, segment.duration / 2)) }
         .contextMenu {
             Button("Duplicate") { select(); model.duplicateSelected() }
+            if segment.kind == .perspective {
+                Button("Add nested 3D move") { select(); model.addThreeDLayer(nested: true) }
+            }
+            Menu("Speed for this range") {
+                ForEach([0.5, 1.0, 1.5, 2.0, 4.0], id: \.self) { rate in
+                    Button("\(rate, specifier: "%.1f")×") { select(); model.speedSelectedRange(rate) }
+                }
+            }
             Button("Split at playhead") { select(); model.splitSelected() }
                 .disabled(!(model.playhead > segment.start + 0.1 && model.playhead < segment.end - 0.1))
             Button("Delete", role: .destructive) { select(); model.deleteSelected() }
@@ -280,11 +301,44 @@ struct SegmentBlock: View {
             .padding(.horizontal, 5).frame(height: 23).contentShape(Rectangle())
             .onHover { NSCursor.resizeLeftRight.push(); if !$0 { NSCursor.pop() } }
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named(SegmentBlock.space)).onChanged { value in
-                select(); if dragOrigin == nil { dragOrigin = segment }
+                select(); if dragOrigin == nil { model.beginTimelineGesture(); dragOrigin = segment }
                 guard let origin = dragOrigin else { return }
                 let edge = TimelineDrag.resized(origin: origin, leading: leading,
-                                                pointer: time(value.location.x), duration: model.duration)
+                                                pointer: snapped(time(value.location.x)), duration: model.duration)
                 model.updateSelected { $0.start = edge.start; $0.duration = edge.length }
-            }.onEnded { _ in dragOrigin = nil })
+            }.onEnded { _ in dragOrigin = nil; model.endTimelineGesture() })
+    }
+}
+
+/// Greedy interval packing keeps every overlapping effect selectable.
+struct EffectLane: Identifiable {
+    let kind: SegmentKind
+    let index: Int
+    var segments: [EditSegment]
+    var id: String { "\(kind.rawValue)-\(index)" }
+    var title: String { kind == .perspective ? "3D \(index + 1)" : (index == 0 ? kind.title : "\(kind.title) \(index + 1)") }
+    static func pack(_ segments: [EditSegment]) -> [EffectLane] {
+        var result: [EffectLane] = []
+        for kind in SegmentKind.availableCases {
+            let ordered = segments.enumerated().filter { $0.element.kind == kind }.sorted {
+                $0.element.start == $1.element.start ? $0.offset < $1.offset : $0.element.start < $1.element.start
+            }
+            var rows: [EffectLane] = []
+            for entry in ordered {
+                let segment = entry.element
+                if let index = rows.firstIndex(where: { ($0.segments.last?.end ?? 0) <= segment.start }) {
+                    rows[index].segments.append(segment)
+                } else { rows.append(EffectLane(kind: kind, index: rows.count, segments: [segment])) }
+            }
+            result += rows
+        }
+        return result
+    }
+}
+
+extension TimelineDrag {
+    static func snapped(_ time: Double, to edges: [Double], tolerance: Double) -> Double {
+        guard let nearest = edges.min(by: { abs($0 - time) < abs($1 - time) }), abs(nearest - time) <= tolerance else { return time }
+        return nearest
     }
 }

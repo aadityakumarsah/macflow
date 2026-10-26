@@ -8,12 +8,13 @@ final class EditorModel: ObservableObject {
     @Published var videoURL: URL?
     @Published var player = AVPlayer()
     @Published var cameraURL: URL?
-    @Published var duration: Double = 0
+    @Published var duration: Double = 0 { didSet { cachedTimeMap = nil } }
     @Published var playhead: Double = 0
     @Published var isPlaying = false
     @Published var segments: [EditSegment] = [] {
         willSet { remember() }
         didSet {
+            if segments.filter({ $0.kind == .speed }) != oldValue.filter({ $0.kind == .speed }) { cachedTimeMap = nil }
             changed(reusingMedia: segments.filter { $0.kind != .perspective } == oldValue.filter { $0.kind != .perspective })
         }
     }
@@ -69,7 +70,7 @@ final class EditorModel: ObservableObject {
     @Published var cameraMirrored = false { willSet { remember() } didSet { changed() } }
     @Published var trimStart: Double = 0 { willSet { remember() } didSet { changed() } }
     @Published var trimEnd: Double = 0 { willSet { remember() } didSet { changed() } }
-    @Published var playbackRate: Double = 1 { willSet { remember() } didSet { changed() } }
+    @Published var playbackRate: Double = 1 { willSet { remember() } didSet { cachedTimeMap = nil; changed() } }
     @Published var muted = false { willSet { remember() } didSet { changed() } }
     @Published var musicURL: URL? { willSet { remember() } didSet { changed() } }
     @Published var musicVolume: Double = 0.35 { willSet { remember() } didSet { changed() } }
@@ -79,6 +80,9 @@ final class EditorModel: ObservableObject {
     @Published var showCropEditor = false
     /// Whether the 3D handles are drawn over the preview.
     @Published var show3DCanvas = false
+    @Published var canvasTool: CanvasMotionTool = .tilt
+    @Published var snap3D = true
+    @Published var heldTimelineLanes: [EffectLane]?
     private var poseGestureActive = false
     @Published var pointerSamples: [PointerSample] = []
     @Published var recordedClicks: [RecordedClick] = []
@@ -188,7 +192,21 @@ final class EditorModel: ObservableObject {
     var standingPose: FramePose {
         cameraMove.pose.added(MotionEngine.stance(at: playhead, segments: segments).pose)
     }
-    var outputDuration: Double { max(0, trimEnd - trimStart) / playbackRate }
+    private var cachedTimeMap: PlaybackTimeMap?
+    var timeMap: PlaybackTimeMap {
+        if let cachedTimeMap { return cachedTimeMap }
+        let map = PlaybackTimeMap(duration: duration, rate: playbackRate, segments: segments)
+        cachedTimeMap = map
+        return map
+    }
+    var playerTimeMap: PlaybackTimeMap {
+        (player.currentItem?.videoComposition?.instructions.first as? CompositionInstruction)?.timeMap ?? timeMap
+    }
+    var outputDuration: Double { max(0, timeMap.outputTime(for: trimEnd) - timeMap.outputTime(for: trimStart)) }
+    func stepFrame(_ direction: Double) {
+        let output = timeMap.outputTime(for: playhead) + direction / Double(exportOptions.frameRate.rawValue)
+        seek(to: timeMap.sourceTime(for: output))
+    }
 
     func resetCursorSettings() {
         lastHistory = .distantPast
@@ -350,7 +368,7 @@ final class EditorModel: ObservableObject {
     }
     func seek(to seconds: Double) {
         playhead = max(0, min(duration, seconds))
-        player.seek(to: CMTime(seconds: playhead / playbackRate, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: CMTime(seconds: playerTimeMap.outputTime(for: playhead), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
     func setCameraVisible(_ visible: Bool) { showCamera = visible }
     func applyThreeDPreset(_ preset: ThreeDPreset) {
@@ -370,6 +388,67 @@ final class EditorModel: ObservableObject {
         }
         inspectorTab = "Segment"
         if let segment = selectedSegment { seek(to: segment.start + segment.duration * 0.72) }
+    }
+
+    /// A layer is a separate effect. Its local pose adds to existing motion,
+    /// so creating a nested move never replaces the selected one.
+    func addThreeDLayer(nested: Bool) {
+        guard videoURL != nil, trimEnd > trimStart else { return }
+        let parent = nested && selectedSegment?.kind == .perspective ? selectedSegment : nil
+        let lower = max(trimStart, parent?.start ?? trimStart)
+        let upper = min(trimEnd, parent?.end ?? trimEnd)
+        guard upper - lower >= 0.1 else { return }
+        let length = min(upper - lower, max(0.1, min(3, (upper - lower) * (parent == nil ? 1 : 0.5))))
+        let start = min(max(lower, playhead), upper - length)
+        var layer = EditSegment(kind: .perspective, start: start, duration: length, intensity: 1, x: 0.5, y: 0.5)
+        layer.poseKeyframes = [PoseKeyframe(time: 0, pose: .neutral),
+                               PoseKeyframe(time: 0.5, pose: .neutral),
+                               PoseKeyframe(time: 1, pose: .neutral)]
+        layer.curve = .smooth
+        lastHistory = .distantPast
+        segments.append(layer); selectedSegmentID = layer.id
+        show3DCanvas = true; inspectorTab = "Segment"; seekPose(0.5)
+    }
+
+    func selectThreeDLayer(_ id: UUID) {
+        guard let layer = segments.first(where: { $0.id == id && $0.kind == .perspective }) else { return }
+        selectedSegmentID = id; inspectorTab = "Segment"
+        seekPose(max(0, min(1, (playhead - layer.start) / layer.duration)))
+    }
+
+    func speedSelectedRange(_ speed: Double) {
+        guard let selected = selectedSegment else { addSegment(.speed); updateSelected { $0.intensity = speed }; return }
+        if selected.kind == .speed { updateSelected { $0.intensity = speed }; return }
+        var range = EditSegment(kind: .speed, start: selected.start, duration: selected.duration,
+                                intensity: speed, x: 0.5, y: 0.5)
+        range.curve = .linear
+        lastHistory = .distantPast; segments.append(range); selectedSegmentID = range.id
+        inspectorTab = "Segment"
+    }
+
+    func reversePosePath() {
+        guard let segment = selectedSegment, let frames = segment.poseKeyframes else { return }
+        lastHistory = .distantPast
+        updateSelected { $0.poseKeyframes = frames.map { f in
+            var frame = f; frame.time = 1 - f.time; return frame
+        }.sorted { $0.time < $1.time } }
+    }
+
+    func prepareCanvasDrag() {
+        let time = playhead
+        beginPoseGesture()
+        if let segment = posedSegment, segment.poseKeyframes?.isEmpty != false {
+            customizeThreeDPath(); seek(to: time)
+        }
+    }
+
+    func beginTimelineGesture() {
+        heldTimelineLanes = EffectLane.pack(segments)
+        beginPoseGesture()
+    }
+    func endTimelineGesture() {
+        heldTimelineLanes = nil
+        endPoseGesture()
     }
 
     /// Capture a gesture once; long drags remain a single undo action.
@@ -450,7 +529,7 @@ final class EditorModel: ObservableObject {
             guard let self, !Task.isCancelled, self.selectedSegmentID == segment.id,
                   let item = self.player.currentItem else { return }
             self.playhead = start
-            let arrived = await self.player.seek(to: CMTime(seconds: start / self.playbackRate, preferredTimescale: 600),
+            let arrived = await self.player.seek(to: CMTime(seconds: self.playerTimeMap.outputTime(for: start), preferredTimescale: 600),
                                                  toleranceBefore: .zero, toleranceAfter: .zero)
             guard arrived, !Task.isCancelled, self.player.currentItem === item else { return }
             self.movePreviewEnd = end
@@ -671,7 +750,7 @@ final class EditorModel: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1.0 / 60, preferredTimescale: 600), queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self, self.isPlaying else { return }
-                self.playhead = time.seconds.isFinite ? time.seconds * self.playbackRate : 0
+                self.playhead = time.seconds.isFinite ? self.playerTimeMap.sourceTime(for: time.seconds) : 0
                 let end = min(self.trimEnd, self.movePreviewEnd ?? self.trimEnd)
                 if self.playhead >= end - 0.02 {
                     self.player.pause(); self.isPlaying = false; self.movePreviewEnd = nil; self.seek(to: end)
