@@ -1,167 +1,32 @@
-import React, { useState } from 'react'
-import {
-  ArrowUpRight, Check, CircleHelp, Clapperboard, Command, Copy,
-  Download, FolderOpen, Fullscreen, LayoutPanelLeft, LockKeyhole, Menu,
-  Monitor, MousePointer2, MousePointerClick, Play, Ratio, Scissors,
-  ShieldCheck, Sparkles, Star, Video, WandSparkles, X,
-} from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { ArrowRight, ArrowUpRight, ArrowDown, Check, ChevronDown, Monitor, Clapperboard, Box, MousePointer2, MousePointerClick, Layers, Sparkles, Download, Github, Menu, X, LockKeyhole, SlidersHorizontal, Scissors, Gauge, Volume2, Video, Globe, Heart, Plus, Minus, Copy, Pause, Play } from 'lucide-react'
+import Demo, { SampleScreen } from './Demo'
 
-const RELEASE = 'https://github.com/aadityakumarsah/macflow/releases/latest'
-const REPO = 'https://github.com/aadityakumarsah/macflow'
-const INSTALL = 'curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash'
-const LATEST_RELEASE_API = 'https://api.github.com/repos/aadityakumarsah/macflow/releases/latest'
-const backgrounds = ['bg', 'bg2', 'bg3', 'bg4', 'bg5', 'bg6', 'bg7', 'bg8', 'bg9', 'bg10', 'bg11']
-const backgroundNames = backgrounds.map(bg => `${bg}.png`)
-const ratios = [
-  { label: '16:9', className: 'landscape' },
-  { label: '9:16', className: 'portrait' },
-  { label: '1:1', className: 'square' },
-  { label: 'Custom', className: 'custom' },
-]
+const REPO='https://github.com/aadityakumarsah/macflow'
+const RELEASE=`${REPO}/releases/latest`
+const INSTALL='curl -fsSL https://raw.githubusercontent.com/aadityakumarsah/macflow/main/install.sh | bash'
+const modes=[{id:'record',label:'Record',icon:Monitor,word:'your ideas.'},{id:'edit',label:'Edit',icon:Clapperboard,word:'your story.'},{id:'motion',label:'Animate',icon:Box,word:'your imagination.'}]
+function Apple(){return <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M17.1 12.6c0-2 1.6-3 1.7-3.1-1-1.5-2.6-1.7-3.2-1.7-1.4-.2-2.7.8-3.4.8-.7 0-1.8-.8-3-.8-1.5 0-3 .9-3.8 2.2-1.6 2.8-.4 7 1.2 9.2.8 1.1 1.7 2.2 2.9 2.2 1.1-.1 1.6-.7 3-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.8-2.2.9-1.3 1.3-2.5 1.3-2.6-.1 0-2.4-.9-2.4-4zM14.9 6.3c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3z"/></svg>}
+function Brand(){return <a className="brand" href="#top" aria-label="FocusFlow home"><img src="/icon.png" alt=""/>FocusFlow</a>}
+function DownloadButton({compact=false}){const[busy,setBusy]=useState(false);async function download(e){e.preventDefault();if(busy)return;setBusy(true);try{const r=await fetch('https://api.github.com/repos/aadityakumarsah/macflow/releases/latest',{signal:AbortSignal.timeout(7000)});if(!r.ok)throw Error();const data=await r.json();const asset=data.assets?.find(a=>a.name.endsWith('.dmg'));window.location.assign(asset?.browser_download_url||RELEASE)}catch{window.location.assign(RELEASE)}finally{setBusy(false)}}return <a className={`button ${compact?'dark':'primary'}`} href={RELEASE} onClick={download} aria-busy={busy}><Apple/>{busy?'Finding download…':compact?'Download':'Download free for macOS'}</a>}
+function Sky({bottom=false}){return <div className={`sky ${bottom?'bottom-sky':''}`} aria-hidden="true"><div className="sun-glow"/>{['wisp','cumulus','bank','wisp','cumulus','bank'].map((name,i)=><img key={i} className={`cloud cloud-${i}`} src={`/site/cloud-${name}.webp`} alt=""/>)}</div>}
+function Header(){const[menu,setMenu]=useState(false);return <header id="top" className="site-header"><Brand/><nav className={menu?'nav open':'nav'} aria-label="Main navigation"><a href="#features" onClick={()=>setMenu(false)}>Product <ChevronDown size={13}/></a><a href="#demo" onClick={()=>setMenu(false)}>Interactive demo</a><a href="/studio/">Tab studio <ArrowUpRight size={13}/></a><a href="#faq" onClick={()=>setMenu(false)}>FAQs</a><a href="#download" onClick={()=>setMenu(false)}>Download</a></nav><div className="header-actions"><a className="github-link" href={REPO} target="_blank" rel="noreferrer"><Github size={18}/> GitHub</a><DownloadButton compact/><button className="menu-button" aria-label={menu?'Close navigation':'Open navigation'} aria-expanded={menu} onClick={()=>setMenu(!menu)}>{menu?<X/>:<Menu/>}</button></div></header>}
+function MotionPlayground(){const [pose,setPose]=useState('Orbit');const [nested,setNested]=useState(false);return <div className={`motion-playground pose-${pose.toLowerCase().replace(' ','-')} ${nested?'nested':''}`}><div className="motion-grid"/><div className="motion-frame"><div className="motion-backplate"/><SampleScreen mini/><div className="motion-axis x"/><div className="motion-axis y"/><span className="motion-handle"/></div><div className="motion-options" aria-label="Try a motion preset">{['Orbit','Slide','Push in'].map(p=><button key={p} aria-pressed={pose===p} onClick={()=>setPose(p)}>{p}</button>)}<button onClick={()=>setNested(!nested)} aria-pressed={nested}><Layers size={12}/>{nested?'Layered':'Nest a move'}</button></div><span className="art-label"><Box size={13}/> 3D, without the learning curve</span></div>}
+function CursorArt(){const [clicked,setClicked]=useState(0);return <button className="cursor-art" onClick={()=>setClicked(c=>c+1)} aria-label="Try the click ripple animation"><div className="cursor-art-copy">Make every<br/><em>click count.</em></div><div className="cursor-art-target" key={clicked}><span/><span/><MousePointer2 size={62} fill="white" stroke="#282a32" strokeWidth={1.1}/></div><span className="art-label"><MousePointerClick size={13}/> Click anywhere to try it</span></button>}
+function CanvasArt(){const [bg,setBg]=useState(0);return <div className={`canvas-art canvas-art-${bg}`}><div className="canvas-frame"><SampleScreen mini/></div><div className="canvas-picks">{['#c8b7ed','#f0b896','#8bafca','#303b52'].map((color,i)=><button key={color} onClick={()=>setBg(i)} style={{background:color}} aria-label={`Try canvas color ${i+1}`} aria-pressed={bg===i}>{bg===i&&<Check size={14}/>}</button>)}</div><span className="art-label"><Layers size={13}/> A frame that feels like you</span></div>}
+const features=[{icon:Monitor,title:'Capture your corner of the world.',text:'A window, your whole display, or a Chrome tab. Add your camera and audio, then let the story unfold.'},{icon:MousePointerClick,title:'Keep the important parts in focus.',text:'Smooth automatic zooms follow your clicks. A clear, customizable cursor helps everyone follow along.'},{icon:Scissors,title:'Find your rhythm.',text:'Trim the pauses. Speed up a selected range. Layer effects, move them around, and undo freely.'},{icon:Box,title:'Give your ideas a new dimension.',text:'Tilt, slide, and orbit with your cursor. Nest a 3D move inside another and make every frame your own.'},{icon:Video,title:'You belong in the picture.',text:'Record a separate camera track. Adjust its size, shape, and position after you finish recording.'},{icon:Download,title:'Ready for wherever it goes next.',text:'Export MP4 or MOV. Keep native source resolution, choose an aspect ratio, and share the finished file.'}]
+const questions=[['Is FocusFlow really free?','Yes. FocusFlow is free and open source under the MIT license. There is no subscription and no account is required to record, edit, or export.'],['What do I need to run it?','A Mac with Apple silicon running macOS 14 or later. Microphone capture in the native recorder requires macOS 15 or later. Download the disk image, then drag FocusFlow into Applications.'],['Can I record a single browser tab?','Yes. Choose Chrome tab in FocusFlow to open the connected tab studio. You can also try the browser studio on this site; browser-only recordings download locally.'],['Do my recordings get uploaded?','Native recordings and projects stay on your Mac. FocusFlow does not require a cloud account. You choose where to share your exported video.'],['Can I edit motion after recording?','Yes. Change zooms, cursor styling, backgrounds, timing, and 3D poses after recording. Nested motion layers have their own timeline rows, and edits support undo.'],['How do I update FocusFlow?','Open FocusFlow → Check for Updates, then choose Install and relaunch. You can also download the latest disk image from this page.']]
 
-function GithubMark() {
-  return <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.558 21.924c.563.104.77-.244.77-.543 0-.267-.01-.974-.016-1.912-3.132.68-3.793-1.51-3.793-1.51-.512-1.3-1.25-1.646-1.25-1.646-1.023-.699.077-.684.077-.684 1.132.08 1.727 1.162 1.727 1.162 1.006 1.724 2.639 1.226 3.283.937.102-.728.394-1.226.716-1.508-2.5-.284-5.128-1.25-5.128-5.56 0-1.229.44-2.233 1.16-3.02-.117-.285-.503-1.428.11-2.977 0 0 .944-.302 3.094 1.154A10.78 10.78 0 0 1 12 5.37c.956.005 1.918.13 2.817.379 2.148-1.456 3.09-1.154 3.09-1.154.615 1.549.229 2.692.113 2.977.722.787 1.158 1.791 1.158 3.02 0 4.32-2.633 5.273-5.14 5.55.405.35.766 1.046.766 2.108 0 1.522-.014 2.75-.014 3.124 0 .301.203.65.775.54A11.252 11.252 0 0 0 12 .75Z"/></svg>
+export default function App(){const[mode,setMode]=useState('record');const[paused,setPaused]=useState(false);const[copied,setCopied]=useState(false);const[copyError,setCopyError]=useState(false);const root=useRef(null)
+  useEffect(()=>{const observer=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('revealed');observer.unobserve(e.target)}}),{threshold:.08});root.current?.querySelectorAll('.reveal').forEach(el=>observer.observe(el));return()=>observer.disconnect()},[])
+  async function copy(){try{await navigator.clipboard.writeText(INSTALL);setCopied(true);setCopyError(false)}catch{setCopyError(true)}}
+  return <div ref={root} className={`site ${paused?'animations-paused':''}`}><a className="skip-link" href="#main">Skip to content</a><Header/><main id="main"><section className="hero-shell"><Sky/><div className="hero-copy"><a className="announcement" href={`${REPO}/releases/tag/v0.26.0`}><span>NEW</span> Meet layered 3D motion <span className="announcement-detail">Made for your imagination</span><ArrowRight size={15}/></a><div className="mode-area"><div className="mode-switch" aria-label="Explore FocusFlow workflows">{modes.map(({id,label,icon:Icon})=><button key={id} aria-pressed={mode===id} className={mode===id?'active':''} onClick={()=>setMode(id)}><Icon size={16}/>{label}</button>)}</div><span className="click-hint">Try me <MousePointer2 size={21} fill="#242b39" stroke="white"/></span></div><h1>The open source screen recorder<br/><em>for <span key={mode}>{modes.find(m=>m.id===mode).word}</span></em></h1><p className="hero-description">Record your screen. Shape the story. Turn everyday<br className="desktop-break"/> moments into beautiful videos with smooth zooms,<br className="desktop-break"/> playful 3D motion, and an editor that feels like home.</p><div className="hero-actions"><DownloadButton/><a className="button secondary" href="#demo">See how FocusFlow works <span className="circle-icon"><ArrowDown size={16}/></span></a></div><div className="hero-meta"><Check size={14}/> Free forever <i/> No account <i/> Yours to create</div><a className="browser-link" href="/studio/">Also recording in your browser <Globe size={17}/><ArrowUpRight size={13}/></a></div><Demo mode={mode} onModeChange={setMode}/><button className="animation-toggle" onClick={()=>setPaused(!paused)} aria-pressed={paused}>{paused?<Play size={12}/>:<Pause size={12}/>} {paused?'Resume animations':'Pause animations'}</button></section>
+  <section className="intro-section reveal"><span className="eyebrow">LESS FRICTION. MORE FLOW.</span><h2>You have something to show.<br/><em>Make it worth watching.</em></h2><p>A quick walkthrough. Your next big launch. A small idea that deserves<br className="desktop-break"/> a little more care. One calm workspace takes you from capture to finish.</p><div className="workflow-pills"><span><Monitor/> Record</span><ArrowRight/><span><SlidersHorizontal/> Make it yours</span><ArrowRight/><span><Sparkles/> Share something good</span></div></section>
+  <section id="features" className="feature-section section-wrap"><div className="feature-heading reveal"><span className="eyebrow">A LITTLE POLISH GOES A LONG WAY</span><h2>Big ideas.<br/><em>Beautiful little details.</em></h2><p>Everything you need to make a recording<br/> feel like something you made.</p></div><div className="showcase-grid"><article className="showcase-card wide reveal"><MotionPlayground/><div className="showcase-copy"><span className="small-tag">MOTION, MADE SIMPLE</span><h3>A whole new dimension<br/>of <em>“I made that.”</em></h3><p>Grab the frame and move it. Tilt, slide, zoom, and layer your way to a video that feels alive. No keyframe expertise required.</p><a href="#demo" onClick={()=>setMode('motion')}>Play with 3D motion <ArrowRight size={16}/></a></div></article><article className="showcase-card reveal"><CursorArt/><div className="showcase-copy"><h3>Follow the thought.</h3><p>Gentle zooms, a smoother cursor, and satisfying click effects keep the attention exactly where it belongs.</p></div></article><article className="showcase-card reveal"><CanvasArt/><div className="showcase-copy"><h3>Set the scene.</h3><p>Beautiful backgrounds. Just the right padding. A native Mac frame. Little choices that make a big difference.</p></div></article></div></section>
+  <section className="toolkit section-wrap"><div className="section-heading reveal"><span className="eyebrow">FROM THE FIRST CLICK TO THE FINAL FRAME</span><h2>Everything in its place.<br/><em>Everything at your fingertips.</em></h2></div><div className="feature-list">{features.map(({icon:Icon,title,text},i)=><article key={title} className="reveal" style={{'--delay':`${i%3*65}ms`}}><span className="feature-icon"><Icon size={21}/></span><h3>{title}</h3><p>{text}</p></article>)}</div></section>
+  <section className="privacy-section section-wrap reveal"><div className="privacy-copy"><span className="eyebrow">YOUR RECORDINGS. ACTUALLY YOURS.</span><h2>Made on your Mac.<br/><em>Stays on your Mac.</em></h2><p>Local files. An open codebase. No account standing between you and your next idea. This is your creative space.</p><a className="text-link" href={REPO} target="_blank" rel="noreferrer"><Github size={17}/> Explore the source <ArrowUpRight size={16}/></a></div><div className="privacy-art"><div className="privacy-orbit orbit-one"/><div className="privacy-orbit orbit-two"/><div className="app-token"><img src="/icon.png" alt="FocusFlow"/></div><span className="privacy-chip chip-one"><LockKeyhole size={16}/> Private by default</span><span className="privacy-chip chip-two"><Check size={16}/> No account needed</span><span className="privacy-chip chip-three"><Github size={16}/> Open source</span></div></section>
+  <section id="pricing" className="pricing-section section-wrap reveal"><div><span className="eyebrow">GOOD TOOLS SHOULD BE FOR EVERYONE</span><h2>All the creativity.<br/><em>None of the subscription.</em></h2><p>Build something, teach something, show something.<br/>FocusFlow is here for all of it.</p></div><div className="free-card"><span>THE WHOLE WORKSPACE</span><div className="price">$0 <small>forever</small></div><p>For your first recording and your next hundred.</p><div className="free-features">{['Native screen recording','The complete editing toolkit','Layered 3D motion & custom paths','Local projects. Unlimited exports.'].map(x=><span key={x}><Check size={16}/>{x}</span>)}</div><DownloadButton/><small>macOS 14+ · Apple silicon</small></div></section>
+  <section id="faq" className="faq-section section-wrap"><div className="section-heading reveal"><span className="eyebrow">A FEW THINGS YOU MIGHT BE WONDERING</span><h2>A little more <em>clarity.</em></h2></div><div className="faq-list reveal">{questions.map(([q,a])=><details key={q}><summary>{q}<Plus size={18}/></summary><p>{a}</p></details>)}</div></section>
+  <section id="download" className="download-section reveal"><Sky bottom/><div className="download-content"><img className="download-icon" src="/icon.png" alt=""/><h2>Your next great video<br/><em>starts with a click.</em></h2><p>Make something worth watching.</p><DownloadButton/><span className="download-meta">Free & open source · macOS 14+ · Apple silicon</span><details className="terminal-install"><summary>Prefer the Terminal? <ChevronDown size={13}/></summary><div><code>{INSTALL}</code><button onClick={copy} aria-label="Copy install command">{copied?<Check size={16}/>:<Copy size={16}/>}</button></div><span role="status">{copyError?'Select the command above to copy it.':copied?'Copied. Paste in Terminal to install.':''}</span></details></div></section>
+  </main><footer className="site-footer"><div className="footer-top"><div><Brand/><p>A little focus. A lot of possibility.</p></div><div><strong>Product</strong><a href="#features">Features</a><a href="#demo">Interactive demo</a><a href="/studio/">Browser studio</a></div><div><strong>Resources</strong><a href={`${REPO}#readme`}>Documentation</a><a href={`${REPO}/releases`}>What’s new</a><a href={`${REPO}/issues`}>Feedback & help</a></div><div><strong>Open by design</strong><a href={REPO}>GitHub <ArrowUpRight size={12}/></a><a href={`${REPO}/blob/main/LICENSE`}>MIT license</a><a href="#download">Download FocusFlow</a></div></div><div className="footer-bottom"><span>© {new Date().getFullYear()} FocusFlow</span><span>Made with care. Shared with everyone. <Heart size={12}/></span><a href="#top">Back to top ↑</a></div></footer></div>
 }
-
-function CopyInstallButton({ onCopy, copied, className = '' }) {
-  return <button className={`button button-primary ${className}`} type="button" onClick={onCopy}>
-    {copied ? <Check size={17} /> : <Copy size={17} />} {copied ? 'Copied to clipboard' : 'Copy install command'}
-  </button>
-}
-
-function DmgDownload({ className = '' }) {
-  const [busy, setBusy] = useState(false)
-  async function download(event) {
-    event.preventDefault()
-    if (busy) return
-    setBusy(true)
-    try {
-      const response = await fetch(LATEST_RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } })
-      if (!response.ok) throw new Error('Could not read the latest release')
-      const release = await response.json()
-      const asset = release.assets?.find(item => item.name?.toLowerCase().endsWith('.dmg'))
-      window.location.assign(asset?.browser_download_url || RELEASE)
-    } catch {
-      window.location.assign(RELEASE)
-    }
-  }
-  return <a className={`button button-outline ${className}`} href={RELEASE} onClick={download} aria-busy={busy}>
-    <Download size={17} /> {busy ? 'Finding latest .dmg…' : 'Download .dmg'}
-  </a>
-}
-
-function Brand() {
-  return <a className="brand" href="#top" aria-label="FocusFlow home">
-    <img src="./icon.png" alt="" /><span>FocusFlow<span className="brand-dot">.</span></span>
-  </a>
-}
-
-function Header({ onCopy, copied }) {
-  const [open, setOpen] = useState(false)
-  return <header className="site-header" id="top">
-    <div className="header-inner wrap">
-      <Brand />
-      <nav className={open ? 'main-nav is-open' : 'main-nav'} aria-label="Main navigation">
-        <a href="#how" onClick={() => setOpen(false)}>How it works</a>
-        <a href="#editor" onClick={() => setOpen(false)}>The editor</a>
-        <a href="#formats" onClick={() => setOpen(false)}>Canvas</a>
-        <a href="./studio/" onClick={() => setOpen(false)}>Tab studio <ArrowUpRight size={14} /></a>
-        <a className="nav-github" href={REPO} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}><GithubMark /><Star size={13} fill="currentColor" /> Star on GitHub</a>
-      </nav>
-      <button className="header-cta" type="button" onClick={onCopy} title="Copy the FocusFlow install command" aria-label={copied ? 'Install command copied' : 'Copy install command'}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Download'}</button>
-      <button className="menu-button" type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? <X size={22} /> : <Menu size={22} />}
-      </button>
-    </div>
-  </header>
-}
-
-function DemoScreen() {
-  return <div className="demo-screen">
-    <div className="demo-top"><span className="demo-pill"><span /> LIVE PREVIEW</span><span>Presentation_01</span><span>•••</span></div>
-    <div className="demo-content">
-      <div className="demo-kicker">A BETTER WAY TO SHOW YOUR WORK</div>
-      <div className="demo-title">Make every<br /><em>detail</em> count.</div>
-      <div className="demo-lines"><i /><i /></div>
-      <div className="demo-orbit orbit-one" /><div className="demo-orbit orbit-two" />
-      <div className="demo-card"><span className="demo-card-icon"><Play size={13} fill="currentColor" /></span><span>From idea to impact<br /><small>See what matters</small></span></div>
-    </div>
-  </div>
-}
-
-function ProductWindow({ size = 1.25, ratio = '16:9', compact = false }) {
-  const width = `${Math.round(size * 15 + 15)}px`
-  return <div className={`product-window ${compact ? 'product-compact' : ''}`} aria-label="Illustration of the FocusFlow editor">
-    <div className="product-titlebar"><div className="product-title-brand"><span className="product-app-icon"><MousePointer2 size={12} fill="white" /></span><strong>FocusFlow</strong><span className="product-divider" /> <span>Studio preview</span></div><div className="product-title-right"><span>↶</span><span>↷</span><span>⋯</span><span className="product-export"><ArrowUpRight size={12} /> Export video</span></div></div>
-    <div className="product-body">
-      <div className="product-rail"><div className="product-rail-item"><span>◉</span> Record</div><div className="product-rail-item"><FolderOpen size={12} /> Recordings</div><span className="product-rail-caption">STUDIO</span><div className="product-rail-item"><LayoutPanelLeft size={12} /> Canvas</div><div className="product-rail-item active"><MousePointer2 size={12} /> Cursor</div><div className="product-rail-item"><Sparkles size={12} /> Motion</div><div className="product-rail-item"><Video size={12} /> Camera</div></div>
-      <div className="product-main"><div className="product-preview-top"><span>⛶ &nbsp; PREVIEW</span><span>{ratio} &nbsp; · &nbsp; 1920 × 1080</span></div><div className="product-stage"><div className="product-stage-inner"><DemoScreen /><div className="demo-motion-glow"/><div className="demo-focus-frame"/><div className="demo-stage-progress"/><div className="demo-cursor" style={{ width, height: width }}><span className="demo-click-ring"/><span className="demo-click-ring second"/><MousePointer2 size="100%" fill="white" stroke="#1c1c2e" strokeWidth={1.4}/></div></div></div><div className="product-transport"><span>↺</span><span className="product-play"><Play size={10} fill="currentColor" /></span><span>↻</span><small>00:08 / 00:24</small></div><div className="product-timeline"><div className="timeline-label">TIMELINE <span>motion graphics</span></div><div className="timeline-ruler">00:00 <span>00:05</span><span>00:10</span><span>00:15</span></div><div className="timeline-track"><span className="timeline-track-head">Video</span><span className="timeline-track-block">Launch demo.mp4</span></div><div className="timeline-track"><span className="timeline-track-head">Zoom</span><span className="timeline-zoom-block">Click zoom</span></div><div className="timeline-playhead" /></div></div>
-      <div className="product-inspector"><strong>Cursor</strong><div className="inspector-separator"/><span className="inspector-cap">CURSOR</span><div className="inspector-row"><span>Show cursor</span><span className="tiny-switch" /></div><div className="inspector-row"><span>Size</span><b>{size}×</b></div><div className="fake-slider"><span style={{ width: `${Math.min(86, size * 15)}%` }} /></div><div className="size-choices"><span>1×</span><span className={size === 1.25 ? 'selected' : ''}>1.25×</span><span>2×</span><span>3×</span></div><div className="inspector-separator"/><span className="inspector-cap">CLICK EFFECTS</span><div className="inspector-row"><span>Animate clicks</span><span className="tiny-switch" /></div><div className="inspector-row"><span>Animation</span><span className="fake-select">Ripple⌄</span></div><div className="effect-colors"><i/><i/><i/><i/></div></div>
-    </div>
-  </div>
-}
-
-function SectionIntro({ eyebrow, title, text, center = false }) {
-  return <div className={`section-intro ${center ? 'center' : ''}`}><span className="eyebrow">{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>
-}
-
-function App() {
-  const [cursorSize, setCursorSize] = useState(1.25)
-  const [clickStyle, setClickStyle] = useState('Ripple')
-  const [ratio, setRatio] = useState('16:9')
-  const [selectedBackground, setSelectedBackground] = useState(0)
-  const [backgroundCount, setBackgroundCount] = useState(4)
-  const [copyStatus, setCopyStatus] = useState('idle')
-  async function copyInstall() {
-    try {
-      let worked = false
-      if (navigator.clipboard?.writeText) {
-        try { await navigator.clipboard.writeText(INSTALL); worked = true } catch { /* Try the selection fallback. */ }
-      }
-      if (!worked) {
-        const field = document.createElement('textarea')
-        field.value = INSTALL
-        field.style.position = 'fixed'
-        field.style.opacity = '0'
-        document.body.appendChild(field)
-        field.select()
-        worked = document.execCommand('copy')
-        field.remove()
-        if (!worked) throw new Error('Copy failed')
-      }
-      setCopyStatus('copied')
-      window.setTimeout(() => setCopyStatus('idle'), 3000)
-    } catch {
-      setCopyStatus('failed')
-    }
-  }
-  return <>
-    <Header onCopy={copyInstall} copied={copyStatus === 'copied'} />
-    <div className={`copy-toast ${copyStatus === 'idle' ? '' : 'visible'}`} role="status" aria-live="polite">
-      {copyStatus === 'copied' ? <><Check size={16} /> Install command copied. Paste it in Terminal.</> : copyStatus === 'failed' ? 'Copy failed. Select the command below to copy it.' : ''}
-    </div>
-    <main>
-      <section className="hero wrap" aria-labelledby="hero-title">
-        <div className="hero-copy"><div className="hero-announcement"><span className="announcement-dot" /> THE SCREEN RECORDER WITH AN EDITOR INSIDE <ArrowUpRight size={13}/></div><h1 id="hero-title">Make your screen<br />worth <em>watching.</em></h1><p>Record on your Mac. Give clicks the focus they deserve. Shape a polished video without leaving the editor.</p><div className="hero-actions"><CopyInstallButton onCopy={copyInstall} copied={copyStatus === 'copied'} /><DmgDownload /></div><div className="hero-proof"><span className="proof-icon"><Check size={12}/></span> Free &amp; open source <span className="proof-divider"/> macOS 14+ · Apple silicon</div></div>
-        <div className="hero-product"><div className="hero-glow" /><div className="hero-product-inner"><div className="float-note note-one"><span><MousePointerClick size={16}/></span> Clicks get the spotlight</div><ProductWindow size={cursorSize} ratio={ratio}/><div className="float-note note-two"><span><Ratio size={16}/></span> Every ratio, one recording</div></div><p className="hero-caption">A focused workspace for everything after you press record.</p></div>
-      </section>
-
-      <div className="marquee"><div className="wrap marquee-inner"><span>ONE CONTINUOUS WORKFLOW</span><span>Capture</span><i/><span>Focus</span><i/><span>Finish</span><i/><span>Share</span></div></div>
-
-      <section id="how" className="section workflow wrap"><SectionIntro eyebrow="01 / THE WORKFLOW" title={<>From recording to <em>ready.</em></>} text="The small steps between capture and a good video belong in one place." /><div className="workflow-grid"><article><div className="step-head"><span>01</span><Monitor size={21}/></div><h3>Record exactly what you need.</h3><p>Choose a window, a display, or a single Chrome tab. The web studio connects straight to the Mac editor. Add camera and microphone when you want them.</p><div className="step-tags"><span>Window</span><span>Display</span><span>Chrome tab</span></div></article><article><div className="step-head"><span>02</span><MousePointerClick size={21}/></div><h3>Let clicks guide the eye.</h3><p>Clicks gain smooth focus, clear accent frames and bold double ripples. A larger pointer stays visible through the action.</p><div className="step-tags"><span>Focus</span><span>Large cursor</span><span>Double ripple</span></div></article><article><div className="step-head"><span>03</span><Clapperboard size={21}/></div><h3>Make it feel finished.</h3><p>Frame the content, set your canvas, trim the timeline, then export an MP4 or MOV for wherever it goes next.</p><div className="step-tags"><span>Canvas</span><span>Timeline</span><span>Export</span></div></article></div></section>
-
-      <section id="editor" className="section cursor-feature"><div className="wrap feature-grid"><div className="feature-copy"><span className="eyebrow">02 / THE CURSOR</span><h2>A pointer people<br />can <em>actually follow.</em></h2><p>Replace the captured pointer with a cursor you can style after a native recording. Give every click a bold double ripple, pulse, or press so the action never gets lost.</p><ul className="tick-list"><li><Check size={16}/> Size from 0.5× to 10×</li><li><Check size={16}/> Click animations and soft highlights</li><li><Check size={16}/> Styled in the preview and final export</li></ul><div className="feature-note"><CircleHelp size={16}/> Cursor resizing uses a separate pointer track. When Chrome includes its own cursor, FocusFlow suppresses the replacement to prevent a double pointer.</div></div><div className="cursor-playground"><div className="playground-head"><span>TRY THE CURSOR</span><span className="live-pill"><i/> LIVE PREVIEW</span></div><div className="playground-canvas"><div className="playground-caption">Small details.<br /><em>Big difference.</em></div><div className="playground-pointer" style={{ transform: `translate(-50%, -50%) scale(${0.65 + cursorSize * 0.28})` }}><div className={clickStyle === 'Press' ? 'pointer-ring press' : 'pointer-ring'} /><MousePointer2 size={52} fill="#fff" stroke="#1b1b2e" strokeWidth={1.4} /></div><div className="playground-grid" /></div><div className="playground-controls"><div className="control-top"><label htmlFor="cursor-size">Cursor size</label><strong>{cursorSize.toFixed(2).replace(/0$/, '')}×</strong></div><input id="cursor-size" type="range" min="0.5" max="10" step="0.05" value={cursorSize} onChange={e => setCursorSize(Number(e.target.value))}/><div className="control-bottom"><span>0.5×</span><span>10×</span></div><div className="effect-picker"><span>Click effect</span><div>{['Ripple','Pulse','Press'].map(style => <button key={style} className={clickStyle === style ? 'is-selected' : ''} onClick={() => setClickStyle(style)} type="button">{style}</button>)}</div></div></div></div></div></section>
-
-      <section id="formats" className="section formats wrap"><div className="feature-grid format-grid"><div className="format-art"><div className="format-art-top"><span>CANVAS PREVIEW</span><span>{ratio === 'Custom' ? '21:9' : ratio}</span></div><div className={`format-stage ${ratios.find(r => r.label === ratio)?.className || 'landscape'}`} style={{ backgroundImage: `url(./${backgrounds[selectedBackground]}.png?v=4)` }}><div className="format-image"><div className="format-image-top"><i/><i/><i/><span>Project overview</span></div><div className="format-image-body"><div className="format-mini-title">Thoughtful work<br /><em>deserves the frame.</em></div><div className="format-mini-card"><span>01</span><span>Clearer stories start here.</span></div></div></div></div><div className="background-options" role="group" aria-label="Preview background">{backgrounds.slice(0, backgroundCount).map((bg, index) => <button key={bg} type="button" className={selectedBackground === index ? 'active' : ''} aria-label={backgroundNames[index]} aria-pressed={selectedBackground === index} title={backgroundNames[index]} onClick={() => setSelectedBackground(index)} style={{ backgroundImage: `url(./${bg}.png?v=4)` }} />)}</div><button type="button" className="background-more" onClick={() => setBackgroundCount(backgroundCount >= backgrounds.length ? 4 : Math.min(backgrounds.length, backgroundCount + 4))}>{backgroundCount >= backgrounds.length ? "Show fewer" : `See more backgrounds (${backgroundCount}/${backgrounds.length})`}</button><div className="ratio-options" role="group" aria-label="Preview aspect ratio">{ratios.map(r => <button type="button" key={r.label} className={ratio === r.label ? 'active' : ''} aria-pressed={ratio === r.label} onClick={() => setRatio(r.label)}>{r.label}</button>)}</div></div><div className="feature-copy"><span className="eyebrow">03 / THE CANVAS</span><h2>One recording.<br /><em>Every frame.</em></h2><p>Go wide for a presentation, square for a feed, or vertical for a short. Custom proportions give you precise control over the final frame.</p><ul className="tick-list"><li><Check size={16}/> 16:9, 9:16, 1:1, 4:3 and custom</li><li><Check size={16}/> One-tap presets and width/height controls</li><li><Check size={16}/> All 11 included image backgrounds, padding and a native Mac frame</li></ul><a className="inline-link" href="#download">Get the app <ArrowUpRight size={17}/></a></div></div></section>
-
-      <section className="section detail-section"><div className="wrap"><SectionIntro eyebrow="04 / THE DETAILS" title={<>The finish is in the <em>details.</em></>} text="A quiet editor with the tools you need, available when you need them." center /><div className="detail-grid"><article><div className="detail-icon"><WandSparkles size={21}/></div><h3>Motion with purpose</h3><p>Automatic click zooms, soft spotlights, motion blur, outlines and callouts guide attention. An animated canvas and progress line keep the full frame alive. Blur and pixelation hide private details.</p></article><article><div className="detail-icon"><Scissors size={21}/></div><h3>A practical timeline</h3><p>Preview the finished edit, add music, then trim, split, duplicate, move and resize effects with undo close at hand.</p></article><article><div className="detail-icon"><LayoutPanelLeft size={21}/></div><h3>Your visual system</h3><p>Pick from 11 included image backgrounds, a solid color, gradient, your own image, or a softly blurred recording.</p></article><article><div className="detail-icon"><Fullscreen size={21}/></div><h3>Preview in full</h3><p>Step away from controls and see the video at full screen before it leaves your Mac.</p></article></div></div></section>
-
-      <section className="section privacy"><div className="wrap privacy-inner"><div><span className="eyebrow">BUILT FOR YOUR MAC</span><h2>Your work stays<br /><em>your work.</em></h2><p>FocusFlow is a native macOS app. Recordings and projects save locally, and the browser tab companion passes your capture back to the editor on your Mac.</p><a className="privacy-link" href={REPO}>See the source on GitHub <ArrowUpRight size={18}/></a></div><div className="privacy-card"><div className="privacy-symbol"><LockKeyhole size={34}/></div><div className="privacy-card-line"><FolderOpen size={18}/><span>Files saved on your Mac</span><Check size={17}/></div><div className="privacy-card-line"><ShieldCheck size={18}/><span>Local recording handoff</span><Check size={17}/></div><div className="privacy-card-line"><Command size={18}/><span>Open source</span><Check size={17}/></div><small>No account required to record or edit.</small></div></div></section>
-
-      <section id="download" className="section download wrap"><span className="eyebrow">READY WHEN YOU ARE</span><h2>Make the next one<br /><em>impossible to miss.</em></h2><p>Free and open source for macOS 14+ on Apple silicon.</p><div className="download-actions"><CopyInstallButton onCopy={copyInstall} copied={copyStatus === 'copied'} /><DmgDownload /></div><div className="install-card"><div><span>Install with Terminal</span><code>{INSTALL}</code></div><button type="button" onClick={copyInstall} aria-label={copyStatus === 'copied' ? 'Command copied' : 'Copy install command'}>{copyStatus === 'copied' ? <><Check size={16}/> Copied</> : <><Copy size={16}/> Copy</>}</button></div><p className="install-note">Download uses the latest GitHub release. If you choose the disk image, open FocusFlow from the mounted .dmg.</p></section>
-    </main>
-    <footer className="footer"><div className="wrap footer-inner"><Brand/><p>Record clearly. Edit calmly. Share confidently.</p><div><a href={REPO}>GitHub</a><a href={RELEASE}>Releases</a><a href="./studio/">Tab studio</a></div></div></footer>
-  </>
-}
-
-export default App
