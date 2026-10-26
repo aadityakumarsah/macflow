@@ -63,6 +63,20 @@ enum ExportError: LocalizedError {
 }
 
 enum VideoExporter {
+    /// Copy only the rendering instruction for edits that do not change
+    /// source tracks, timing, or audio. The old instruction stays immutable
+    /// for frames already being rendered on the compositor's queue.
+    static func updatingPresentation(_ previous: AVVideoComposition, settings: ExportSettings) -> AVMutableVideoComposition? {
+        guard previous.instructions.count == 1,
+              let old = previous.instructions.first as? CompositionInstruction,
+              let updated = previous.mutableCopy() as? AVMutableVideoComposition else { return nil }
+        updated.renderSize = settings.canvasSize
+        updated.instructions = [CompositionInstruction(timeRange: old.timeRange, settings: settings,
+            screenTrackID: old.screenTrackID, cameraTrackID: old.cameraTrackID,
+            screenTransform: old.screenTransform, cameraTransform: old.cameraTransform)]
+        return updated
+    }
+
     static func composition(source: URL, settings: ExportSettings) async throws -> (AVMutableComposition, AVMutableVideoComposition, AVAudioMix?) {
         let asset = AVURLAsset(url: source)
         let duration = try await asset.load(.duration)

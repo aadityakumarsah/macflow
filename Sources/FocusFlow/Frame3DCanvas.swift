@@ -43,15 +43,16 @@ struct Frame3DOverlay: View {
     }
 
     private var pose: FramePose { model.editedPose }
-    private var outline: FrameQuad { quad(for: pose) }
-
-    /// The handles are placed off the outline, so they travel with the lean.
-    private var centre: CGPoint {
-        let corners = outline.corners
-        return CGPoint(x: corners.map(\.x).reduce(0, +) / 4, y: corners.map(\.y).reduce(0, +) / 4)
-    }
-
     var body: some View {
+        // Compute the projection once per update, shared by the hit area,
+        // outline, corners, and all three handles.
+        let outline = quad(for: pose)
+        let corners = outline.corners
+        let centre = CGPoint(x: corners.map(\.x).reduce(0, +) / 4, y: corners.map(\.y).reduce(0, +) / 4)
+        let rollHandle = CGPoint(x: (outline.topLeft.x + outline.topRight.x) / 2,
+                                 y: max(14, (outline.topLeft.y + outline.topRight.y) / 2 - 26))
+        let depthHandle = CGPoint(x: (outline.bottomLeft.x + outline.bottomRight.x) / 2,
+                                  y: min(canvasSize.height - 14, (outline.bottomLeft.y + outline.bottomRight.y) / 2 + 26))
         ZStack(alignment: .topLeading) {
             // The whole frame is the grip for turning and leaning: a 3D
             // camera is the picture itself being moved, so that is what you
@@ -94,18 +95,6 @@ struct Frame3DOverlay: View {
     private var ghost: FrameQuad? {
         let standing = model.standingPose
         return standing == pose ? nil : quad(for: standing)
-    }
-
-    private var rollHandle: CGPoint {
-        let top = CGPoint(x: (outline.topLeft.x + outline.topRight.x) / 2,
-                          y: (outline.topLeft.y + outline.topRight.y) / 2)
-        return CGPoint(x: top.x, y: max(14, top.y - 26))
-    }
-
-    private var depthHandle: CGPoint {
-        let bottom = CGPoint(x: (outline.bottomLeft.x + outline.bottomRight.x) / 2,
-                             y: (outline.bottomLeft.y + outline.bottomRight.y) / 2)
-        return CGPoint(x: bottom.x, y: min(canvasSize.height - 14, bottom.y + 26))
     }
 
     private func shape(_ quad: FrameQuad) -> Path {
@@ -198,55 +187,35 @@ struct Frame3DOverlay: View {
 /// The strip that says what the handles are holding and gets out of the way.
 struct Frame3DBar: View {
     @EnvironmentObject private var model: EditorModel
-
-    private var editingSegment: Bool { model.posedSegment != nil }
+    @State private var showingPresets = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "cube.transparent").foregroundStyle(AppTheme.green)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(editingSegment ? "3D camera on the timeline" : "Where the frame stands")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(editingSegment
-                     ? "Drag the picture to turn and lean this move. Arrows nudge, ⌥ slides, ⇧ snaps."
-                     : "Drag the picture to turn and lean it. Arrows nudge, ⌥ slides, ⇧ snaps, , and . roll.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            // The poses worth having one key away, and the keys that give
-            // them: a button someone can hit is also how they learn the
-            // shortcut for it.
-            HStack(spacing: 4) {
-                ForEach(CameraMoveSettings.quickPoses, id: \.name) { preset in
-                    Button(preset.name) { model.editedPose = preset.pose }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 7).padding(.vertical, 4)
-                        .background(model.editedPose == preset.pose ? AppTheme.green.opacity(0.16) : AppTheme.elevated,
-                                    in: RoundedRectangle(cornerRadius: 5))
-                        .help("\(preset.name) — press \(preset.key)")
-                }
-            }
-            if !editingSegment {
-                Button("Make it a move") {
-                    model.addSegment(.perspective)
-                    // Into the middle of it, where the lean is at its
-                    // deepest: a 3D segment sweeps, so at its first frame
-                    // there is nothing to see or take hold of.
-                    if let segment = model.selectedSegment {
-                        model.seek(to: min(model.duration, segment.start + segment.duration / 2))
-                    }
-                }
-                    .font(.caption)
-                    .help("Adds a 3D camera segment at the playhead, so the lean happens for a few seconds rather than throughout.")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button { showingPresets = true } label: {
+                    Label("Choose a 3D look", systemImage: "square.grid.2x2")
+                }.buttonStyle(.borderedProminent).tint(AppTheme.green)
                     .disabled(model.videoURL == nil)
+                    .popover(isPresented: $showingPresets) { ThreeDPresetPicker { showingPresets = false } }
+                if model.selectedSegment?.kind == .perspective {
+                    Button { model.previewThreeDMove() } label: { Label("Preview", systemImage: "play.fill") }
+                }
+                Spacer(minLength: 0)
+                Menu {
+                    ForEach(CameraMoveSettings.quickPoses, id: \.name) { preset in
+                        Button(preset.name) { model.editedPose = preset.pose }
+                    }
+                } label: { Image(systemName: "rotate.3d") }
+                    .help("Static poses for the frame")
+                Button { model.show3DCanvas = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Hide the 3D controls")
             }
-            Button("Stand it square") {
-                model.editedPose = .neutral
-            }.font(.caption).disabled(model.editedPose.isNeutral)
-            Button { model.show3DCanvas = false } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain).foregroundStyle(.secondary).help("Hide the 3D handles")
+            Text(model.posedSegment != nil
+                 ? "Drag to adjust this move. Change strength and duration in the inspector."
+                 : "Choose a look to animate. Drag the frame to adjust its overall angle.")
+                .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+        .font(.caption)
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.line))

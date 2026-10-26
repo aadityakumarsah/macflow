@@ -11,7 +11,12 @@ final class EditorModel: ObservableObject {
     @Published var duration: Double = 0
     @Published var playhead: Double = 0
     @Published var isPlaying = false
-    @Published var segments: [EditSegment] = [] { willSet { remember() } didSet { changed() } }
+    @Published var segments: [EditSegment] = [] {
+        willSet { remember() }
+        didSet {
+            changed(reusingMedia: segments.filter { $0.kind != .perspective } == oldValue.filter { $0.kind != .perspective })
+        }
+    }
     @Published var selectedSegmentID: UUID?
     @Published var background: BackgroundStyle = .aurora { willSet { remember() } didSet { changed() } }
     @Published var ratio: CanvasRatio = .source {
@@ -24,7 +29,7 @@ final class EditorModel: ObservableObject {
     }
     @Published var customBackground = CustomBackground() { willSet { remember() } didSet { changed() } }
     @Published var grade = GradeSettings() { willSet { remember() } didSet { changed() } }
-    @Published var cameraMove = CameraMoveSettings() { willSet { remember() } didSet { changed() } }
+    @Published var cameraMove = CameraMoveSettings() { willSet { remember() } didSet { changed(reusingMedia: true) } }
     @Published var typingFollow = TypingFollowSettings() { willSet { remember() } didSet { changed() } }
     @Published var selectionFocus = SelectionFocusSettings() { willSet { remember() } didSet { changed() } }
     @Published var sounds = SoundSettings() { willSet { remember() } didSet { changed() } }
@@ -95,6 +100,10 @@ final class EditorModel: ObservableObject {
     private var restoring = false
     private var lastHistory = Date.distantPast
     private var previewTask: Task<Void, Never>?
+    private var previewMediaDirty = true
+    private var previewSourceURL: URL?
+    private var movePreviewTask: Task<Void, Never>?
+    private var movePreviewEnd: Double?
     private var openTask: Task<Void, Never>?
     private var metadata = RecordingMetadata.empty
     var recordingMetadata: RecordingMetadata { metadata }
@@ -136,9 +145,14 @@ final class EditorModel: ObservableObject {
 
     /// The pose the handles move, wherever it happens to live.
     var editedPose: FramePose {
-        get { posedSegment?.pose ?? cameraMove.pose }
+        get { posedSegment?.effectivePose ?? cameraMove.pose }
         set {
-            if posedSegment != nil { updateSelected { $0.pose = newValue } }
+            if posedSegment != nil {
+                updateSelected {
+                    $0.pose = newValue; $0.posePreset = nil
+                    $0.poseStrength = 1; $0.poseReversed = false
+                }
+            }
             else {
                 // One assignment, so one undo step and one recomposition
                 // rather than six.
@@ -293,6 +307,7 @@ final class EditorModel: ObservableObject {
     }
 
     func togglePlayback() {
+        movePreviewTask?.cancel(); movePreviewEnd = nil
         guard videoURL != nil else { return }
         if isPlaying { player.pause() } else {
             if playhead >= trimEnd - 0.05 || playhead < trimStart { seek(to: trimStart) }
@@ -301,6 +316,7 @@ final class EditorModel: ObservableObject {
         isPlaying.toggle()
     }
     func previewEdit() {
+        movePreviewTask?.cancel(); movePreviewEnd = nil
         guard videoURL != nil else { return }
         player.pause()
         seek(to: trimStart)
@@ -319,6 +335,44 @@ final class EditorModel: ObservableObject {
         player.seek(to: CMTime(seconds: playhead / playbackRate, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
     func setCameraVisible(_ visible: Bool) { showCamera = visible }
+    func applyThreeDPreset(_ preset: ThreeDPreset) {
+        guard videoURL != nil, duration > 0, trimEnd > trimStart else { return }
+        player.pause(); isPlaying = false
+        lastHistory = .distantPast
+        if selectedSegment?.kind == .perspective {
+            updateSelected { preset.apply(to: &$0) }
+        } else {
+            let length = min(3.0, trimEnd - trimStart)
+            let start = min(max(trimStart, playhead), trimEnd - length)
+            var segment = EditSegment(kind: .perspective, start: start, duration: length,
+                                      intensity: 1, x: 0.5, y: 0.5)
+            preset.apply(to: &segment)
+            segments.append(segment)
+            selectedSegmentID = segment.id
+        }
+        inspectorTab = "Segment"
+        if let segment = selectedSegment { seek(to: segment.start + segment.duration * 0.72) }
+    }
+
+    func previewThreeDMove() {
+        guard let segment = selectedSegment, segment.kind == .perspective else { return }
+        let start = max(trimStart, segment.start), end = min(trimEnd, segment.end)
+        guard end > start else { return }
+        movePreviewTask?.cancel()
+        player.pause(); isPlaying = false
+        let pending = previewTask
+        movePreviewTask = Task { [weak self] in
+            await pending?.value
+            guard let self, !Task.isCancelled, self.selectedSegmentID == segment.id,
+                  let item = self.player.currentItem else { return }
+            self.playhead = start
+            let arrived = await self.player.seek(to: CMTime(seconds: start / self.playbackRate, preferredTimescale: 600),
+                                                 toleranceBefore: .zero, toleranceAfter: .zero)
+            guard arrived, !Task.isCancelled, self.player.currentItem === item else { return }
+            self.movePreviewEnd = end
+            self.player.play(); self.isPlaying = true
+        }
+    }
     func addSegment(_ kind: SegmentKind) {
         guard duration > 0 else { return }
         lastHistory = .distantPast
@@ -376,6 +430,7 @@ final class EditorModel: ObservableObject {
             segment.x = max(segment.regionWidth / 2, min(1 - segment.regionWidth / 2, segment.x))
             segment.y = max(segment.regionHeight / 2, min(1 - segment.regionHeight / 2, segment.y))
         }
+        guard segment != segments[index] else { return }
         segments[index] = segment
     }
     /// Enters or leaves theatre mode, taking the window to macOS full screen
@@ -462,17 +517,30 @@ final class EditorModel: ObservableObject {
     func settings(preview: Bool = false) -> ExportSettings {
         ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds, selectionFocus: selectionFocus)
     }
-    private func changed() {
+    private func changed(reusingMedia: Bool = false) {
         guard !restoring, let url = videoURL, duration > 0 else { return }
+        if !reusingMedia { previewMediaDirty = true }
+        movePreviewTask?.cancel(); movePreviewEnd = nil
         previewTask?.cancel(); saveStatus = "Saving…"
         previewTask = Task {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 let settings = settings(preview: true)
-                let (asset, composition, musicMix) = try await VideoExporter.composition(source: url, settings: settings)
+                let item: AVPlayerItem
+                if !previewMediaDirty, previewSourceURL == url, let current = player.currentItem,
+                   let previous = current.videoComposition,
+                   let composition = VideoExporter.updatingPresentation(previous, settings: settings) {
+                    // 3D edits only change pixels. Reuse the assembled tracks,
+                    // including music loops and hundreds of sound cues.
+                    item = AVPlayerItem(asset: current.asset)
+                    item.videoComposition = composition; item.audioMix = current.audioMix
+                } else {
+                    let (asset, composition, musicMix) = try await VideoExporter.composition(source: url, settings: settings)
+                    item = AVPlayerItem(asset: asset); item.videoComposition = composition; item.audioMix = musicMix
+                }
                 try Task.checkCancellation()
                 let time = playhead, playing = isPlaying
-                let item = AVPlayerItem(asset: asset); item.videoComposition = composition; item.audioMix = musicMix
+                previewMediaDirty = false; previewSourceURL = url
                 player.replaceCurrentItem(with: item); seek(to: time); if playing { player.play() }
                 installTimeObserver(); isPreparingPreview = false
                 try JSONEncoder().encode(document()).write(to: editsURL(for: url), options: .atomic)
@@ -511,7 +579,10 @@ final class EditorModel: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.isPlaying else { return }
                 self.playhead = time.seconds.isFinite ? time.seconds * self.playbackRate : 0
-                if self.playhead >= self.trimEnd - 0.02 { self.player.pause(); self.isPlaying = false; self.seek(to: self.trimEnd) }
+                let end = min(self.trimEnd, self.movePreviewEnd ?? self.trimEnd)
+                if self.playhead >= end - 0.02 {
+                    self.player.pause(); self.isPlaying = false; self.movePreviewEnd = nil; self.seek(to: end)
+                }
             }
         }
     }

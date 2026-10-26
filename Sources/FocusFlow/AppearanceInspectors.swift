@@ -288,7 +288,8 @@ struct EditableFocusOverlay: View {
     let canvasSize: CGSize
     @State private var dragViewport: CGRect?
     var body: some View {
-        if let segment = model.selectedSegment, model.playhead >= segment.start, model.playhead <= segment.end {
+        if let segment = model.selectedSegment, segment.kind != .perspective,
+           model.playhead >= segment.start, model.playhead <= segment.end {
             let layout = FrameLayout.make(canvas: CGRect(origin: .zero, size: canvasSize), sourceSize: model.contentSize, padding: model.padding, frame: model.frameAppearance)
             let rect = CGRect(x: layout.content.minX, y: canvasSize.height - layout.content.maxY, width: layout.content.width, height: layout.content.height)
             let crop = model.frameAppearance.crop.bounded
@@ -561,9 +562,15 @@ struct GradeInspector: View {
 /// controls rather than buried in a separate tab.
 struct CameraMoveInspector: View {
     @EnvironmentObject private var model: EditorModel
+    @State private var showingPresets = false
 
     var body: some View {
         InspectorSection(title: "3D CAMERA MOVE") {
+            Button { showingPresets = true } label: {
+                Label("Choose a 3D look…", systemImage: "square.grid.2x2")
+            }
+            .disabled(model.videoURL == nil)
+            .popover(isPresented: $showingPresets) { ThreeDPresetPicker { showingPresets = false } }
             Toggle("Handles on the canvas", isOn: $model.show3DCanvas)
                 .help("Draws the frame where it is standing, over the preview, and lets you drag it there instead of using the sliders below.")
             Picker("Move", selection: $model.cameraMove.move) {

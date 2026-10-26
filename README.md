@@ -51,7 +51,7 @@ Only zooms are generated automatically. Spotlights, outlines, pixelation and cal
 
 ### The editor
 
-- **3D camera, on the canvas** — press **3D** above the preview and drag the picture itself to turn, lean, roll and push the frame; the outline you drag is the quad the renderer warps onto. Glide across, Unfold and Pull back are there too, and a 3D camera can be a move on the timeline rather than a pose for the whole clip.
+- **3D camera, on the canvas** — choose Orbit, Rise, Showcase, Drift, Push in, or Tilt reveal from a visual preset gallery. Adjust strength and duration, reverse direction, and preview just that move. Fine-tune the pose with sliders or drag the frame on the canvas. Glide across, Unfold and Pull back are there too.
 - **Colour grades** — Cinematic, Noir, Vintage, Frost, Golden, Midnight, Vivid, Dreamy, over exposure, contrast and vignette.
 - **Smooth scrolling** — a true shutter, blending neighbouring frames so scrolling stops strobing, spent only where the recording says the wheel turned. Separate from camera motion blur, and separately adjustable.
 - **Cursor** — 0.5× to 10× with quick presets, ripple/pulse/press click effects, any accent colour, a pointer highlight, independent I-beam scale, tilt, opacity and shadow.
@@ -66,6 +66,8 @@ Only zooms are generated automatically. Spotlights, outlines, pixelation and cal
 Every camera move — a click zoom, a typing follow, a pan — is smoothed over a window centred on the moment, so the frame can never change speed abruptly however abruptly the thing it is following does.
 
 Preview and export run through one shared Core Image renderer, so the frame you scrub is the frame you ship.
+
+To add a 3D move, press **3D** above the preview, then **Choose a 3D look**. Choosing a look updates the selected 3D segment, or adds one at the playhead when no 3D segment is selected. Use **Strength**, **Duration**, and **Reverse direction** in the segment inspector; **Fine tune** opens the individual axes and blur options. **Preview move** plays only that effect. Changes to 3D presentation reuse the existing media tracks for a lighter preview update.
 
 ---
 

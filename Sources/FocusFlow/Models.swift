@@ -53,6 +53,9 @@ struct EditSegment: Identifiable, Codable, Equatable {
     /// For `.perspective`: where the frame is being leaned to, whether it
     /// sweeps there from the other side, and how it is softened on the way.
     var pose: FramePose? = nil
+    var posePreset: String? = nil
+    var poseStrength: Double? = nil
+    var poseReversed: Bool? = nil
     var sweeps: Bool? = nil
     var blur: FrameBlur? = nil
     var blurAmount: Double? = nil
@@ -73,6 +76,10 @@ struct EditSegment: Identifiable, Codable, Equatable {
     var end: Double { start + duration }
     var regionWidth: Double { width ?? 0.3 }
     var regionHeight: Double { height ?? 0.2 }
+    var effectivePose: FramePose {
+        let target = (pose ?? .neutral).weighted(poseStrength ?? 1)
+        return poseReversed == true ? target.mirrored : target
+    }
 }
 
 enum CanvasRatio: String, CaseIterable, Identifiable, Codable {

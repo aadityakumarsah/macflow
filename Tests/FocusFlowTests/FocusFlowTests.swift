@@ -2,8 +2,134 @@ import AVFoundation
 import AppKit
 import CoreImage
 import CoreText
+import SwiftUI
 
 final class FocusFlowTests {
+    @MainActor func testThreeDPresetWorkflowAndPreviewReuse() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-3D-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.mp4")
+        try await makeFixture(at: source, camera: false)
+        let model = EditorModel(restoreLatest: false)
+        let previousRecording = UserDefaults.standard.string(forKey: "FocusFlow.lastRecording")
+        defer {
+            UserDefaults.standard.set(previousRecording, forKey: "FocusFlow.lastRecording")
+            model.player.pause(); model.videoURL = nil
+        }
+        func settled() async throws {
+            for _ in 0..<300 {
+                if model.player.currentItem != nil && model.saveStatus == "All changes saved locally" { return }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw NSError(domain: "FocusFlowChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: "3D preview did not settle: \(model.message ?? model.saveStatus)"])
+        }
+        model.open(url: source, metadata: .empty)
+        try await settled()
+        model.trimStart = 0.3; model.trimEnd = 1.8
+        try await settled()
+        let originalAsset = try XCTUnwrap(model.player.currentItem?.asset)
+        model.playhead = 1.79
+        model.applyThreeDPreset(.orbit)
+        try await settled()
+        let orbit = try XCTUnwrap(model.selectedSegment)
+        XCTAssertEqual(orbit.start, 0.3, accuracy: 0.0001)
+        XCTAssertLessThanOrEqual(orbit.end, model.trimEnd + 0.0001)
+        XCTAssertEqual(orbit.posePreset, "orbit")
+        XCTAssertTrue(model.player.currentItem?.asset === originalAsset)
+
+        model.applyThreeDPreset(.showcase)
+        XCTAssertEqual(model.segments.count, 1)
+        XCTAssertEqual(model.selectedSegmentID, orbit.id)
+        model.undo()
+        XCTAssertEqual(model.selectedSegment?.posePreset, "orbit")
+        model.redo()
+        XCTAssertEqual(model.selectedSegment?.posePreset, "showcase")
+        try await settled()
+
+        // A structural edit followed immediately by a 3D edit must still
+        // rebuild the media; cancelling the first task must not lose it.
+        let beforeRateChange = try XCTUnwrap(model.player.currentItem?.asset)
+        model.playbackRate = 2
+        model.applyThreeDPreset(.drift)
+        try await settled()
+        XCTAssertTrue(model.player.currentItem?.asset !== beforeRateChange)
+        let resizedDuration = try await model.player.currentItem!.asset.load(.duration).seconds
+        XCTAssertEqual(resizedDuration, model.duration / 2, accuracy: 0.01)
+        let reused = try XCTUnwrap(model.player.currentItem?.asset)
+        model.updateSelected { $0.poseStrength = 0.35; $0.poseReversed = true }
+        try await settled()
+        XCTAssertTrue(model.player.currentItem?.asset === reused)
+        let instruction = try XCTUnwrap(model.player.currentItem?.videoComposition?.instructions.first as? CompositionInstruction)
+        XCTAssertEqual(instruction.settings.segments.first?.poseStrength, 0.35)
+        XCTAssertEqual(instruction.settings.segments.first?.poseReversed, true)
+
+        let saved = try Data(contentsOf: source.deletingPathExtension().appendingPathExtension("edits.json"))
+        let restored = try JSONDecoder().decode(ProjectDocument.self, from: saved)
+        XCTAssertEqual(restored.segments, model.segments)
+
+        // Save the actual SwiftUI views for visual review at inspector width.
+        let qa = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/qa")
+        func snapshot<V: View>(_ view: V, name: String) throws {
+            let hosting = NSHostingView(rootView: view.environmentObject(model).preferredColorScheme(.light))
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: hosting.fittingSize), styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = hosting
+            hosting.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: qa.appendingPathComponent(name))
+        }
+        try snapshot(ThreeDPresetPicker().background(AppTheme.panel), name: "3d-presets.png")
+        try snapshot(SegmentInspector().frame(width: 290).background(AppTheme.panel), name: "3d-inspector.png")
+        model.show3DCanvas = true
+        try snapshot(Frame3DBar().frame(width: 420).background(AppTheme.panel), name: "3d-bar.png")
+
+        model.previewThreeDMove()
+        for _ in 0..<120 {
+            if model.isPlaying { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(model.isPlaying)
+        for _ in 0..<160 {
+            if !model.isPlaying { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(!model.isPlaying)
+        XCTAssertEqual(model.playhead, model.selectedSegment!.end, accuracy: 0.05)
+    }
+
+    func testThreeDPresetsRenderAndRoundTrip() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let source = CIImage(color: .white).cropped(to: canvas)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 12, cornerRadius: 10, shadow: 20, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.motion.ambientGraphics = false; settings.motion.automaticMotionBlur = false
+        func frame() throws -> [UInt8] {
+            pixels(try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 2.8, settings: settings), from: canvas)))
+        }
+        let plain = try frame()
+        for preset in ThreeDPreset.allCases {
+            var segment = EditSegment(kind: .perspective, start: 0, duration: 4, intensity: 1, x: 0.5, y: 0.5)
+            preset.apply(to: &segment)
+            XCTAssertEqual(MotionEngine.stance(at: 0, segments: [segment]).pose, .neutral)
+            XCTAssertEqual(MotionEngine.stance(at: 4, segments: [segment]).pose, .neutral)
+            let forward = MotionEngine.stance(at: 2.8, segments: [segment]).pose
+            XCTAssertTrue(!forward.isNeutral)
+            segment.poseReversed = true
+            let backward = MotionEngine.stance(at: 2.8, segments: [segment]).pose
+            XCTAssertEqual(backward.yaw, -forward.yaw, accuracy: 0.0001)
+            XCTAssertEqual(backward.pitch, -forward.pitch, accuracy: 0.0001)
+            XCTAssertEqual(backward.zoom, 2 - forward.zoom, accuracy: 0.0001)
+            let decoded = try JSONDecoder().decode(EditSegment.self, from: JSONEncoder().encode(segment))
+            XCTAssertEqual(decoded, segment)
+            settings.segments = [segment]
+            let drawn = try frame()
+            XCTAssertGreaterThan(zip(plain, drawn).filter { abs(Int($0) - Int($1)) > 10 }.count, 100)
+            segment.poseStrength = 0
+            XCTAssertEqual(MotionEngine.stance(at: 2.8, segments: [segment]).pose, .neutral)
+        }
+    }
+
     /// The automatic pass produces zooms and nothing else.
     ///
     /// It used to add a spotlight, an outline or a "Click" callout to every

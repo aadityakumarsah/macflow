@@ -217,7 +217,8 @@ enum MotionEngine {
         var strongest = 0.0
         for segment in segments where segment.kind == .perspective {
             let weight = envelope(segment, time: time)
-            guard weight > 0, let target = segment.pose else { continue }
+            guard weight > 0, segment.pose != nil else { continue }
+            let target = segment.effectivePose
             // Travelling: from the far side of the pose, through it, out the
             // other side over the length of the segment.
             let through = segment.sweeps == false

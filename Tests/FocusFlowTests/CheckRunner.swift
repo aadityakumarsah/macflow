@@ -70,6 +70,8 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testThreeDHandlesSitOnTheRenderedFrame()
             try tests.testLeaningTheFrameKeepsItSharp()
             tests.testQuickPosesAndNudging()
+            try tests.testThreeDPresetsRenderAndRoundTrip()
+            try await tests.testThreeDPresetWorkflowAndPreviewReuse()
             try tests.testOlderProjectsAreBroughtUpToTodaysDefaults()
             print("Checking the selection and cursor graphics…")
             try tests.testSelectionIsDrawnWhereItHappens()

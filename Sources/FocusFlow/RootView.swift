@@ -299,7 +299,7 @@ struct PreviewArea: View {
                                             in: RoundedRectangle(cornerRadius: 7))
                         }
                         .buttonStyle(.plain).foregroundStyle(AppTheme.green)
-                        .help("Turn, lean, roll and push the frame by dragging it on the canvas")
+                        .help("Choose a ready-made 3D move or adjust the frame on the canvas")
                         .accessibilityLabel("Show 3D camera handles")
                         .accessibilityAddTraits(model.show3DCanvas ? .isSelected : [])
                         Button {
@@ -358,7 +358,7 @@ struct PreviewArea: View {
         // Theatre mode keeps only enough room for the transport and the exit
         // control; the editor layout leaves space for its surrounding chrome.
         let insetW: CGFloat = model.theatreMode ? 24 : 60
-        let insetH: CGFloat = model.theatreMode ? 96 : 122
+        let insetH: CGFloat = model.theatreMode ? 96 : (model.show3DCanvas ? 208 : 122)
         let maxW = max(100, available.width - insetW), maxH = max(100, available.height - insetH)
         return maxW / maxH > ratio ? CGSize(width: maxH * ratio, height: maxH) : CGSize(width: maxW, height: maxW / ratio)
     }
@@ -582,7 +582,10 @@ struct SegmentInspector: View {
     private func pose(_ segment: EditSegment, _ part: WritableKeyPath<FramePose, Double>) -> Binding<Double> {
         Binding(get: { (segment.pose ?? .neutral)[keyPath: part] },
                 set: { value in
-                    model.updateSelected { $0.pose = ($0.pose ?? .neutral).setting { $0[keyPath: part] = value } }
+                    model.updateSelected {
+                        $0.pose = ($0.pose ?? .neutral).setting { $0[keyPath: part] = value }
+                        $0.posePreset = nil
+                    }
                 })
     }
 
@@ -592,8 +595,10 @@ struct SegmentInspector: View {
                 Label(segment.kind.title, systemImage: segment.kind.symbol).font(.headline).foregroundStyle(AppTheme.green)
                 InspectorSlider(title: "Start", value: Binding(get: { segment.start }, set: { v in model.updateSelected { $0.start = v } }), range: 0...max(0.1, model.duration), suffix: "s")
                 InspectorSlider(title: "Duration", value: Binding(get: { segment.duration }, set: { v in model.updateSelected { $0.duration = v } }), range: 0.2...max(0.3, model.duration), suffix: "s")
-                InspectorSlider(title: segment.kind == .zoom || segment.kind == .pan ? "Depth" : segment.kind == .callout ? "Text size" : "Amount", value: Binding(get: { segment.intensity }, set: { v in model.updateSelected { $0.intensity = v } }), range: 1...3, suffix: "×")
-                if SegmentKind.availableCases.contains(segment.kind) {
+                if segment.kind != .perspective {
+                    InspectorSlider(title: segment.kind == .zoom || segment.kind == .pan ? "Depth" : segment.kind == .callout ? "Text size" : "Amount", value: Binding(get: { segment.intensity }, set: { v in model.updateSelected { $0.intensity = v } }), range: 1...3, suffix: "×")
+                }
+                if segment.kind != .perspective && SegmentKind.availableCases.contains(segment.kind) {
                     InspectorSlider(title: "Focus X", value: Binding(get: { segment.x }, set: { v in model.updateSelected { $0.x = v } }), range: 0...1, suffix: "")
                     InspectorSlider(title: "Focus Y", value: Binding(get: { segment.y }, set: { v in model.updateSelected { $0.y = v } }), range: 0...1, suffix: "")
                 }
@@ -604,36 +609,40 @@ struct SegmentInspector: View {
                     InspectorSlider(title: "Slides to X", value: Binding(get: { segment.endX ?? segment.x }, set: { v in model.updateSelected { $0.endX = v } }), range: 0...1, suffix: "")
                 }
                 if segment.kind == .perspective {
-                    Text("Leans in, sweeps across, and comes back out over the segment. Drag its ends on the timeline to say for how long.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    InspectorSlider(title: "Tilt (lean back)", value: pose(segment, \.pitch), range: -1...1, suffix: "")
-                    InspectorSlider(title: "Turn (left / right)", value: pose(segment, \.yaw), range: -1...1, suffix: "")
-                    InspectorSlider(title: "Rotate", value: pose(segment, \.roll), range: -1...1, suffix: "")
-                    InspectorSlider(title: "Pan across", value: pose(segment, \.panX), range: -1...1, suffix: "")
-                    InspectorSlider(title: "Pan up / down", value: pose(segment, \.panY), range: -1...1, suffix: "")
-                    InspectorSlider(title: "Push in", value: pose(segment, \.zoom), range: 0.6...1.8, suffix: "×")
-                    Toggle("Sweep through it", isOn: Binding(
-                        get: { segment.sweeps ?? true },
-                        set: { on in model.updateSelected { $0.sweeps = on } }))
-                        .help("Travels from the far side of the lean, through it, and out — rather than easing into it and holding.")
-                    Picker("Blur", selection: Binding(
-                        get: { segment.blur ?? .none },
-                        set: { style in model.updateSelected { $0.blur = style } })) {
-                        ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    if (segment.blur ?? .none) != .none {
-                        InspectorSlider(title: "Blur amount", value: Binding(
-                            get: { segment.blurAmount ?? 0.35 },
-                            set: { v in model.updateSelected { $0.blurAmount = v } }), range: 0...1, suffix: "")
-                        if segment.blur == .directional {
-                            InspectorSlider(title: "Angle", value: Binding(
-                                get: { segment.blurAngle ?? 0 },
-                                set: { v in model.updateSelected { $0.blurAngle = v } }), range: 0...360, suffix: "°")
+                    ThreeDMoveControls(segment: segment)
+                    DisclosureGroup("Fine tune") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            InspectorSlider(title: "Tilt (lean back)", value: pose(segment, \.pitch), range: -1...1, suffix: "")
+                            InspectorSlider(title: "Turn (left / right)", value: pose(segment, \.yaw), range: -1...1, suffix: "")
+                            InspectorSlider(title: "Rotate", value: pose(segment, \.roll), range: -1...1, suffix: "")
+                            InspectorSlider(title: "Pan across", value: pose(segment, \.panX), range: -1...1, suffix: "")
+                            InspectorSlider(title: "Pan up / down", value: pose(segment, \.panY), range: -1...1, suffix: "")
+                            InspectorSlider(title: "Push in", value: pose(segment, \.zoom), range: 0.6...1.8, suffix: "×")
+                            Toggle("Sweep through it", isOn: Binding(
+                                get: { segment.sweeps ?? true },
+                                set: { on in model.updateSelected { $0.sweeps = on } }))
+                                .help("Travels from the far side of the lean, through it, and out — rather than easing into it and holding.")
+                            Picker("Blur", selection: Binding<FrameBlur>(
+                                get: { segment.blur ?? FrameBlur.none },
+                                set: { style in model.updateSelected { $0.blur = style } })) {
+                                ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            if (segment.blur ?? .none) != .none {
+                                InspectorSlider(title: "Blur amount", value: Binding(
+                                    get: { segment.blurAmount ?? 0.35 },
+                                    set: { v in model.updateSelected { $0.blurAmount = v } }), range: 0...1, suffix: "")
+                                if segment.blur == .directional {
+                                    InspectorSlider(title: "Angle", value: Binding(
+                                        get: { segment.blurAngle ?? 0 },
+                                        set: { v in model.updateSelected { $0.blurAngle = v } }), range: 0...360, suffix: "°")
+                                }
+                            }
+                            SegmentMotionInspector(segment: segment)
                         }
+                        .padding(.top, 10)
                     }
                 }
-                SegmentMotionInspector(segment: segment)
+                if segment.kind != .perspective { SegmentMotionInspector(segment: segment) }
                 if [.blur, .spotlight, .pixelate, .outline].contains(segment.kind) {
                     InspectorSlider(title: "Region width", value: Binding(get: { segment.regionWidth }, set: { v in model.updateSelected { $0.width = v } }), range: 0.02...1, suffix: "")
                     InspectorSlider(title: "Region height", value: Binding(get: { segment.regionHeight }, set: { v in model.updateSelected { $0.height = v } }), range: 0.02...1, suffix: "")
