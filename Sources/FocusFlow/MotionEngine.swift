@@ -1,6 +1,28 @@
 import Foundation
 import CoreGraphics
 
+/// Reads a 3D path without sorting or allocating on every rendered frame.
+/// Editing keeps points ordered, but a project file with unordered points
+/// still plays correctly.
+enum PosePath {
+    static func pose(at progress: Double, in frames: [PoseKeyframe],
+                     curve: MotionCurve) -> FramePose {
+        let time = max(0, min(1, progress))
+        var before: (time: Double, pose: FramePose)?
+        var after: (time: Double, pose: FramePose)?
+        for frame in frames where frame.time.isFinite {
+            // Out-of-range anchors preserve easing when a segment is split.
+            let at = frame.time
+            if at <= time, before == nil || at >= before!.time { before = (at, frame.pose) }
+            if at >= time, after == nil || at < after!.time { after = (at, frame.pose) }
+        }
+        guard let before else { return after?.pose ?? .neutral }
+        guard let after, after.time - before.time > 0.000001 else { return before.pose }
+        return before.pose.blended(to: after.pose,
+                                   curve.value((time - before.time) / (after.time - before.time)))
+    }
+}
+
 /// Pure, timestamp-based camera evaluation shared by preview, hit testing, and export.
 enum MotionEngine {
     /// The focus box grows with the actual text drag, so the camera follows
@@ -216,6 +238,23 @@ enum MotionEngine {
         var stance = FrameStance()
         var strongest = 0.0
         for segment in segments where segment.kind == .perspective {
+            if let frames = segment.poseKeyframes, !frames.isEmpty {
+                guard time >= segment.start, time <= segment.end else { continue }
+                if time == segment.end && segments.contains(where: {
+                    $0.id != segment.id && $0.kind == .perspective && $0.start == time && $0.poseKeyframes?.isEmpty == false
+                }) { continue }
+                let progress = (time - segment.start) / max(0.001, segment.duration)
+                stance.pose = stance.pose.added(PosePath.pose(at: progress, in: frames,
+                                                               curve: segment.curve ?? .smooth))
+                let amount = segment.blurAmount ?? 0
+                if let blur = segment.blur, blur != .none, amount > strongest {
+                    strongest = amount
+                    stance.blur = blur
+                    stance.amount = amount
+                    stance.angle = segment.blurAngle ?? 0
+                }
+                continue
+            }
             let weight = envelope(segment, time: time)
             guard weight > 0, segment.pose != nil else { continue }
             let target = segment.effectivePose

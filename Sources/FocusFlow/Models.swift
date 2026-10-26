@@ -29,6 +29,15 @@ enum SegmentKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// One pose on a 3D segment's path. `time` is a share of that segment, so
+/// moving or resizing the segment keeps its animation in sync with it.
+/// Splits retain anchors outside 0...1 to preserve the original easing.
+struct PoseKeyframe: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var time: Double
+    var pose: FramePose
+}
+
 struct EditSegment: Identifiable, Codable, Equatable {
     var id = UUID()
     var kind: SegmentKind
@@ -57,6 +66,9 @@ struct EditSegment: Identifiable, Codable, Equatable {
     var poseStrength: Double? = nil
     var poseReversed: Bool? = nil
     var sweeps: Bool? = nil
+    /// Nil keeps the original preset motion. A nonempty path is edited one
+    /// point at a time on the canvas and interpolated by the renderer.
+    var poseKeyframes: [PoseKeyframe]? = nil
     var blur: FrameBlur? = nil
     var blurAmount: Double? = nil
     var blurAngle: Double? = nil

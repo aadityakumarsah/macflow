@@ -79,6 +79,7 @@ final class EditorModel: ObservableObject {
     @Published var showCropEditor = false
     /// Whether the 3D handles are drawn over the preview.
     @Published var show3DCanvas = false
+    private var poseGestureActive = false
     @Published var pointerSamples: [PointerSample] = []
     @Published var recordedClicks: [RecordedClick] = []
     @Published var keystrokes: [KeystrokeEvent] = []
@@ -145,9 +146,26 @@ final class EditorModel: ObservableObject {
 
     /// The pose the handles move, wherever it happens to live.
     var editedPose: FramePose {
-        get { posedSegment?.effectivePose ?? cameraMove.pose }
+        get {
+            guard let segment = posedSegment else { return cameraMove.pose }
+            if let frames = segment.poseKeyframes, !frames.isEmpty {
+                return PosePath.pose(at: (playhead - segment.start) / segment.duration,
+                                     in: frames, curve: segment.curve ?? .smooth)
+            }
+            return segment.effectivePose
+        }
         set {
-            if posedSegment != nil {
+            if selectedSegment?.poseKeyframes?.isEmpty == false && posedSegment == nil { return }
+            if let segment = posedSegment, segment.poseKeyframes?.isEmpty == false {
+                let progress = max(0, min(1, (playhead - segment.start) / segment.duration))
+                updateSelected {
+                    var frames = $0.poseKeyframes ?? []
+                    if let index = frames.firstIndex(where: { abs($0.time - progress) < 0.000001 }) {
+                        frames[index].pose = newValue.clamped
+                    } else { frames.append(PoseKeyframe(time: progress, pose: newValue.clamped)) }
+                    $0.poseKeyframes = frames.sorted { $0.time < $1.time }
+                }
+            } else if posedSegment != nil {
                 updateSelected {
                     $0.pose = newValue; $0.posePreset = nil
                     $0.poseStrength = 1; $0.poseReversed = false
@@ -354,6 +372,72 @@ final class EditorModel: ObservableObject {
         if let segment = selectedSegment { seek(to: segment.start + segment.duration * 0.72) }
     }
 
+    /// Capture a gesture once; long drags remain a single undo action.
+    func beginPoseGesture() {
+        player.pause(); isPlaying = false
+        movePreviewTask?.cancel(); movePreviewEnd = nil
+        guard !poseGestureActive else { return }
+        lastHistory = .distantPast; remember(); poseGestureActive = true
+    }
+    func endPoseGesture() { poseGestureActive = false; lastHistory = .distantPast }
+
+    func customizeThreeDPath() {
+        guard videoURL != nil, duration > 0 else { return }
+        if selectedSegment?.kind != .perspective { applyThreeDPreset(.orbit) }
+        guard let segment = selectedSegment, segment.kind == .perspective else { return }
+        player.pause(); isPlaying = false
+        lastHistory = .distantPast
+        if segment.poseKeyframes?.isEmpty != false {
+            // Preserve the existing move at meaningful points when making it editable.
+            let points = [0.0, 0.25, 0.5, 0.75, 1.0].map { t in
+                PoseKeyframe(time: t, pose: MotionEngine.stance(
+                    at: segment.start + segment.duration * t, segments: [segment]).pose)
+            }
+            updateSelected { $0.poseKeyframes = points; $0.posePreset = nil }
+        }
+        show3DCanvas = true
+        seek(to: segment.start)
+    }
+
+    func seekPose(_ progress: Double) {
+        guard let segment = selectedSegment, segment.kind == .perspective else { return }
+        player.pause(); isPlaying = false; movePreviewTask?.cancel(); movePreviewEnd = nil
+        seek(to: segment.start + max(0, min(1, progress)) * segment.duration)
+    }
+
+    func addPosePoint() {
+        guard posedSegment?.poseKeyframes?.isEmpty == false else { return }
+        beginPoseGesture(); let pose = editedPose; editedPose = pose; endPoseGesture()
+    }
+
+    func movePosePoint(_ id: UUID, to progress: Double) {
+        guard let segment = selectedSegment, let frames = segment.poseKeyframes,
+              let frame = frames.first(where: { $0.id == id }), frame.time > 0, frame.time < 1 else { return }
+        let gap = min(0.01, 1 / max(1, segment.duration * 60))
+        let lower = max(0, frames.filter { $0.time < frame.time }.map(\.time).max() ?? 0)
+        let upper = min(1, frames.filter { $0.time > frame.time }.map(\.time).min() ?? 1)
+        let time = max(lower + gap, min(upper - gap, progress))
+        guard upper - lower > 2 * gap else { return }
+        updateSelected { s in
+            if let index = s.poseKeyframes?.firstIndex(where: { $0.id == id }) {
+                s.poseKeyframes?[index].time = time
+            }
+        }
+        seekPose(time)
+    }
+
+    var currentPosePoint: PoseKeyframe? {
+        guard let segment = posedSegment else { return nil }
+        let t = (playhead - segment.start) / segment.duration
+        return segment.poseKeyframes?.first { abs($0.time - t) < 0.000001 }
+    }
+
+    func removePosePoint() {
+        guard let point = currentPosePoint, point.time > 0, point.time < 1 else { return }
+        lastHistory = .distantPast
+        updateSelected { $0.poseKeyframes?.removeAll { $0.id == point.id } }
+    }
+
     func previewThreeDMove() {
         guard let segment = selectedSegment, segment.kind == .perspective else { return }
         let start = max(trimStart, segment.start), end = min(trimEnd, segment.end)
@@ -416,7 +500,16 @@ final class EditorModel: ObservableObject {
         guard canSplitSelected, var segment = selectedSegment else { return }
         lastHistory = .distantPast
         let oldEnd = segment.end
-        updateSelected { $0.duration = playhead - $0.start }
+        let fraction = (playhead - segment.start) / segment.duration
+        updateSelected {
+            $0.duration = playhead - $0.start
+            $0.poseKeyframes = segment.poseKeyframes?.map { frame in
+                var copy = frame; copy.time /= fraction; return copy
+            }
+        }
+        segment.poseKeyframes = segment.poseKeyframes?.map { frame in
+            var copy = frame; copy.time = (copy.time - fraction) / (1 - fraction); return copy
+        }
         segment.id = UUID(); segment.start = playhead; segment.duration = oldEnd - playhead
         segments.append(segment); selectedSegmentID = segment.id
     }
@@ -454,7 +547,7 @@ final class EditorModel: ObservableObject {
     func resetTrim() { trimStart = 0; trimEnd = duration }
 
     private func remember() {
-        guard !restoring, videoURL != nil, duration > 0 else { return }
+        guard !restoring, !poseGestureActive, videoURL != nil, duration > 0 else { return }
         if Date().timeIntervalSince(lastHistory) > 0.4 {
             undoStack.append(document()); if undoStack.count > 80 { undoStack.removeFirst() }
             lastHistory = Date()

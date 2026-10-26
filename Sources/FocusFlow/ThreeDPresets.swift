@@ -38,6 +38,7 @@ enum ThreeDPreset: String, CaseIterable, Identifiable {
     var sweeps: Bool { self != .showcase && self != .tilt }
 
     func apply(to segment: inout EditSegment) {
+        segment.poseKeyframes = nil
         segment.pose = pose
         segment.posePreset = rawValue
         segment.poseStrength = 0.75
@@ -140,12 +141,15 @@ struct ThreeDMoveControls: View {
                       systemImage: "square.grid.2x2")
             }
             .popover(isPresented: $showingPresets) { ThreeDPresetPicker { showingPresets = false } }
-            InspectorSlider(title: "Strength", value: Binding(
-                get: { segment.poseStrength ?? 1 },
-                set: { value in model.updateSelected { $0.poseStrength = value } }), range: 0...1, suffix: "")
-            Toggle("Reverse direction", isOn: Binding(
-                get: { segment.poseReversed ?? false },
-                set: { value in model.updateSelected { $0.poseReversed = value } }))
+            if segment.poseKeyframes?.isEmpty != false {
+                InspectorSlider(title: "Strength", value: Binding(
+                    get: { segment.poseStrength ?? 1 },
+                    set: { value in model.updateSelected { $0.poseStrength = value } }), range: 0...1, suffix: "")
+                Toggle("Reverse direction", isOn: Binding(
+                    get: { segment.poseReversed ?? false },
+                    set: { value in model.updateSelected { $0.poseReversed = value } }))
+            }
+            Button("Customize motion path") { model.customizeThreeDPath() }
             VStack(alignment: .leading, spacing: 8) {
                 Button { model.previewThreeDMove() } label: { Label("Preview move", systemImage: "play.fill") }
                 Button("Edit on canvas") {

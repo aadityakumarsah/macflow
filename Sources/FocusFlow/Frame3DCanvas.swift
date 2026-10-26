@@ -41,7 +41,7 @@ struct Frame3DOverlay: View {
             .flipped(in: canvasSize.height)
     }
 
-    private var pose: FramePose { model.editedPose }
+    private var pose: FramePose { model.posedSegment?.poseKeyframes?.isEmpty == false ? model.standingPose : model.editedPose }
     var body: some View {
         let layout = FrameLayout.make(canvas: canvas, sourceSize: model.contentSize,
                                       padding: model.padding, frame: model.frameAppearance)
@@ -122,7 +122,7 @@ struct Frame3DOverlay: View {
     /// while they are being dragged is impossible to aim.
     private func begin() -> FramePose {
         if let grabbed { return grabbed }
-        model.player.pause(); model.isPlaying = false
+        model.beginPoseGesture()
         let pose = model.editedPose
         grabbed = pose
         return pose
@@ -148,7 +148,7 @@ struct Frame3DOverlay: View {
                     .setting { $0.yaw = clamped(from.yaw - Double(value.translation.width / canvasSize.width) * 2) }
                     .setting { $0.pitch = clamped(from.pitch + Double(value.translation.height / canvasSize.height) * 2) })
             }
-            .onEnded { _ in grabbed = nil }
+            .onEnded { _ in grabbed = nil; model.endPoseGesture() }
     }
 
     private var pan: some Gesture {
@@ -159,7 +159,7 @@ struct Frame3DOverlay: View {
                     .setting { $0.panX = clamped(from.panX + Double(value.translation.width / canvasSize.width) * 2) }
                     .setting { $0.panY = clamped(from.panY - Double(value.translation.height / canvasSize.height) * 2) })
             }
-            .onEnded { _ in grabbed = nil }
+            .onEnded { _ in grabbed = nil; model.endPoseGesture() }
     }
 
     private var roll: some Gesture {
@@ -170,7 +170,7 @@ struct Frame3DOverlay: View {
                     $0.roll = clamped(from.roll + Double(value.translation.width / canvasSize.width) * 2)
                 })
             }
-            .onEnded { _ in grabbed = nil }
+            .onEnded { _ in grabbed = nil; model.endPoseGesture() }
     }
 
     private var push: some Gesture {
@@ -180,7 +180,7 @@ struct Frame3DOverlay: View {
                 let zoom = from.zoom - Double(value.translation.height / canvasSize.height) * 1.2
                 model.editedPose = settle(from.setting { $0.zoom = max(0.6, min(1.8, zoom)) })
             }
-            .onEnded { _ in grabbed = nil }
+            .onEnded { _ in grabbed = nil; model.endPoseGesture() }
     }
 }
 
@@ -188,6 +188,7 @@ struct Frame3DOverlay: View {
 struct Frame3DBar: View {
     @EnvironmentObject private var model: EditorModel
     @State private var showingPresets = false
+    @State private var showingTiming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -197,6 +198,19 @@ struct Frame3DBar: View {
                 }.buttonStyle(.borderedProminent).tint(AppTheme.green)
                     .disabled(model.videoURL == nil)
                     .popover(isPresented: $showingPresets) { ThreeDPresetPicker { showingPresets = false } }
+                if model.selectedSegment?.poseKeyframes?.isEmpty != false {
+                    Button("Draw my move") { model.customizeThreeDPath() }
+                } else {
+                    Button("Timing") { showingTiming = true }
+                        .popover(isPresented: $showingTiming) {
+                            if let segment = model.selectedSegment {
+                                VStack(spacing: 16) {
+                                    InspectorSlider(title: "Start", value: Binding(get: { model.selectedSegment?.start ?? segment.start }, set: { v in model.updateSelected { $0.start = v } }), range: 0...max(0.1, model.duration), suffix: "s")
+                                    InspectorSlider(title: "Duration", value: Binding(get: { model.selectedSegment?.duration ?? segment.duration }, set: { v in model.updateSelected { $0.duration = v } }), range: 0.2...max(0.3, model.duration), suffix: "s")
+                                }.padding(16).frame(width: 280)
+                            }
+                        }
+                }
                 if model.selectedSegment?.kind == .perspective {
                     Button { model.previewThreeDMove() } label: { Label("Preview", systemImage: "play.fill") }
                 }
@@ -210,14 +224,92 @@ struct Frame3DBar: View {
                 Button { model.show3DCanvas = false } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("Hide the 3D controls")
             }
-            Text(model.posedSegment != nil
-                 ? "Drag to adjust this move. Change strength and duration in the inspector."
-                 : "Choose a look to animate. Drag the frame to move it and the content together.")
+            if let segment = model.selectedSegment, segment.poseKeyframes?.isEmpty == false {
+                PosePathStrip(segment: segment)
+            }
+            Text("Drag the picture to tilt · Centre to slide · Top to rotate · Bottom to move closer or back")
                 .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption)
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.line))
+    }
+}
+
+/// A local timeline for just the selected move; other effects remain untouched.
+struct PosePathStrip: View {
+    @EnvironmentObject private var model: EditorModel
+    let segment: EditSegment
+    @State private var dragging = false
+    private var progress: Double { max(0, min(1, (model.playhead - segment.start) / segment.duration)) }
+    private var points: [PoseKeyframe] { (segment.poseKeyframes ?? []).filter { $0.time >= 0 && $0.time <= 1 } }
+
+    private func step(_ direction: Double) {
+        let delta = model.playbackRate / Double(model.exportOptions.frameRate.rawValue)
+        model.seekPose(progress + direction * delta / max(0.001, segment.duration))
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Button("Start") { model.seekPose(0) }
+                Button("End") { model.seekPose(1) }
+                Button { step(-1) } label: { Image(systemName: "backward.frame") }
+                    .help("Previous output frame")
+                Button { step(1) } label: { Image(systemName: "forward.frame") }
+                    .help("Next output frame")
+                Text(String(format: "%.2f / %.2f s", progress * segment.duration, segment.duration))
+                    .monospacedDigit().foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button("Add point") { model.addPosePoint() }.disabled(model.posedSegment == nil)
+                Button { model.removePosePoint() } label: { Image(systemName: "trash") }
+                    .help("Delete this point")
+                    .disabled(model.currentPosePoint == nil || progress <= 0 || progress >= 1)
+            }
+            GeometryReader { proxy in
+                let width = max(1, proxy.size.width - 20)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.line).frame(height: 4)
+                    Rectangle().fill(AppTheme.green.opacity(0.12)).frame(height: 30)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            model.seekPose(Double((value.location.x - 10) / width))
+                        })
+                    Rectangle().fill(AppTheme.green).frame(width: 2, height: 30)
+                        .offset(x: 10 + progress * width).allowsHitTesting(false)
+                    ForEach(points) { point in
+                        Image(systemName: "diamond.fill")
+                            .foregroundStyle(abs(point.time - progress) < 0.000001 ? AppTheme.green : Color.secondary)
+                            .frame(width: 20, height: 30).contentShape(Rectangle())
+                            .offset(x: point.time * width)
+                            .onTapGesture { model.seekPose(point.time) }
+                            .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("posePath"))
+                                .onChanged { value in
+                                    if !dragging { model.beginPoseGesture(); dragging = true }
+                                    model.movePosePoint(point.id, to: Double((value.location.x - 10) / width))
+                                }
+                                .onEnded { _ in model.endPoseGesture(); dragging = false })
+                            .help("Click to edit this pose. Drag to change when it happens.")
+                            .accessibilityLabel("Pose at \(String(format: "%.2f", point.time * segment.duration)) seconds")
+                    }
+                }.coordinateSpace(name: "posePath")
+            }.frame(height: 30)
+            HStack {
+                Button("Reset pose") {
+                    model.beginPoseGesture(); model.editedPose = .neutral; model.endPoseGesture()
+                }.disabled(model.posedSegment == nil)
+                Button("Return at end") {
+                    model.seekPose(1)
+                    model.beginPoseGesture(); model.editedPose = .neutral; model.endPoseGesture()
+                }
+                Spacer(minLength: 4)
+                Picker("Motion", selection: Binding(get: { segment.curve ?? .smooth }, set: { curve in
+                    model.updateSelected { $0.curve = curve }
+                })) {
+                    ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
+                }.labelsHidden().frame(width: 100)
+            }
+        }
     }
 }

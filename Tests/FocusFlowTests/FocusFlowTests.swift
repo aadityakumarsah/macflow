@@ -5,6 +5,59 @@ import CoreText
 import SwiftUI
 
 final class FocusFlowTests {
+    @MainActor func testEditablePosePath() throws {
+        let a = FramePose(yaw: -0.3, panX: -0.2, zoom: 0.8)
+        let b = FramePose(pitch: 0.4, yaw: 0.5, panX: 0.3, zoom: 1.2)
+        let frames = [PoseKeyframe(time: 0, pose: a), PoseKeyframe(time: 1, pose: b)]
+        XCTAssertEqual(PosePath.pose(at: 0, in: frames, curve: .smooth), a)
+        XCTAssertEqual(PosePath.pose(at: 1, in: frames.reversed(), curve: .smooth), b)
+        XCTAssertEqual(PosePath.pose(at: 0.5, in: frames, curve: .smooth), a.blended(to: b, 0.5))
+        let model = EditorModel(restoreLatest: false)
+        model.duration = 10; model.trimEnd = 10
+        model.videoURL = URL(fileURLWithPath: "/tmp/path-check-nonexistent.mp4")
+        defer { model.videoURL = nil }
+        let other = EditSegment(kind: .zoom, start: 0, duration: 8, intensity: 1.5, x: 0.5, y: 0.5)
+        var segment = EditSegment(kind: .perspective, start: 1, duration: 4, intensity: 1, x: 0.5, y: 0.5)
+        segment.poseKeyframes = frames
+        model.segments = [other, segment]; model.selectedSegmentID = segment.id
+        model.seekPose(0.5)
+        model.beginPoseGesture()
+        model.editedPose = FramePose(yaw: 0.2)
+        model.editedPose = FramePose(yaw: 0.4)
+        model.endPoseGesture()
+        XCTAssertEqual(model.selectedSegment?.poseKeyframes?.count, 3)
+        XCTAssertEqual(model.segments[0], other)
+        XCTAssertEqual(model.editedPose.yaw, 0.4, accuracy: 0.00001)
+        model.undo()
+        XCTAssertEqual(model.selectedSegment?.poseKeyframes, frames)
+        model.redo()
+        XCTAssertEqual(model.selectedSegment?.poseKeyframes?.count, 3)
+        let point = try XCTUnwrap(model.currentPosePoint)
+        model.beginPoseGesture(); model.movePosePoint(point.id, to: 0.75); model.endPoseGesture()
+        XCTAssertEqual(model.playhead, 4, accuracy: 0.00001)
+        model.removePosePoint()
+        XCTAssertEqual(model.selectedSegment?.poseKeyframes?.count, 2)
+        let original = try XCTUnwrap(model.selectedSegment)
+        model.seekPose(0.37); model.splitSelected()
+        for step in 0...100 {
+            let time = original.start + original.duration * Double(step) / 100
+            let before = MotionEngine.stance(at: time, segments: [original]).pose
+            let after = MotionEngine.stance(at: time, segments: model.segments).pose
+            XCTAssertEqual(before.yaw, after.yaw, accuracy: 0.000001)
+            XCTAssertEqual(before.zoom, after.zoom, accuracy: 0.000001)
+        }
+        let encoded = try JSONEncoder().encode(model.segments)
+        XCTAssertEqual(try JSONDecoder().decode([EditSegment].self, from: encoded), model.segments)
+        model.seekPose(0.5); model.addPosePoint()
+        let splitPoint = try XCTUnwrap(model.currentPosePoint)
+        model.movePosePoint(splitPoint.id, to: -10)
+        XCTAssertTrue((model.currentPosePoint?.time ?? -1) > 0)
+        model.movePosePoint(splitPoint.id, to: 10)
+        XCTAssertTrue((model.currentPosePoint?.time ?? 2) < 1)
+        model.applyThreeDPreset(.orbit)
+        XCTAssertNil(model.selectedSegment?.poseKeyframes)
+    }
+
     @MainActor func testThreeDPresetWorkflowAndPreviewReuse() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-3D-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -84,6 +137,17 @@ final class FocusFlowTests {
         model.show3DCanvas = true
         try snapshot(Frame3DBar().frame(width: 420).background(AppTheme.panel), name: "3d-bar.png")
 
+        model.customizeThreeDPath()
+        model.seekPose(0.5)
+        model.beginPoseGesture(); model.editedPose = FramePose(pitch: 0.2, yaw: 0.3); model.endPoseGesture()
+        try await settled()
+        XCTAssertTrue(model.player.currentItem?.asset === reused)
+        let pathSaved = try JSONDecoder().decode(ProjectDocument.self, from: Data(contentsOf: source.deletingPathExtension().appendingPathExtension("edits.json")))
+        XCTAssertEqual(pathSaved.segments, model.segments)
+        try snapshot(Frame3DBar().frame(width: 480), name: "3d-path.png")
+        model.theatreMode = true
+        try snapshot(PreviewArea().frame(width: 1100, height: 720), name: "3d-fullscreen.png")
+        model.theatreMode = false
         model.previewThreeDMove()
         for _ in 0..<120 {
             if model.isPlaying { break }

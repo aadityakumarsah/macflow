@@ -60,7 +60,8 @@ Only zooms are generated automatically. Spotlights, outlines, pixelation and cal
 - **Privacy masks** — blur or pixelate any region, with editable position, size, strength and timing. Regions can overlap.
 - **Canvas** — Source, 16:9, 9:16, 1:1, 4:3, or **any custom ratio** including decimals like 2.39:1. Change it and padding and the camera re-fit themselves.
 - **Timeline** — scrub, move, resize, duplicate, split at the playhead, delete, undo, redo. Non-destructive trim, playback speed, audio mute, and a looping music track.
-- **Full screen preview** — ⌃⌘F gives the preview the whole display.
+- **Editable 3D paths** — Open **3D → Draw my move**, choose Start or End, or scrub and add a point. Drag the picture to tilt, the centre to slide, the top handle to rotate, and the bottom handle to move closer or back. Drag a diamond to change its timing. Frame-step buttons allow precise placement; **Return at end** restores a neutral pose. Each drag is undoable.
+- **Full screen preview** — Use **Full screen** or ⌃⌘F to give the preview the whole display. **Edit 3D** keeps the motion path controls available; Escape exits.
 - **Export** — MP4 or MOV, Source to 4K, 30 or 60 fps. **Source** is the resolution you recorded at, encoded at no less than the rate the recording itself was carrying, so a 4K capture leaves as a 4K file.
 
 Every camera move — a click zoom, a typing follow, a pan — is smoothed over a window centred on the moment, so the frame can never change speed abruptly however abruptly the thing it is following does.

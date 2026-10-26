@@ -286,8 +286,14 @@ struct PreviewArea: View {
                     }
                     Spacer()
                     if model.theatreMode {
+                        Button { model.show3DCanvas.toggle() } label: {
+                            Label("Edit 3D", systemImage: "cube.transparent")
+                        }.buttonStyle(.bordered)
                         Text(model.ratio.rawValue).font(.caption)
                     } else {
+                        Button { model.setTheatreMode(true) } label: {
+                            Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                        }.buttonStyle(.plain).help("Full screen preview ⌃⌘F")
                         // The 3D camera, where it can be seen: a button beside
                         // the preview rather than a panel of sliders that have
                         // to be found before anything leans anywhere.
@@ -335,7 +341,7 @@ struct PreviewArea: View {
                         NativeVideoPlayer(player: model.player).allowsHitTesting(false)
                         EditableFocusOverlay(canvasSize: canvas)
                         if model.showCamera, model.cameraURL != nil { EditableCameraOverlay(canvasSize: canvas) }
-                        if model.show3DCanvas { Frame3DOverlay(canvasSize: canvas) }
+                        if model.show3DCanvas && (model.selectedSegment?.poseKeyframes?.isEmpty != false || model.posedSegment != nil) { Frame3DOverlay(canvasSize: canvas) }
                         if model.isPreparingPreview { ProgressView("Preparing preview…").padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
                     } else { EmptyCanvas() }
                 }
@@ -344,8 +350,8 @@ struct PreviewArea: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.line))
                 .shadow(color: .black.opacity(0.12), radius: 24, y: 12)
-                if model.show3DCanvas && !model.theatreMode {
-                    Frame3DBar().frame(maxWidth: min(560, canvas.width))
+                if model.show3DCanvas {
+                    Frame3DBar().frame(maxWidth: min(620, proxy.size.width - 32))
                 }
                 PlaybackControls()
                 Spacer(minLength: 10)
@@ -358,7 +364,8 @@ struct PreviewArea: View {
         // Theatre mode keeps only enough room for the transport and the exit
         // control; the editor layout leaves space for its surrounding chrome.
         let insetW: CGFloat = model.theatreMode ? 24 : 60
-        let insetH: CGFloat = model.theatreMode ? 96 : (model.show3DCanvas ? 208 : 122)
+        let pathVisible = model.selectedSegment?.poseKeyframes?.isEmpty == false
+        let insetH: CGFloat = model.show3DCanvas ? (pathVisible ? 320 : 216) : (model.theatreMode ? 112 : 122)
         let maxW = max(100, available.width - insetW), maxH = max(100, available.height - insetH)
         return maxW / maxH > ratio ? CGSize(width: maxH * ratio, height: maxH) : CGSize(width: maxW, height: maxW / ratio)
     }
@@ -610,36 +617,38 @@ struct SegmentInspector: View {
                 }
                 if segment.kind == .perspective {
                     ThreeDMoveControls(segment: segment)
-                    DisclosureGroup("Fine tune") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            InspectorSlider(title: "Tilt (lean back)", value: pose(segment, \.pitch), range: -1...1, suffix: "")
-                            InspectorSlider(title: "Turn (left / right)", value: pose(segment, \.yaw), range: -1...1, suffix: "")
-                            InspectorSlider(title: "Rotate", value: pose(segment, \.roll), range: -1...1, suffix: "")
-                            InspectorSlider(title: "Pan across", value: pose(segment, \.panX), range: -1...1, suffix: "")
-                            InspectorSlider(title: "Pan up / down", value: pose(segment, \.panY), range: -1...1, suffix: "")
-                            InspectorSlider(title: "Push in", value: pose(segment, \.zoom), range: 0.6...1.8, suffix: "×")
-                            Toggle("Sweep through it", isOn: Binding(
-                                get: { segment.sweeps ?? true },
-                                set: { on in model.updateSelected { $0.sweeps = on } }))
-                                .help("Travels from the far side of the lean, through it, and out — rather than easing into it and holding.")
-                            Picker("Blur", selection: Binding<FrameBlur>(
-                                get: { segment.blur ?? FrameBlur.none },
-                                set: { style in model.updateSelected { $0.blur = style } })) {
-                                ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
-                            }
-                            if (segment.blur ?? .none) != .none {
-                                InspectorSlider(title: "Blur amount", value: Binding(
-                                    get: { segment.blurAmount ?? 0.35 },
-                                    set: { v in model.updateSelected { $0.blurAmount = v } }), range: 0...1, suffix: "")
-                                if segment.blur == .directional {
-                                    InspectorSlider(title: "Angle", value: Binding(
-                                        get: { segment.blurAngle ?? 0 },
-                                        set: { v in model.updateSelected { $0.blurAngle = v } }), range: 0...360, suffix: "°")
+                    if segment.poseKeyframes?.isEmpty != false {
+                        DisclosureGroup("Fine tune") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                InspectorSlider(title: "Tilt (lean back)", value: pose(segment, \.pitch), range: -1...1, suffix: "")
+                                InspectorSlider(title: "Turn (left / right)", value: pose(segment, \.yaw), range: -1...1, suffix: "")
+                                InspectorSlider(title: "Rotate", value: pose(segment, \.roll), range: -1...1, suffix: "")
+                                InspectorSlider(title: "Pan across", value: pose(segment, \.panX), range: -1...1, suffix: "")
+                                InspectorSlider(title: "Pan up / down", value: pose(segment, \.panY), range: -1...1, suffix: "")
+                                InspectorSlider(title: "Push in", value: pose(segment, \.zoom), range: 0.6...1.8, suffix: "×")
+                                Toggle("Sweep through it", isOn: Binding(
+                                    get: { segment.sweeps ?? true },
+                                    set: { on in model.updateSelected { $0.sweeps = on } }))
+                                    .help("Travels from the far side of the lean, through it, and out — rather than easing into it and holding.")
+                                Picker("Blur", selection: Binding<FrameBlur>(
+                                    get: { segment.blur ?? FrameBlur.none },
+                                    set: { style in model.updateSelected { $0.blur = style } })) {
+                                    ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
                                 }
+                                if (segment.blur ?? .none) != .none {
+                                    InspectorSlider(title: "Blur amount", value: Binding(
+                                        get: { segment.blurAmount ?? 0.35 },
+                                        set: { v in model.updateSelected { $0.blurAmount = v } }), range: 0...1, suffix: "")
+                                    if segment.blur == .directional {
+                                        InspectorSlider(title: "Angle", value: Binding(
+                                            get: { segment.blurAngle ?? 0 },
+                                            set: { v in model.updateSelected { $0.blurAngle = v } }), range: 0...360, suffix: "°")
+                                    }
+                                }
+                                SegmentMotionInspector(segment: segment)
                             }
-                            SegmentMotionInspector(segment: segment)
+                            .padding(.top, 10)
                         }
-                        .padding(.top, 10)
                     }
                 }
                 if segment.kind != .perspective { SegmentMotionInspector(segment: segment) }
