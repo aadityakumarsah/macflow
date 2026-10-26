@@ -572,7 +572,7 @@ struct CameraMoveInspector: View {
             .disabled(model.videoURL == nil)
             .popover(isPresented: $showingPresets) { ThreeDPresetPicker { showingPresets = false } }
             Toggle("Handles on the canvas", isOn: $model.show3DCanvas)
-                .help("Shows the content projection over the preview and lets you drag it instead of using the sliders below.")
+                .help("Shows the frame and content projection over the preview and lets you drag them together.")
             Picker("Move", selection: $model.cameraMove.move) {
                 ForEach(CameraMove.allCases) { Text($0.rawValue).tag($0) }
             }.labelsHidden()

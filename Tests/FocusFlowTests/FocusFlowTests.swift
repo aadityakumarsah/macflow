@@ -2095,8 +2095,8 @@ final class FocusFlowTests {
         XCTAssertEqual(settings[AVVideoHeightKey] as? Int, 1080)
     }
 
-    /// The 3D guide tracks a feature inside the recording, while the window
-    /// opening itself stays fixed.
+    /// The frame and a feature inside it follow the same move, with a small
+    /// extra content offset for parallax.
     func testThreeDHandlesSitOnTheRenderedFrame() throws {
         // Square to the viewer, the map leaves every point where it was.
         let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
@@ -2117,8 +2117,8 @@ final class FocusFlowTests {
         settings.customBackground = CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 0, b: 0))
 
         /// The lit window bounds and the red feature inside the content.
-        func rendered() throws -> (bounds: CGRect, point: CGPoint) {
-            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 1, settings: settings), from: canvas))
+        func rendered(at time: Double = 1) throws -> (bounds: CGRect, point: CGPoint) {
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: time, settings: settings), from: canvas))
             let data = pixels(image)
             var minX = 400.0, maxX = 0.0, minRow = 240.0, maxRow = 0.0
             var redX = 0.0, redY = 0.0, redCount = 0.0
@@ -2144,25 +2144,48 @@ final class FocusFlowTests {
         move.blur = .none
         settings.cameraMove = move
         let leaning = try rendered()
-        XCTAssertEqual(leaning.bounds.minX, flat.bounds.minX, accuracy: 1)
-        XCTAssertEqual(leaning.bounds.maxX, flat.bounds.maxX, accuracy: 1)
-        XCTAssertEqual(leaning.bounds.minY, flat.bounds.minY, accuracy: 1)
-        XCTAssertEqual(leaning.bounds.maxY, flat.bounds.maxY, accuracy: 1)
-
         let layout = FrameLayout.make(canvas: canvas, sourceSize: canvas.size,
                                       padding: 6, frame: settings.frame)
+        let outer = move.pose.projection(of: canvas, canvas: canvas, lean: move.pose.lean())
+        let outerMap = ProjectiveMap(canvas, to: outer)
+        let frameCorners = outerMap.quad(of: layout.outer).corners
+        XCTAssertEqual(Double(leaning.bounds.minX), Double(frameCorners.map(\.x).min()!), accuracy: 3)
+        XCTAssertEqual(Double(leaning.bounds.maxX), Double(frameCorners.map(\.x).max()!), accuracy: 3)
+        XCTAssertEqual(Double(leaning.bounds.minY), Double(frameCorners.map(\.y).min()!), accuracy: 3)
+        XCTAssertEqual(Double(leaning.bounds.maxY), Double(frameCorners.map(\.y).max()!), accuracy: 3)
+        XCTAssertGreaterThan(abs(leaning.bounds.minX - flat.bounds.minX), 5)
+
         let start = CGPoint(x: layout.content.minX + marker.midX / canvas.width * layout.content.width,
                             y: layout.content.minY + marker.midY / canvas.height * layout.content.height)
-        let projected = move.pose.projection(of: layout.content, canvas: layout.content,
-                                              lean: move.pose.lean())
-        let expected = ProjectiveMap(layout.content, to: projected)(start)
+        let innerPose = move.pose.weighted(FramePose.contentParallax)
+        let inner = innerPose.projection(of: layout.content, canvas: layout.content,
+                                          lean: innerPose.lean())
+        let expected = outerMap(ProjectiveMap(layout.content, to: inner)(start))
         XCTAssertEqual(leaning.point.x, expected.x, accuracy: 3)
         XCTAssertEqual(leaning.point.y, expected.y, accuracy: 3)
         XCTAssertGreaterThan(hypot(leaning.point.x - flat.point.x,
                                    leaning.point.y - flat.point.y), 5)
+        let frameOnly = outerMap(start)
+        XCTAssertGreaterThan(hypot(leaning.point.x - frameOnly.x,
+                                   leaning.point.y - frameOnly.y), 1)
 
-        // Even at the ends of the controls, the content opening must not
-        // expose transparent wedges of the black background.
+        settings.cameraMove = CameraMoveSettings()
+        var animated = EditSegment(kind: .perspective, start: 2, duration: 3,
+                                   intensity: 1, x: 0.5, y: 0.5, transition: 0.5)
+        animated.pose = move.pose
+        animated.sweeps = false
+        settings.segments = [animated]
+        let before = try rendered(at: 0.5), middle = try rendered(at: 3.5), after = try rendered(at: 7.5)
+        XCTAssertGreaterThan(abs(middle.bounds.minX - before.bounds.minX), 5)
+        XCTAssertGreaterThan(hypot(middle.point.x - before.point.x,
+                                   middle.point.y - before.point.y), 5)
+        XCTAssertEqual(after.bounds.minX, before.bounds.minX, accuracy: 1)
+        XCTAssertEqual(after.point.x, before.point.x, accuracy: 1)
+        XCTAssertEqual(after.point.y, before.point.y, accuracy: 1)
+        settings.segments = []
+
+        // At steep angles, visible points inside the moving frame should
+        // still contain the recording rather than a transparent wedge.
         for pose in [FramePose(pitch: 1, yaw: 1), FramePose(pitch: -1, yaw: -1),
                      FramePose(panX: 1, panY: 1), FramePose(zoom: 0.6),
                      FramePose(pitch: 0.7, yaw: -0.8, roll: 0.7)] {
@@ -2175,12 +2198,16 @@ final class FocusFlowTests {
             settings.cameraMove.zoom = pose.zoom
             let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 1, settings: settings), from: canvas))
             let data = pixels(image)
-            for x in [Int(layout.content.minX) + 3, Int(layout.content.maxX) - 4] {
-                for y in [Int(layout.content.minY) + 3, Int(layout.content.maxY) - 4] {
-                    let row = 239 - y
-                    let value = Int(data[(row * 400 + x) * 4])
-                    XCTAssertGreaterThan(value, 150)
-                }
+            let projected = ProjectiveMap(canvas, to: pose.projection(of: canvas, canvas: canvas,
+                                                                       lean: pose.lean()))
+            let opening = layout.content.insetBy(dx: layout.content.width * 0.08,
+                                                  dy: layout.content.height * 0.08)
+            for point in FrameQuad.rect(opening).corners {
+                let mapped = projected(point)
+                let x = Int(mapped.x), y = Int(mapped.y)
+                guard x >= 0, x < 400, y >= 0, y < 240 else { continue }
+                let row = 239 - y
+                XCTAssertGreaterThan(Int(data[(row * 400 + x) * 4]), 100)
             }
         }
     }

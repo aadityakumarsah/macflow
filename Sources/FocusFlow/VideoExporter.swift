@@ -654,21 +654,24 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 ]).cropped(to: layout.content)
             }
         }
-        // The 3D pose belongs to the recording. Project it while it is still
-        // the content layer, before the window chrome, rounded mask and shadow
-        // are drawn. Those surrounding parts should stay anchored on canvas.
+        // Give the recording a small amount of parallax inside its window.
+        // The full pose is applied to the composed window below, using the
+        // same stance and timing, so both layers move together.
         var contentMove = settings.cameraMove
         contentMove.move = .none
+        contentMove.pose = settings.cameraMove.pose.weighted(FramePose.contentParallax)
+        var contentStance = stance
+        contentStance.pose = stance.pose.weighted(FramePose.contentParallax)
         if settings.cameraMove.move != .none {
             // The older animated window effect owns its blur. A simultaneous
             // content pose should not apply that blur a second time.
             contentMove.blur = .none
             contentMove.focusBlur = 0
         }
-        if contentMove.isActive || !stance.isNeutral {
+        if contentMove.isActive || !contentStance.isNeutral {
             source = applyCameraMove(source, at: time, canvas: layout.content,
                                      settings: settings, move: contentMove,
-                                     stance: stance, fillContent: true)
+                                     stance: contentStance, fillContent: true)
         }
         if let header = RenderAssets.header(settings.frame, rect: layout.header) { source = header.composited(over: source) }
         // Corners and shadow are written in the editor's own pixels, where
@@ -691,14 +694,19 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         }
         let motion = settings.motion
         let progress = MotionCurve.smooth.value((time - settings.trimStart) / max(0.1, motion.duration))
-        // Keep the older whole-window Glide, Unfold and Pull back animations
-        // working. Their motion is separate from the editable content pose.
-        if settings.cameraMove.move != .none {
+        // Move the frame, chrome, shadow and recorded content as one object.
+        // Keep blur on the content for 3D poses; legacy window animations
+        // retain their existing whole-window blur behaviour.
+        if settings.cameraMove.isActive || !stance.pose.isNeutral {
             var windowMove = settings.cameraMove
-            windowMove.pitch = 0; windowMove.yaw = 0; windowMove.roll = 0
-            windowMove.panX = 0; windowMove.panY = 0; windowMove.zoom = 1
+            var windowStance = stance
+            if settings.cameraMove.move == .none {
+                windowMove.blur = .none; windowMove.focusBlur = 0
+                windowStance.blur = .none; windowStance.amount = 0
+            }
             source = applyCameraMove(source, at: time, canvas: canvas,
-                                     settings: settings, move: windowMove)
+                                     settings: settings, move: windowMove,
+                                     stance: windowStance)
         }
         if motion.entrance != .none {
             var transform = CGAffineTransform.identity
@@ -795,7 +803,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         let elapsed = time - settings.trimStart
         guard elapsed >= 0 else { return image }
 
-        let frame = image.extent
+        let frame = fillContent ? image.extent : canvas
         guard frame.width > 1, frame.height > 1 else { return image }
         let playing = move.performance(at: elapsed, clip: settings.trimEnd - settings.trimStart, width: Double(frame.width))
         if playing.settled, !move.isPlaced, !move.hasStandaloneBlur, stance.isNeutral { return image }
@@ -833,11 +841,15 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 perspective.topRight = extendedQuad.topRight
                 perspective.topLeft = extendedQuad.topLeft
             } else {
+                // The shadow may extend beyond the canvas. Carry its full
+                // image extent through the same canvas projection rather
+                // than letting it change the frame's perspective geometry.
+                let imageQuad = ProjectiveMap(frame, to: quad).quad(of: image.extent)
                 perspective.inputImage = image
-                perspective.bottomLeft = quad.bottomLeft
-                perspective.bottomRight = quad.bottomRight
-                perspective.topRight = quad.topRight
-                perspective.topLeft = quad.topLeft
+                perspective.bottomLeft = imageQuad.bottomLeft
+                perspective.bottomRight = imageQuad.bottomRight
+                perspective.topRight = imageQuad.topRight
+                perspective.topLeft = imageQuad.topLeft
             }
             guard let projected = perspective.outputImage else { return image }
             result = projected

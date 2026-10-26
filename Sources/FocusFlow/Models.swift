@@ -17,7 +17,7 @@ enum SegmentKind: String, Codable, CaseIterable, Identifiable {
         case .zoom: "Move closer to a detail"
         case .pan: "Glide across the frame"
         case .typing: "Follow the typing"
-        case .perspective: "Give the recorded content a 3D angle"
+        case .perspective: "Turn the frame and content together in 3D"
         case .spotlight: "Dim everything around a detail"
         case .outline: "Draw an accent frame"
         case .callout: "Add a short text label"

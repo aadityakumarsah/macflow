@@ -284,6 +284,9 @@ struct FramePose: Codable, Equatable {
     var zoom: Double = 1
 
     static let neutral = FramePose()
+    /// Extra motion inside the moving window, kept small so the content and
+    /// its surrounding frame read as one object with a little depth.
+    static let contentParallax = 0.28
     var isNeutral: Bool { self == .neutral }
 
     /// The same pose seen from the other side. A move that travels sweeps
@@ -605,7 +608,11 @@ extension CameraMoveSettings {
     /// Where the frame stands, as one pose. The six sliders are a pose
     /// written out flat, because they were here before poses were.
     var pose: FramePose {
-        FramePose(pitch: pitch, yaw: yaw, roll: roll, panX: panX, panY: panY, zoom: zoom)
+        get { FramePose(pitch: pitch, yaw: yaw, roll: roll, panX: panX, panY: panY, zoom: zoom) }
+        set {
+            pitch = newValue.pitch; yaw = newValue.yaw; roll = newValue.roll
+            panX = newValue.panX; panY = newValue.panY; zoom = newValue.zoom
+        }
     }
 
     /// What a playing move is doing to the frame at this moment, on top of
