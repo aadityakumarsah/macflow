@@ -2087,29 +2087,13 @@ final class FocusFlowTests {
         XCTAssertGreaterThan(sharp, try detail(CameraMoveSettings()) * 0.5)
     }
 
-    /// Writing and selecting are drawn where they are happening: a band
-    /// under the words as they appear, and a wash over the range as it is
-    /// dragged. A camera move alone leaves a frame drifting for no visible
-    /// reason, because the thing it follows is three pixels wide.
-    func testWritingAndSelectionAreDrawnWhereTheyHappen() throws {
-        // The caret is where the keys say, not where the frame is.
-        let run = EditSegment(kind: .typing, start: 0, duration: 2, intensity: 1, x: 0.2, y: 0.5,
-                              transition: 0.4, endX: 0.6, endY: 0.5, travelFraction: 1)
-        XCTAssertEqual(Double(MotionEngine.caret(run, at: 0)?.x ?? 0), 0.2, accuracy: 0.001)
-        XCTAssertEqual(Double(MotionEngine.caret(run, at: 1)?.x ?? 0), 0.4, accuracy: 0.001)
-        XCTAssertEqual(Double(MotionEngine.caret(run, at: 5)?.x ?? 0), 0.6, accuracy: 0.001)
-        XCTAssertNil(MotionEngine.caret(EditSegment(kind: .zoom, start: 0, duration: 1, intensity: 2, x: 0.5, y: 0.5), at: 0.5))
-        XCTAssertTrue(MotionEngine.writes(run, at: 1))
-        // A run that stops typing halfway holds for the rest of itself,
-        // and the caret stops advancing and starts blinking there.
-        var held = run; held.travelFraction = 0.5
-        XCTAssertTrue(MotionEngine.writes(held, at: 0.9))
-        XCTAssertTrue(!MotionEngine.writes(held, at: 1.5))
-
+    /// A wash follows the range while text is selected, without extending
+    /// beyond the part of the drag that has happened yet.
+    func testSelectionIsDrawnWhereItHappens() throws {
         let renderer = FocusFlowCompositor(), context = CIContext()
         let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
         let page = CIImage(color: CIColor(red: 0.96, green: 0.96, blue: 0.96)).cropped(to: canvas)
-        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [run], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
         settings.showCursor = false
         settings.motion.ambientGraphics = false
         settings.motion.scrollBlur = false
@@ -2131,20 +2115,11 @@ final class FocusFlowTests {
             return total / max(1, count)
         }
 
-        let written = try frame()
-        settings.typingFollow.highlight = false
-        let plain = try frame()
-        // Under the written words, and nowhere near the end of the line
-        // the caret has not reached yet.
-        XCTAssertGreaterThan(accented(written, rows: 123...127, columns: 100...150), accented(plain, rows: 123...127, columns: 100...150) + 8)
-        XCTAssertEqual(accented(written, rows: 123...127, columns: 300...360), accented(plain, rows: 123...127, columns: 300...360), accuracy: 1)
-
         // A selection is washed over the range the drag has covered.
         let drag = EditSegment(kind: .zoom, start: 0, duration: 2, intensity: 1, x: 0.25, y: 0.5,
                                transition: 0.4, endX: 0.7, endY: 0.5,
                                tracksSelection: true, selectionStartTime: 0.2, selectionEndTime: 1.8)
         settings.segments = [drag]
-        settings.typingFollow.highlight = false
         let selected = try frame()
         settings.selectionFocus.highlight = false
         let unselected = try frame()

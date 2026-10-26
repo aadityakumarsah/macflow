@@ -71,13 +71,13 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testLeaningTheFrameKeepsItSharp()
             tests.testQuickPosesAndNudging()
             try tests.testOlderProjectsAreBroughtUpToTodaysDefaults()
-            print("Checking the writing, selection and cursor graphics…")
-            try tests.testWritingAndSelectionAreDrawnWhereTheyHappen()
+            print("Checking the selection and cursor graphics…")
+            try tests.testSelectionIsDrawnWhereItHappens()
             try tests.testCursorMarksAndCustomArtwork()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }
-        if failures.isEmpty { print("PASS: 12 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, keys/editor controls, smoothing/output quality/3D handles, writing and selection graphics, real MP4 export.") }
+        if failures.isEmpty { print("PASS: 12 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, keys/editor controls, smoothing/output quality/3D handles, selection/cursor graphics, real MP4 export.") }
         else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
     }
 }

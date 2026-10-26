@@ -49,7 +49,6 @@ struct ExportSettings {
     var typingEvents: [TypingEvent] = []
     var scrollEvents: [ScrollEvent] = []
     var sounds = SoundSettings()
-    var typingFollow = TypingFollowSettings()
     var selectionFocus = SelectionFocusSettings()
 }
 
@@ -569,7 +568,6 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: softMask])
         }
         source = applySelectionHighlight(to: source, at: time, settings: settings)
-        source = applyWritingHighlight(to: source, at: time, settings: settings)
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
         for outline in settings.segments where outline.kind == .outline {
             let strength = MotionEngine.envelope(outline, time: time)
@@ -932,53 +930,6 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         let playing = move.performance(at: time - settings.trimStart,
                                        clip: settings.trimEnd - settings.trimStart, width: width)
         return move.pose.added(stance.pose).lean(adding: playing.lean).depth
-    }
-
-    /// A soft accent band under the words as they are written, with a
-    /// caret at its leading edge.
-    ///
-    /// The camera move says where to look; this says what is happening
-    /// there. Without it a typing follow is a frame drifting along a line
-    /// for no visible reason, since the thing it is following — an
-    /// insertion point in somebody else's application — is three pixels
-    /// wide and often not even blinking.
-    private func applyWritingHighlight(to image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
-        guard settings.typingFollow.highlight != false else { return image }
-        let extent = image.extent
-        let unit = extent.width / 1920
-        let opacity = max(0, min(1, settings.typingFollow.highlightOpacity ?? 0.2))
-        guard opacity > 0.01 else { return image }
-        var result = image
-
-        for segment in settings.segments where segment.kind == .typing {
-            let strength = MotionEngine.envelope(segment, time: time)
-            guard strength > 0.01, let caret = MotionEngine.caret(segment, at: time) else { continue }
-            let line = max(10, 34 * unit)
-            let centre = (1 - caret.y) * extent.height
-            let from = min(segment.x, caret.x) * extent.width
-            let to = max(segment.x, caret.x) * extent.width
-
-            // The band sits under the line rather than over the words, the
-            // way an underline does, so nothing is obscured by it.
-            let band = CGRect(x: from - line * 0.28, y: centre - line * 0.62,
-                              width: max(line * 0.6, to - from + line * 0.56), height: line * 0.2)
-            if let bar = rounded(band, radius: band.height / 2, color: settings.cursor.accentColor) {
-                result = self.opacity(bar, strength * opacity * 1.6).composited(over: result)
-            }
-
-            // The caret itself: steady while words are going in, and
-            // blinking once they have stopped, which is what a real one
-            // does and what makes a still frame look live rather than
-            // frozen.
-            let writing = MotionEngine.writes(segment, at: time)
-            let blink = writing ? 1 : 0.45 + 0.55 * pow(cos(.pi * time * 1.1), 2)
-            let stem = CGRect(x: caret.x * extent.width - max(1.5, 3 * unit) / 2,
-                              y: centre - line * 0.52, width: max(1.5, 3 * unit), height: line)
-            if let mark = rounded(stem, radius: stem.width / 2, color: settings.cursor.accentColor) {
-                result = self.opacity(mark, strength * blink * 0.85).composited(over: result)
-            }
-        }
-        return result.cropped(to: extent)
     }
 
     /// A wash over the text someone is selecting, following the range as

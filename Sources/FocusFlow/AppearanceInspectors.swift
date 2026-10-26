@@ -675,16 +675,6 @@ struct TypingFollowInspector: View {
                     ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
                 }
 
-                Toggle("Underline the words as they appear", isOn: Binding(
-                    get: { model.typingFollow.highlight != false },
-                    set: { model.typingFollow.highlight = $0 }))
-                    .help("Draws a soft accent band under the line being written, with a caret at its leading edge.")
-                if model.typingFollow.highlight != false {
-                    InspectorSlider(title: "Underline strength", value: Binding(
-                        get: { model.typingFollow.highlightOpacity ?? 0.2 },
-                        set: { model.typingFollow.highlightOpacity = $0 }), range: 0...0.6, suffix: "")
-                }
-
                 Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. The frame holds still while the caret crosses **Hold still until** — a share of what is on screen — and then catches up in one move, rather than creeping along with every keystroke. Zero follows the caret continuously. Adjust **Travel per key** if the frame moves ahead of or behind the text.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

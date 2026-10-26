@@ -211,14 +211,6 @@ struct TypingFollowSettings: Codable, Equatable {
     /// How long the frame holds after the last keypress before releasing.
     var hold: Double = 0.7
     var curve: MotionCurve = .smooth
-
-    /// A soft accent band under the words as they are written, with a
-    /// brighter caret at its leading edge. The camera move says where to
-    /// look; this says what is happening there, and it is the difference
-    /// between a frame that drifts for no visible reason and a frame
-    /// following someone typing.
-    var highlight: Bool? = true
-    var highlightOpacity: Double? = 0.2
 }
 
 /// Focusing on text as it is selected.

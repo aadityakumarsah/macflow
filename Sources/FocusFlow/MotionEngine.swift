@@ -178,14 +178,6 @@ enum MotionEngine {
         return min(total, band * moved)
     }
 
-    /// Whether this typing segment is still putting words down, as
-    /// opposed to holding on what was written.
-    static func writes(_ segment: EditSegment, at time: Double) -> Bool {
-        guard segment.kind == .typing else { return false }
-        let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
-        return time >= segment.start && time <= segment.start + travelling
-    }
-
     /// The range actually selected: from where the drag began to where the
     /// pointer has reached. Tight, unlike `selectionRegion`, which is the
     /// box the camera frames and so carries padding around it.
@@ -202,21 +194,6 @@ enum MotionEngine {
         let current = CGPoint(x: tracked?.x ?? fallback.x, y: tracked?.y ?? fallback.y)
         return CGRect(x: min(first.x, current.x), y: min(first.y, current.y),
                       width: abs(current.x - first.x), height: abs(current.y - first.y))
-    }
-
-    /// Where the caret has reached inside a typing segment, and the line
-    /// it is on, in frame coordinates.
-    ///
-    /// The frame follows this at a distance — it holds while the caret
-    /// crosses a band and catches up afterwards — so the two are
-    /// deliberately not the same point, and anything drawn where the
-    /// writing is actually happening has to ask for this one.
-    static func caret(_ segment: EditSegment, at time: Double) -> CGPoint? {
-        guard segment.kind == .typing else { return nil }
-        let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
-        let progress = min(1, max(0, (time - segment.start) / max(0.01, travelling)))
-        let total = (segment.endX ?? segment.x) - segment.x
-        return CGPoint(x: segment.x + total * progress, y: segment.endY ?? segment.y)
     }
 
     /// How the frame is standing at this instant, and how it is softened.
