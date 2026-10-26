@@ -218,8 +218,18 @@ final class FocusFlowTests {
         XCTAssertGreaterThan(layout.header.height, 0)
         XCTAssertLessThanOrEqual(layout.outer.maxY, 600)
         let segment = EditSegment(kind: .zoom, start: 1, duration: 4, intensity: 2, x: 0.9, y: 0.7, transition: 0.8)
-        XCTAssertEqual(MotionEngine.viewport(at: 1, segments: [segment], samples: [], crop: crop), CGRect(x: 0, y: 0, width: 1, height: 1))
-        XCTAssertEqual(MotionEngine.viewport(at: 5, segments: [segment], samples: [], crop: crop), CGRect(x: 0, y: 0, width: 1, height: 1))
+        // Outside the smoothing window the frame is untouched. Inside it the
+        // camera has already begun to lean into the move, which is the point
+        // of a centred window — but barely, so a frame either side of the
+        // segment is still all but the whole picture.
+        let clear = CGRect(x: 0, y: 0, width: 1, height: 1)
+        XCTAssertEqual(MotionEngine.viewport(at: 1 - MotionEngine.smoothing, segments: [segment], samples: [], crop: crop), clear)
+        XCTAssertEqual(MotionEngine.viewport(at: 5 + MotionEngine.smoothing, segments: [segment], samples: [], crop: crop), clear)
+        for edge in [1.0, 5.0] {
+            let viewport = MotionEngine.viewport(at: edge, segments: [segment], samples: [], crop: crop)
+            XCTAssertGreaterThan(Double(viewport.width), 0.99)
+            XCTAssertLessThan(Double(viewport.width), 1)
+        }
         var previous = CGRect(x: 0, y: 0, width: 1, height: 1)
         for frame in 0...360 {
             let viewport = MotionEngine.viewport(at: Double(frame) / 60, segments: [segment], samples: [], crop: crop)
@@ -1184,6 +1194,18 @@ final class FocusFlowTests {
         let gentle = try run(offsets: [0, 12, 24, 36], settings: weak)
         XCTAssertLessThanOrEqual(transitional(gentle), transitional(moving))
 
+        // Where the recording says the wheel turned, the shutter opens; a
+        // frame of the recording mixed into another frame of it is a ghost
+        // over text that was sharp, and it is not spent anywhere else.
+        var reported = settings
+        reported.scrollEvents = (0..<4).map { ScrollEvent(time: Double($0) / 30) }
+        XCTAssertGreaterThan(transitional(try run(offsets: [0, 12, 24, 36], settings: reported)),
+                             transitional(still) + 4)
+        var elsewhere = settings
+        elsewhere.scrollEvents = [ScrollEvent(time: 5)]
+        XCTAssertLessThan(transitional(try run(offsets: [0, 12, 24, 36], settings: elsewhere)),
+                          transitional(moving))
+
         // A jump in time is a seek: the previous frame is unrelated and must
         // not be smeared into this one.
         let compositor = FocusFlowCompositor()
@@ -1488,7 +1510,10 @@ final class FocusFlowTests {
         // frame by equal amounts, and the hold does not move it at all.
         var even = TypingFollowSettings()
         even.gap = 1.0
-        even.hold = 0.8
+        // Long enough that the frame settles, holds, and is observed
+        // holding before the zoom starts releasing: the camera is smoothed
+        // over a window, so a hold shorter than one is never still.
+        even.hold = 1.6
         even.advancePerKey = 0.008
         even.maxTravel = 0.5
         even.deadZone = 0          // continuous, which is what this part measures
@@ -1508,9 +1533,14 @@ final class FocusFlowTests {
         XCTAssertGreaterThan(firstQuarter, 0.01)
         XCTAssertEqual(firstQuarter, thirdQuarter, accuracy: firstQuarter * 0.2)
 
-        // It arrives where the keys say, with the last key, and then holds.
+        // It arrives where the keys say, around the last key, and then
+        // holds. "Around": the camera is smoothed over a window centred on
+        // each moment, so it is still settling into the last fraction of
+        // the travel as the last key goes in, and is done a window later.
         XCTAssertEqual(centre(5.48), 0.45 + Double(steady.count) * even.advancePerKey, accuracy: 0.01)
-        XCTAssertEqual(centre(5.8), centre(5.48), accuracy: 0.0001)
+        let settled = 5.48 + MotionEngine.smoothing
+        XCTAssertEqual(centre(settled), 0.45 + Double(steady.count) * even.advancePerKey, accuracy: 0.001)
+        XCTAssertEqual(centre(settled + 0.4), centre(settled), accuracy: 0.0001)
 
         // With a dead zone — the default, and how a camera follows anything —
         // the frame does not creep. It holds while the caret crosses the band,
@@ -1528,8 +1558,10 @@ final class FocusFlowTests {
             Double(MotionEngine.viewport(at: time, segments: [held], samples: samples,
                                          crop: ContentRegion()).midX)
         }
-        // Still at the start: the caret is crossing the first half-band.
-        XCTAssertEqual(heldCentre(2.3), heldCentre(2.0), accuracy: 0.0005)
+        // Still through the first half-band, once the lean-in has settled:
+        // zooming towards an anchor left of centre moves the frame left,
+        // and that is the zoom arriving, not the caret being followed.
+        XCTAssertEqual(heldCentre(3.0), heldCentre(2.6), accuracy: 0.0005)
         // And it has moved by the end of the run, by about a whole band.
         let shifted = heldCentre(5.48) - heldCentre(2.0)
         XCTAssertGreaterThan(shifted, band * 0.8)
@@ -1537,7 +1569,7 @@ final class FocusFlowTests {
 
         // Somewhere in the run there is a stretch where nothing moves at all,
         // which is the whole point of a dead zone.
-        let steps = stride(from: 2.0, through: 5.48, by: 0.04).map(heldCentre)
+        let steps = stride(from: 2.6, through: 5.48, by: 0.04).map(heldCentre)
         let still = zip(steps, steps.dropFirst()).filter { abs($0.1 - $0.0) < 0.0002 }.count
         if still < steps.count / 3 {
             XCTFail("the frame crept along with the typing instead of holding and catching up")
@@ -1801,6 +1833,185 @@ final class FocusFlowTests {
         } else {
             XCTFail("no typing span was produced")
         }
+    }
+
+    /// Every move the camera makes is smoothed over a window, so it can
+    /// never change speed abruptly however abruptly the thing it follows
+    /// does. This is what the complaint "it slides too fast, with no smooth
+    /// motion, and the text is left behind" was about: the frame left and
+    /// arrived at full tilt, and the words did not travel with it.
+    func testCameraSmoothsEveryMoveItMakes() {
+        let step = 1.0 / 60
+
+        func path(_ segment: EditSegment, samples: [PointerSample], smoothed: Bool) -> [Double] {
+            stride(from: segment.start, through: segment.end, by: step).map { time in
+                let box = smoothed
+                    ? MotionEngine.viewport(at: time, segments: [segment], samples: samples, crop: ContentRegion())
+                    : MotionEngine.rawViewport(at: time, segments: [segment], samples: samples, crop: ContentRegion())
+                return Double(box.midX)
+            }
+        }
+        func speeds(_ path: [Double]) -> [Double] { zip(path, path.dropFirst()).map { $1 - $0 } }
+        /// The largest change of speed between one frame and the next: how
+        /// hard the camera is yanked.
+        func jolt(_ path: [Double]) -> Double {
+            let speed = speeds(path)
+            return zip(speed, speed.dropFirst()).map { abs($1 - $0) }.max() ?? 0
+        }
+
+        // A click zoom that holds its anchor until the pointer leaves the
+        // middle of the frame, with the pointer crossing that edge at a
+        // steady pace. The raw camera stands still and then sets off at the
+        // pointer's speed, which is a jolt; the smoothed one does not.
+        let follow = EditSegment(kind: .zoom, start: 0, duration: 3, intensity: 2,
+                                 x: 0.5, y: 0.5, followsCursor: true, transition: 0.3)
+        let travelling = (0...180).map { PointerSample(time: Double($0) * step, x: 0.5 + Double($0) * step * 0.3, y: 0.5) }
+        let rawFollow = path(follow, samples: travelling, smoothed: false)
+        let smoothFollow = path(follow, samples: travelling, smoothed: true)
+        XCTAssertGreaterThan(jolt(rawFollow), 0)
+        XCTAssertLessThan(jolt(smoothFollow), jolt(rawFollow) / 2)
+
+        // A run of typing with a wide dead zone: the frame holds, then
+        // catches up by a whole band. Smoothed, it covers the same ground
+        // without ever reaching the speed the raw camera does.
+        var typing = TypingFollowSettings()
+        typing.gap = 1.0
+        typing.advancePerKey = 0.012
+        typing.maxTravel = 0.6
+        typing.deadZone = 0.5
+        typing.catchUp = 0.3
+        let keys = (0..<60).map { TypingEvent(time: 1 + Double($0) * 0.1) }
+        guard let run = MotionEngine.typingFollows(typing: keys, clicks: [RecordedClick(time: 0.8, x: 0.2, y: 0.5)],
+                                                   samples: [], duration: 14, settings: typing).first else {
+            XCTFail("a run of typing produced no follow"); return
+        }
+        let rawRun = path(run, samples: [], smoothed: false)
+        let smoothRun = path(run, samples: [], smoothed: true)
+        // The travel itself, with neither the lean-in nor the release:
+        // zooming towards an anchor left of centre carries the frame left,
+        // and letting the zoom go carries it back, and neither is the
+        // caret being followed.
+        let travel = stride(from: run.start + 1, to: run.end - (run.transition ?? 0.6) - MotionEngine.smoothing, by: step)
+            .map { Double(MotionEngine.viewport(at: $0, segments: [run], samples: [], crop: ContentRegion()).midX) }
+        // The same journey…
+        XCTAssertEqual(smoothRun.last! - smoothRun.first!, rawRun.last! - rawRun.first!, accuracy: 0.02)
+        // …taken more gently, and without ever running backwards.
+        XCTAssertLessThan(speeds(smoothRun).map(abs).max()!, speeds(rawRun).map(abs).max()!)
+        XCTAssertLessThan(jolt(smoothRun), jolt(rawRun))
+        XCTAssertTrue(speeds(travel).allSatisfy { $0 > -0.0002 })
+
+        // And where nothing is asked for, nothing happens: a smoothed
+        // camera must not drift the frame about on its own.
+        XCTAssertEqual(MotionEngine.viewport(at: 20, segments: [run], samples: [], crop: ContentRegion()),
+                       CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    /// The export is the recording: its pixels, and a rate no lower than
+    /// the one it was captured at.
+    func testExportKeepsTheRecordingsResolutionAndRate() {
+        let uhd = CGSize(width: 3840, height: 2160), hd = CGSize(width: 1920, height: 1080)
+
+        // Source keeps what was captured, rather than capping it at 1080p
+        // and throwing the detail away before anything is composed.
+        XCTAssertEqual(CanvasRatio.source.size(for: uhd), uhd)
+        XCTAssertEqual(CanvasRatio.source.size(for: CGSize(width: 1280, height: 720)), CGSize(width: 1280, height: 720))
+        // A named ratio takes its pixels from the recording too.
+        XCTAssertEqual(CanvasRatio.landscape.size(for: uhd), uhd)
+        // A portrait canvas is as tall as the recording is wide: the ratio
+        // keeps its shape, and its long side is the recording's long side.
+        let portrait = CanvasRatio.portrait.size(for: uhd)
+        XCTAssertEqual(portrait.height, 3840)
+        XCTAssertEqual(Double(portrait.width / portrait.height), 9.0 / 16, accuracy: 0.01)
+        // A small recording still composes onto a canvas worth sharing.
+        XCTAssertEqual(CanvasRatio.landscape.size(for: CGSize(width: 640, height: 360)), hd)
+        // Odd captures still come out even — H.264 rejects odd dimensions.
+        let odd = CanvasRatio.source.size(for: CGSize(width: 1023, height: 769))
+        XCTAssertEqual(Int(odd.width) % 2, 0)
+        XCTAssertEqual(Int(odd.height) % 2, 0)
+
+        func bitrate(canvas: CGSize, fps: Int, source: CGSize, rate: Double) -> Double {
+            let settings = VideoExporter.videoSettings(canvas: canvas, frameRate: fps, source: source, sourceDataRate: rate)
+            let compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any]
+            return Double(compression?[AVVideoAverageBitRateKey] as? Int ?? 0)
+        }
+        // Exported at the size it was recorded, nothing is spared.
+        XCTAssertGreaterThan(bitrate(canvas: uhd, fps: 60, source: uhd, rate: 60_000_000), 60_000_000)
+        // A thriftily encoded recording still gets what the canvas needs.
+        XCTAssertGreaterThan(bitrate(canvas: hd, fps: 30, source: hd, rate: 2_000_000), 8_000_000)
+        // Exported smaller, the match scales with the pixels rather than
+        // spending a 4K rate on a 1080p file.
+        XCTAssertLessThan(bitrate(canvas: hd, fps: 30, source: uhd, rate: 80_000_000),
+                          bitrate(canvas: uhd, fps: 30, source: uhd, rate: 80_000_000))
+        // A wastefully encoded source is matched only as far as the point
+        // where more bits stop showing, rather than all the way.
+        XCTAssertLessThan(bitrate(canvas: hd, fps: 30, source: hd, rate: 100_000_000), 50_000_000)
+        // Nothing is unbounded.
+        XCTAssertLessThanOrEqual(bitrate(canvas: uhd, fps: 60, source: uhd, rate: 800_000_000), 240_000_000)
+
+        // The file is the canvas, exactly.
+        let settings = VideoExporter.videoSettings(canvas: hd, frameRate: 30, source: hd, sourceDataRate: 10_000_000)
+        XCTAssertEqual(settings[AVVideoWidthKey] as? Int, 1920)
+        XCTAssertEqual(settings[AVVideoHeightKey] as? Int, 1080)
+    }
+
+    /// The 3D handles drawn over the preview are worked out by the code
+    /// that warps the picture, so the outline someone drags is the frame
+    /// they are looking at rather than something close to it.
+    func testThreeDHandlesSitOnTheRenderedFrame() throws {
+        // Square to the viewer, the map leaves every point where it was.
+        let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let identity = ProjectiveMap(canvas, to: FrameQuad.rect(canvas))
+        XCTAssertEqual(Double(identity(CGPoint(x: 137, y: 61)).x), 137, accuracy: 0.001)
+        XCTAssertEqual(Double(identity(CGPoint(x: 137, y: 61)).y), 61, accuracy: 0.001)
+
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let source = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 6, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.motion.automaticMotionBlur = false
+        settings.trimStart = 0; settings.trimEnd = 8
+        settings.customBackground = CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 0, b: 0))
+
+        /// Where the lit frame actually ended up in the rendered pixels.
+        func rendered() throws -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 1, settings: settings), from: canvas))
+            let data = pixels(image)
+            var minX = 400.0, maxX = 0.0, minRow = 240.0, maxRow = 0.0
+            for row in 0..<240 {
+                for column in 0..<400 where Int(data[(row * 400 + column) * 4]) > 110 {
+                    minX = min(minX, Double(column)); maxX = max(maxX, Double(column))
+                    minRow = min(minRow, Double(row)); maxRow = max(maxRow, Double(row))
+                }
+            }
+            // Pixel rows run down the image; the geometry runs up it.
+            return (minX, maxX, 240 - maxRow, 240 - minRow)
+        }
+
+        /// Where the handles say the frame is.
+        func predicted(_ move: CameraMoveSettings) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
+            let layout = FrameLayout.make(canvas: canvas, sourceSize: canvas.size, padding: 6, frame: settings.frame)
+            let pose = move.pose
+            let warped = pose.projection(of: canvas, canvas: canvas, lean: pose.lean())
+            let quad = ProjectiveMap(canvas, to: warped).quad(of: layout.outer)
+            let xs = quad.corners.map { Double($0.x) }, ys = quad.corners.map { Double($0.y) }
+            return (xs.min()!, xs.max()!, ys.min()!, ys.max()!)
+        }
+
+        var move = CameraMoveSettings()
+        move.yaw = 0.5; move.pitch = 0.25; move.zoom = 0.9
+        move.blur = .none
+        settings.cameraMove = move
+        let leaning = try rendered(), expected = predicted(move)
+        XCTAssertEqual(leaning.minX, expected.minX, accuracy: 3)
+        XCTAssertEqual(leaning.maxX, expected.maxX, accuracy: 3)
+        XCTAssertEqual(leaning.minY, expected.minY, accuracy: 3)
+        XCTAssertEqual(leaning.maxY, expected.maxY, accuracy: 3)
+        // It is actually leaning, rather than the two agreeing on a frame
+        // that never moved.
+        let square = predicted(CameraMoveSettings())
+        XCTAssertGreaterThan(abs(expected.maxX - square.maxX), 5)
     }
 
     private func pixels(_ image: CGImage) -> [UInt8] {

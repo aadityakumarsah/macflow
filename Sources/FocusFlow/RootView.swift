@@ -288,6 +288,20 @@ struct PreviewArea: View {
                     if model.theatreMode {
                         Text(model.ratio.rawValue).font(.caption)
                     } else {
+                        // The 3D camera, where it can be seen: a button beside
+                        // the preview rather than a panel of sliders that have
+                        // to be found before anything leans anywhere.
+                        Button { model.show3DCanvas.toggle() } label: {
+                            Label("3D", systemImage: "cube.transparent")
+                                .font(.system(size: 11, weight: .medium))
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .background(model.show3DCanvas ? AppTheme.green.opacity(0.14) : AppTheme.panel,
+                                            in: RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(AppTheme.green)
+                        .help("Turn, lean, roll and push the frame by dragging it on the canvas")
+                        .accessibilityLabel("Show 3D camera handles")
+                        .accessibilityAddTraits(model.show3DCanvas ? .isSelected : [])
                         Button {
                             model.ratio = .custom
                             showCustomRatio = true
@@ -321,6 +335,7 @@ struct PreviewArea: View {
                         NativeVideoPlayer(player: model.player).allowsHitTesting(false)
                         EditableFocusOverlay(canvasSize: canvas)
                         if model.showCamera, model.cameraURL != nil { EditableCameraOverlay(canvasSize: canvas) }
+                        if model.show3DCanvas { Frame3DOverlay(canvasSize: canvas) }
                         if model.isPreparingPreview { ProgressView("Preparing preview…").padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
                     } else { EmptyCanvas() }
                 }
@@ -329,6 +344,9 @@ struct PreviewArea: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.line))
                 .shadow(color: .black.opacity(0.12), radius: 24, y: 12)
+                if model.show3DCanvas && !model.theatreMode {
+                    Frame3DBar().frame(maxWidth: min(560, canvas.width))
+                }
                 PlaybackControls()
                 Spacer(minLength: 10)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -63,7 +63,13 @@ struct MotionAppearance: Codable, Equatable {
     /// should not arrive already dressed up.
     var ambientGraphics: Bool? = false
     var automaticMotionBlur: Bool? = true
-    var motionBlurStrength: Double? = 0.55
+    /// Restrained on purpose. A camera blur is drawn from the frame that is
+    /// already there, so every bit of it is detail removed: at the strength
+    /// this once defaulted to, a zoom across a page of text smeared the text
+    /// for the length of the move, which reads as a worse recording rather
+    /// than as a nicer move. It is here to take the hard edge off a moving
+    /// frame, not to be seen.
+    var motionBlurStrength: Double? = 0.35
 
     /// Blur from the content itself moving — scrolling, mostly.
     ///
@@ -73,7 +79,7 @@ struct MotionAppearance: Codable, Equatable {
     var scrollBlur: Bool? = true
     /// How much of the neighbouring frames is mixed in: a shutter angle in
     /// all but name.
-    var scrollBlurStrength: Double? = 0.5
+    var scrollBlurStrength: Double? = 0.32
     /// Blend two neighbours rather than one. Smoother on fast scrolls, and
     /// twice the work per frame.
     var scrollBlurLong: Bool? = false
@@ -162,9 +168,13 @@ struct TypingFollowSettings: Codable, Equatable {
     /// name has a dead zone. A frame that creeps along with every keystroke
     /// reads as drift, and it makes an estimated caret position look wrong in
     /// a way a still frame does not. Zero follows continuously.
-    var deadZone: Double = 0.45
+    var deadZone: Double = 0.3
     /// How long the frame takes to catch up once the caret has left the zone.
-    var catchUp: Double = 0.45
+    ///
+    /// A smaller band crossed more slowly: a wide band caught up in half a
+    /// second is a whip across most of what is on screen, and the words
+    /// being written arrive after it rather than travelling with it.
+    var catchUp: Double = 0.8
     /// Seconds of stillness that ends a run of typing.
     var gap: Double = 1.1
     /// How long the frame holds after the last keypress before releasing.
@@ -246,6 +256,165 @@ struct FramePose: Codable, Equatable {
     func added(_ other: FramePose) -> FramePose {
         FramePose(pitch: pitch + other.pitch, yaw: yaw + other.yaw, roll: roll + other.roll,
                   panX: panX + other.panX, panY: panY + other.panY, zoom: zoom * other.zoom)
+    }
+}
+
+/// How far each edge of the frame is pulled in because it is leaning away
+/// from the viewer, as a fraction of the frame.
+///
+/// A playing move and the pose the frame is placed in both lean the same
+/// corners, so they are added together before anything is drawn.
+struct FrameLean: Equatable {
+    var left: Double = 0
+    var right: Double = 0
+    var top: Double = 0
+    var bottom: Double = 0
+    static let none = FrameLean()
+    /// The deepest lean of any edge, which is what decides whether there is
+    /// enough depth to be worth softening along.
+    var depth: Double { max(max(left, right), max(top, bottom)) }
+}
+
+/// The four corners a frame's rectangle lands on once it is standing in
+/// space, running bottom-left, bottom-right, top-right, top-left — the
+/// order `CIPerspectiveTransform` takes them in.
+struct FrameQuad: Equatable {
+    var bottomLeft: CGPoint
+    var bottomRight: CGPoint
+    var topRight: CGPoint
+    var topLeft: CGPoint
+
+    var corners: [CGPoint] { [bottomLeft, bottomRight, topRight, topLeft] }
+
+    static func rect(_ rect: CGRect) -> FrameQuad {
+        FrameQuad(bottomLeft: CGPoint(x: rect.minX, y: rect.minY),
+                  bottomRight: CGPoint(x: rect.maxX, y: rect.minY),
+                  topRight: CGPoint(x: rect.maxX, y: rect.maxY),
+                  topLeft: CGPoint(x: rect.minX, y: rect.maxY))
+    }
+
+    func applying(_ transform: CGAffineTransform) -> FrameQuad {
+        FrameQuad(bottomLeft: bottomLeft.applying(transform),
+                  bottomRight: bottomRight.applying(transform),
+                  topRight: topRight.applying(transform),
+                  topLeft: topLeft.applying(transform))
+    }
+
+    /// The same quad with y measured downwards from the top, which is what
+    /// a view draws in and an image does not.
+    func flipped(in height: CGFloat) -> FrameQuad {
+        func flip(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x, y: height - point.y) }
+        return FrameQuad(bottomLeft: flip(bottomLeft), bottomRight: flip(bottomRight),
+                         topRight: flip(topRight), topLeft: flip(topLeft))
+    }
+}
+
+/// The projective map that carries a rectangle onto a quad.
+///
+/// This is the map `CIPerspectiveTransform` applies, written out so that
+/// anything drawn over the preview — the 3D handles, most of all — can put
+/// a point exactly where the render will put it, rather than somewhere
+/// close that drifts as the frame leans further.
+struct ProjectiveMap {
+    private let a, b, c, d, e, f, g, h: Double
+    /// The rectangle the map reads its coordinates in.
+    private let source: CGRect
+
+    /// Maps the unit square, (0,0) at the bottom left, onto `quad`.
+    init(unitSquareTo quad: FrameQuad) {
+        self.init(CGRect(x: 0, y: 0, width: 1, height: 1), to: quad)
+    }
+
+    /// Maps `rect` onto `quad`, which is how the renderer uses it: the whole
+    /// canvas is warped, and a point inside it travels with the warp.
+    init(_ rect: CGRect, to quad: FrameQuad) {
+        source = rect
+        let (x0, y0) = (Double(quad.bottomLeft.x), Double(quad.bottomLeft.y))
+        let (x1, y1) = (Double(quad.bottomRight.x), Double(quad.bottomRight.y))
+        let (x2, y2) = (Double(quad.topRight.x), Double(quad.topRight.y))
+        let (x3, y3) = (Double(quad.topLeft.x), Double(quad.topLeft.y))
+        let sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3
+        let dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2
+        let denominator = dx1 * dy2 - dx2 * dy1
+        // A parallelogram has no vanishing point, so the map is affine.
+        if abs(sx) < 1e-9 && abs(sy) < 1e-9 || abs(denominator) < 1e-9 {
+            g = 0; h = 0
+        } else {
+            g = (sx * dy2 - dx2 * sy) / denominator
+            h = (dx1 * sy - sx * dy1) / denominator
+        }
+        a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0
+        d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0
+    }
+
+    func callAsFunction(_ point: CGPoint) -> CGPoint {
+        let u = source.width > 0 ? Double((point.x - source.minX) / source.width) : 0
+        let v = source.height > 0 ? Double((point.y - source.minY) / source.height) : 0
+        let w = g * u + h * v + 1
+        guard abs(w) > 1e-9 else { return point }
+        return CGPoint(x: (a * u + b * v + c) / w, y: (d * u + e * v + f) / w)
+    }
+
+    func quad(of rect: CGRect) -> FrameQuad {
+        FrameQuad(bottomLeft: self(CGPoint(x: rect.minX, y: rect.minY)),
+                  bottomRight: self(CGPoint(x: rect.maxX, y: rect.minY)),
+                  topRight: self(CGPoint(x: rect.maxX, y: rect.maxY)),
+                  topLeft: self(CGPoint(x: rect.minX, y: rect.maxY)))
+    }
+}
+
+extension FramePose {
+    /// How far each edge is pulled in by this pose, plus whatever a playing
+    /// move is already asking for.
+    func lean(adding move: FrameLean = .none) -> FrameLean {
+        let yaw = max(-1, min(1, self.yaw)), pitch = max(-1, min(1, self.pitch))
+        return FrameLean(left: move.left + max(0, -yaw) * 0.26,
+                         right: move.right + max(0, yaw) * 0.26,
+                         top: move.top + max(0, pitch) * 0.2,
+                         bottom: move.bottom + max(0, -pitch) * 0.2)
+    }
+
+    /// Where the corners of `frame` go once it is leaning. An edge that
+    /// recedes is pulled in and, being further away, is also shorter than
+    /// the edge facing the viewer.
+    func quad(in frame: CGRect, lean: FrameLean) -> FrameQuad {
+        let yaw = max(-1, min(1, self.yaw)), pitch = max(-1, min(1, self.pitch))
+        let dxRight = frame.width * lean.right
+        let dxLeft = frame.width * lean.left
+        let dyTop = frame.height * lean.top
+        let dyBottom = frame.height * lean.bottom
+        let squashRight = frame.height * max(0, yaw) * 0.12
+        let squashLeft = frame.height * max(0, -yaw) * 0.12
+        let squashTop = frame.width * max(0, pitch) * 0.12
+        let squashBottom = frame.width * max(0, -pitch) * 0.12
+        return FrameQuad(
+            bottomLeft: CGPoint(x: frame.minX + dxLeft + squashBottom, y: frame.minY + dyBottom + squashLeft),
+            bottomRight: CGPoint(x: frame.maxX - dxRight - squashBottom, y: frame.minY + dyBottom + squashRight),
+            topRight: CGPoint(x: frame.maxX - dxRight * 0.35 - squashTop, y: frame.maxY - dyTop - squashRight),
+            topLeft: CGPoint(x: frame.minX + dxLeft * 0.35 + squashTop, y: frame.maxY - dyTop - squashLeft))
+    }
+
+    /// Roll, slide and push in — the rest of standing the frame somewhere.
+    /// `scale` and `shiftX` are whatever a playing move contributes.
+    func transform(about centre: CGPoint, frame: CGRect, scale: Double = 1, shiftX: Double = 0) -> CGAffineTransform {
+        let zoom = max(0.2, min(3, self.zoom))
+        let roll = max(-1, min(1, self.roll)) * .pi / 5
+        let dx = shiftX + panX * Double(frame.width) * 0.5
+        let dy = panY * Double(frame.height) * 0.5
+        guard scale * zoom != 1 || dx != 0 || dy != 0 || roll != 0 else { return .identity }
+        return CGAffineTransform(translationX: centre.x + dx, y: centre.y + dy)
+            .rotated(by: roll)
+            .scaledBy(x: scale * zoom, y: scale * zoom)
+            .translatedBy(x: -centre.x, y: -centre.y)
+    }
+
+    /// The whole of standing in space, in one map: lean, roll, slide, push.
+    func projection(of frame: CGRect, canvas: CGRect, lean: FrameLean,
+                    scale: Double = 1, shiftX: Double = 0) -> FrameQuad {
+        let leaned = quad(in: frame, lean: lean)
+        let transform = self.transform(about: CGPoint(x: canvas.midX, y: canvas.midY),
+                                       frame: frame, scale: scale, shiftX: shiftX)
+        return transform.isIdentity ? leaned : leaned.applying(transform)
     }
 }
 
@@ -334,6 +503,57 @@ struct CameraMoveSettings: Codable, Equatable {
         duration = try values.decodeIfPresent(Double.self, forKey: .duration) ?? 2.6
         curve = try values.decodeIfPresent(MotionCurve.self, forKey: .curve) ?? .smooth
         holds = try values.decodeIfPresent(Bool.self, forKey: .holds) ?? true
+    }
+}
+
+extension CameraMoveSettings {
+    /// Where the frame stands, as one pose. The six sliders are a pose
+    /// written out flat, because they were here before poses were.
+    var pose: FramePose {
+        FramePose(pitch: pitch, yaw: yaw, roll: roll, panX: panX, panY: panY, zoom: zoom)
+    }
+
+    /// What a playing move is doing to the frame at this moment, on top of
+    /// the pose. Shared by the renderer and the on-canvas handles so that
+    /// the outline drawn over the preview is the frame in the preview.
+    struct Performance: Equatable {
+        var lean = FrameLean.none
+        var shiftX: Double = 0
+        var scale: Double = 1
+        /// The move has played out, and is not holding: nothing of it is
+        /// left. Where the frame has been placed by hand still stands —
+        /// that is not a move, it is where the camera is.
+        var settled = false
+    }
+
+    /// `elapsed` is seconds since the trim began, `clip` how long the whole
+    /// trimmed clip is, and `width` the width of the frame being moved.
+    func performance(at elapsed: Double, clip: Double, width: Double) -> Performance {
+        let span = max(0.2, duration)
+        let raw = holds ? min(1, elapsed / max(0.2, clip)) : min(1, elapsed / span)
+        let progress = curve.value(raw)
+        var result = Performance(settled: !holds && raw >= 1)
+        let tilt = max(0, min(1, self.tilt)), amount = max(0, min(1, self.amount))
+        switch result.settled ? .none : move {
+        case .none:
+            break
+        case .glide:
+            // Holds its lean and travels across.
+            result.lean.right = tilt * 0.2
+            result.shiftX = (progress - 0.5) * amount * width * 0.22
+            result.scale = 1 + tilt * 0.06
+        case .unfold:
+            // Opens out of the lean as it plays.
+            let remaining = 1 - progress
+            result.lean.left = tilt * 0.26 * remaining
+            result.lean.top = tilt * 0.12 * remaining
+            result.scale = 1 - 0.06 * remaining
+        case .pullBack:
+            // Starts close, withdraws, keeping a slight lean.
+            result.lean.top = tilt * 0.09
+            result.scale = (1 + amount * 0.3) - amount * 0.3 * progress
+        }
+        return result
     }
 }
 

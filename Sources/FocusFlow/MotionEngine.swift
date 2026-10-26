@@ -30,10 +30,63 @@ enum MotionEngine {
         let ramp = min((time - segment.start) / edge, (segment.end - time) / edge)
         return (segment.curve ?? .smooth).value(ramp)
     }
+    /// How long the camera takes to change its mind, in seconds.
+    ///
+    /// What the edit asks for at an instant is not what the frame does at
+    /// that instant: the frame does the weighted average of what is asked
+    /// for across a window around it. Averaging over time is a low-pass
+    /// filter, so a step becomes a ramp and a corner becomes a curve, and
+    /// the frame can no longer change speed abruptly however abruptly the
+    /// thing it follows moves. That is what a dolly, a tripod head and a
+    /// hand all do, and what was missing when a zoom punched in and a
+    /// typing follow snapped from one stretch of a line to the next.
+    ///
+    /// The window is centred rather than trailing, so the frame also leans
+    /// into a move slightly before it happens — an operator who knows the
+    /// shot, rather than one chasing it — and no lag is introduced, which
+    /// is what would leave the text behind.
+    static let smoothing: Double = 0.36
+    private static let smoothingTaps = 9
+
+    /// Kinds that move the frame, and so decide whether anything is
+    /// happening near a moment at all.
+    private static func moves(_ segment: EditSegment) -> Bool {
+        segment.kind == .zoom || segment.kind == .pan || segment.kind == .typing
+    }
+
+    /// Where the frame is looking: the smoothed camera, which is the one
+    /// everything — preview, export, hit testing — must agree on.
     static func viewport(at time: Double, segments: [EditSegment], samples: [PointerSample], crop: ContentRegion) -> CGRect {
+        let half = smoothing / 2
+        let full = CGRect(x: 0, y: 0, width: 1, height: 1)
+        // Nothing asks for anything anywhere near here, so the answer is the
+        // whole frame exactly, not an average that rounds to it.
+        guard segments.contains(where: { moves($0) && $0.end > time - half && $0.start < time + half }) else { return full }
+
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0, total = 0.0
+        for tap in 0..<smoothingTaps {
+            let offset = (Double(tap) / Double(smoothingTaps - 1) - 0.5) * smoothing
+            // A raised cosine: full weight in the middle, none at the edges,
+            // so a segment arriving in the window eases in rather than
+            // jolting the average as it crosses the boundary.
+            let weight = 0.5 * (1 + cos(.pi * offset / half))
+            guard weight > 0.0001 else { continue }
+            let box = rawViewport(at: max(0, time + offset), segments: segments, samples: samples, crop: crop)
+            x += Double(box.minX) * weight; y += Double(box.minY) * weight
+            width += Double(box.width) * weight; height += Double(box.height) * weight
+            total += weight
+        }
+        guard total > 0 else { return rawViewport(at: time, segments: segments, samples: samples, crop: crop) }
+        // Averaging the origin and the size separately still averages the far
+        // edge, so a viewport inside the frame stays inside it.
+        return CGRect(x: x / total, y: y / total, width: width / total, height: height / total)
+    }
+
+    /// What the edit asks for at this exact instant, before smoothing.
+    static func rawViewport(at time: Double, segments: [EditSegment], samples: [PointerSample], crop: ContentRegion) -> CGRect {
         let r = crop.bounded
         var weight = 0.0, zoomSum = 0.0, cx = 0.0, cy = 0.0
-        for segment in segments where segment.kind == .zoom || segment.kind == .pan || segment.kind == .typing {
+        for segment in segments where moves(segment) {
             let w = envelope(segment, time: time)
             guard w > 0 else { continue }
             var x = segment.x, y = segment.y
@@ -175,12 +228,19 @@ enum MotionEngine {
         }
     }
 
-    /// How long a zoom lingers after the click that caused it, and how long
-    /// it takes to settle at each end. The hold is what decides when the
-    /// frame starts pulling back, so it is the number to shorten for a
-    /// quicker release.
-    static let clickZoomHold: Double = 1.15
-    static let clickZoomTransition: Double = 0.6
+    /// How long a zoom lingers after the click that caused it, how long it
+    /// takes to settle at each end, and how far ahead of the click it
+    /// starts. The hold is what decides when the frame starts pulling back,
+    /// so it is the number to shorten for a quicker release.
+    ///
+    /// The transition is most of a second because a zoom that arrives in
+    /// half of one reads as a jolt rather than as a camera moving: the
+    /// distance is fixed by the click, so the only thing that makes it
+    /// gentle is giving it longer. The lead keeps pace with it, so the
+    /// frame is still all but settled by the moment of the click itself.
+    static let clickZoomHold: Double = 1.3
+    static let clickZoomTransition: Double = 0.85
+    static let clickZoomLead: Double = 0.75
 
     /// Groups keypress times into runs separated by a pause.
     static func typingRuns(_ times: [Double], gap: Double) -> [[Double]] {
@@ -273,7 +333,7 @@ enum MotionEngine {
                                       intensity: zoom,
                                       x: anchorX,
                                       y: anchorY,
-                                      transition: 0.45,
+                                      transition: 0.6,
                                       curve: settings.curve,
                                       endX: min(1, anchorX + travel),
                                       endY: anchorY,
@@ -293,7 +353,7 @@ enum MotionEngine {
             if let i = result.indices.last, click.time <= result[i].end + 0.5 {
                 result[i].duration = min(duration, click.time + clickZoomHold) - result[i].start
             } else {
-                let start = max(0, click.time - 0.6)
+                let start = max(0, click.time - clickZoomLead)
                 result.append(EditSegment(kind: .zoom, start: start, duration: min(duration - start, click.time + clickZoomHold - start), intensity: 1.65, x: click.x, y: click.y, followsCursor: true, transition: clickZoomTransition))
             }
         }

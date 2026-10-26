@@ -71,6 +71,8 @@ final class EditorModel: ObservableObject {
     @Published var motionAppearance = MotionAppearance() { willSet { remember() } didSet { changed() } }
     @Published var cursorAppearance = CursorAppearance() { willSet { remember() } didSet { changed() } }
     @Published var showCropEditor = false
+    /// Whether the 3D handles are drawn over the preview.
+    @Published var show3DCanvas = false
     @Published var pointerSamples: [PointerSample] = []
     @Published var recordedClicks: [RecordedClick] = []
     @Published var keystrokes: [KeystrokeEvent] = []
@@ -121,6 +123,38 @@ final class EditorModel: ObservableObject {
     }
 
     var selectedSegment: EditSegment? { segments.first { $0.id == selectedSegmentID } }
+
+    /// What the 3D handles on the canvas are holding: a selected 3D camera
+    /// segment when the playhead is inside one, otherwise nothing — in
+    /// which case they hold where the frame stands for the whole recording.
+    var posedSegment: EditSegment? {
+        guard let segment = selectedSegment, segment.kind == .perspective,
+              playhead >= segment.start, playhead <= segment.end else { return nil }
+        return segment
+    }
+
+    /// The pose the handles move, wherever it happens to live.
+    var editedPose: FramePose {
+        get { posedSegment?.pose ?? cameraMove.pose }
+        set {
+            if posedSegment != nil { updateSelected { $0.pose = newValue } }
+            else {
+                // One assignment, so one undo step and one recomposition
+                // rather than six.
+                var move = cameraMove
+                move.pitch = newValue.pitch; move.yaw = newValue.yaw; move.roll = newValue.roll
+                move.panX = newValue.panX; move.panY = newValue.panY; move.zoom = newValue.zoom
+                cameraMove = move
+            }
+        }
+    }
+
+    /// Where the frame actually stands at the playhead, move and timeline
+    /// included — which is not the pose being edited whenever a move is
+    /// playing or a 3D segment is sweeping through its lean.
+    var standingPose: FramePose {
+        cameraMove.pose.added(MotionEngine.stance(at: playhead, segments: segments).pose)
+    }
     var outputDuration: Double { max(0, trimEnd - trimStart) / playbackRate }
 
     func resetCursorSettings() {
@@ -142,6 +176,24 @@ final class EditorModel: ObservableObject {
         var size = contentSize
         if frameAppearance.chrome != .none { size.height += size.width * frameAppearance.barHeight / 1920 }
         return exportOptions.canvas(from: ratio.size(for: size, custom: ratio == .custom ? customRatio : nil))
+    }
+
+    /// The canvas the preview is composed at.
+    ///
+    /// Export now keeps the recording's own resolution, so a 4K capture is
+    /// four times the pixels of a 1080p one through a long chain of filters,
+    /// several times a second, while someone drags a slider. The preview
+    /// composes at a size that keeps up instead. Everything in the frame is
+    /// a proportion of the canvas, so it is the same picture either way —
+    /// and the preview is drawn into a few hundred points of window
+    /// whatever it was composed at.
+    var previewCanvasSize: CGSize {
+        let canvas = canvasSize
+        let limit: CGFloat = 1920
+        let longest = max(canvas.width, canvas.height)
+        guard longest > limit else { return canvas }
+        return CanvasRatio.even(CGSize(width: canvas.width * limit / longest,
+                                       height: canvas.height * limit / longest))
     }
 
     /// Re-fits the composition after the canvas aspect changes.
@@ -397,8 +449,8 @@ final class EditorModel: ObservableObject {
         do { try JSONEncoder().encode(document()).write(to: url, options: .atomic); saveStatus = "Project saved" }
         catch { message = error.localizedDescription }
     }
-    func settings() -> ExportSettings {
-        ExportSettings(background: background, canvasSize: canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds)
+    func settings(preview: Bool = false) -> ExportSettings {
+        ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds)
     }
     private func changed() {
         guard !restoring, let url = videoURL, duration > 0 else { return }
@@ -406,7 +458,7 @@ final class EditorModel: ObservableObject {
         previewTask = Task {
             do {
                 try await Task.sleep(for: .milliseconds(180))
-                let settings = settings()
+                let settings = settings(preview: true)
                 let (asset, composition, musicMix) = try await VideoExporter.composition(source: url, settings: settings)
                 try Task.checkCancellation()
                 let time = playhead, playing = isPlaying

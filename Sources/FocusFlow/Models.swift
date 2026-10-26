@@ -109,9 +109,23 @@ enum CanvasRatio: String, CaseIterable, Identifiable, Codable {
             return CanvasRatio.even(CGSize(width: width, height: height))
         }
 
-        guard self == .source, sourceSize.width > 0, sourceSize.height > 0 else { return size }
-        let scale = min(1, limit / max(sourceSize.width, sourceSize.height))
-        return CanvasRatio.even(CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale))
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return size }
+
+        // The recording's own pixels, kept. This used to be capped at the
+        // limit, so a 4K capture came back as 1080p however it was exported
+        // — the detail was thrown away before anything was even composed.
+        // Someone who wants a smaller file asks for one in Export.
+        if self == .source { return CanvasRatio.even(sourceSize) }
+
+        // A named ratio takes its pixels from the recording too, so putting
+        // a 4K capture in a 16:9 frame does not quietly halve it. The limit
+        // is a floor here rather than a ceiling: a small recording still
+        // composes onto a canvas worth sharing.
+        let aspect = size.width / size.height
+        let edge = max(limit, max(sourceSize.width, sourceSize.height))
+        let width = aspect >= 1 ? edge : edge * aspect
+        let height = aspect >= 1 ? edge / aspect : edge
+        return CanvasRatio.even(CGSize(width: width, height: height))
     }
 
     /// H.264 rejects odd dimensions.

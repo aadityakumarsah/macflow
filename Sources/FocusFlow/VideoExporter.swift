@@ -184,38 +184,172 @@ enum VideoExporter {
         return (edit, composition, musicMix)
     }
 
+    /// How the file is encoded.
+    ///
+    /// `AVAssetExportSession` picks this from a preset and offers no way to
+    /// say "no worse than what was recorded": the highest-quality preset
+    /// still re-encodes a crisp screen recording at a rate of its own
+    /// choosing, and text came back softer than the capture it was made
+    /// from. So the rate is worked out here, from the recording itself,
+    /// and floored at what the canvas needs.
+    static func videoSettings(canvas: CGSize, frameRate: Int, source: CGSize, sourceDataRate: Double) -> [String: Any] {
+        let pixels = Double(canvas.width) * Double(canvas.height)
+        let sourcePixels = Double(source.width) * Double(source.height)
+        // Bits per pixel per frame. Screen content is flat colour and hard
+        // edges, and edges are the first thing a mean bitrate destroys, so
+        // this is generous by the standards of camera footage.
+        let needed = pixels * Double(frameRate) * 0.17
+        // What the recording was carrying. Scaled down if the canvas is
+        // smaller than the capture, never up: a wastefully encoded source
+        // should not make a wastefully encoded export.
+        let matched = sourcePixels > 0 ? sourceDataRate * min(1, pixels / sourcePixels) * 1.25 : 0
+        // Past about this much H.264 is spending bits on a picture nobody
+        // could tell from the one before it. A source encoded more
+        // wastefully than that — ProRes, or a capture full of sensor noise
+        // — is matched up to here and no further.
+        let transparent = pixels * Double(frameRate) * 0.6
+        let bitrate = min(max(needed, min(matched, transparent)), 240_000_000)
+        return [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(canvas.width),
+            AVVideoHeightKey: Int(canvas.height),
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: Int(bitrate),
+                AVVideoExpectedSourceFrameRateKey: frameRate,
+                AVVideoMaxKeyFrameIntervalKey: frameRate * 2,
+                AVVideoAllowFrameReorderingKey: true,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ],
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+        ]
+    }
+
     static func export(source: URL, destination: URL, settings: ExportSettings, progress: @escaping (Double) -> Void) async throws {
         guard source.standardizedFileURL != destination.standardizedFileURL,
               settings.cameraURL?.standardizedFileURL != destination.standardizedFileURL else {
             throw ExportError.failed("Choose a different filename to preserve your original recording.")
         }
         let (asset, composition, musicMix) = try await composition(source: source, settings: settings)
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { throw ExportError.unavailable }
         let options = settings.exportOptions
         let temporary = destination.deletingLastPathComponent()
             .appendingPathComponent(".focusflow-export-\(UUID().uuidString).\(options.format.fileExtension)")
         defer { try? FileManager.default.removeItem(at: temporary) }
-        session.outputURL = temporary
-        // Resolution is carried by the composition's renderSize, which the
-        // highest-quality preset passes through untouched; the smaller presets
-        // impose their own dimensions and would fight it.
-        session.outputFileType = options.format == .mp4 ? .mp4 : .mov
-        session.videoComposition = composition
-        session.audioMix = musicMix
-        session.shouldOptimizeForNetworkUse = true
+
         let start = max(0, settings.trimStart / settings.playbackRate)
         let end = min(asset.duration.seconds, settings.trimEnd / settings.playbackRate)
         guard end > start else { throw ExportError.failed("The trim range is empty.") }
-        session.timeRange = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600), duration: CMTime(seconds: end - start, preferredTimescale: 600))
-        let poll = Task {
-            while !Task.isCancelled {
-                progress(Double(session.progress))
-                try? await Task.sleep(for: .milliseconds(150))
+        let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
+                                duration: CMTime(seconds: end - start, preferredTimescale: 600))
+
+        // What the recording itself was encoded at, which is the floor the
+        // export must not fall below.
+        let original = AVURLAsset(url: source)
+        let originalTrack = try await original.loadTracks(withMediaType: .video).first
+        let sourceSize = try await originalTrack?.load(.naturalSize) ?? .zero
+        let sourceDataRate = try await originalTrack?.load(.estimatedDataRate) ?? 0
+
+        let reader = try AVAssetReader(asset: asset)
+        reader.timeRange = range
+        let frames = AVAssetReaderVideoCompositionOutput(
+            videoTracks: try await asset.loadTracks(withMediaType: .video),
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        // Resolution is carried by the composition's renderSize, and the
+        // compositor draws every effect into it.
+        frames.videoComposition = composition
+        frames.alwaysCopiesSampleData = false
+        guard reader.canAdd(frames) else { throw ExportError.unavailable }
+        reader.add(frames)
+
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        var mixed: AVAssetReaderAudioMixOutput?
+        if !audioTracks.isEmpty {
+            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsNonInterleaved: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+            ])
+            output.audioMix = musicMix
+            output.alwaysCopiesSampleData = false
+            if reader.canAdd(output) { reader.add(output); mixed = output }
+        }
+
+        let writer = try AVAssetWriter(outputURL: temporary, fileType: options.format == .mp4 ? .mp4 : .mov)
+        writer.shouldOptimizeForNetworkUse = true
+        let picture = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings(
+            canvas: settings.canvasSize, frameRate: options.frameRate.rawValue,
+            source: sourceSize, sourceDataRate: Double(sourceDataRate)))
+        picture.expectsMediaDataInRealTime = false
+        guard writer.canAdd(picture) else { throw ExportError.unavailable }
+        writer.add(picture)
+        var speaker: AVAssetWriterInput?
+        if mixed != nil {
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 256_000,
+            ])
+            input.expectsMediaDataInRealTime = false
+            if writer.canAdd(input) { writer.add(input); speaker = input }
+        }
+
+        guard reader.startReading() else {
+            throw ExportError.failed(reader.error?.localizedDescription ?? "The recording could not be read.")
+        }
+        guard writer.startWriting() else {
+            throw ExportError.failed(writer.error?.localizedDescription ?? "The video could not be written.")
+        }
+        // Samples keep the times they have in the composition, and the
+        // session says which of those is the beginning of the file — which
+        // is how a trimmed export starts at zero.
+        writer.startSession(atSourceTime: range.start)
+
+        let length = max(0.01, range.duration.seconds)
+        let began = range.start.seconds
+        let pumps = DispatchGroup()
+        /// Each input pulls from its own output as fast as the encoder will
+        /// take it. Both run at once: an asset reader holds what it has
+        /// decoded until it is collected, so draining one track to the end
+        /// while the other waits is how an export runs out of memory.
+        func drain(_ input: AVAssetWriterInput, from output: AVAssetReaderOutput, on label: String, reporting: Bool) {
+            pumps.enter()
+            input.requestMediaDataWhenReady(on: DispatchQueue(label: label)) {
+                while input.isReadyForMoreMediaData {
+                    guard reader.status == .reading, let buffer = output.copyNextSampleBuffer() else {
+                        input.markAsFinished(); pumps.leave(); return
+                    }
+                    if reporting {
+                        let at = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+                        if at.isFinite { progress(min(0.99, max(0, (at - began) / length))) }
+                    }
+                    guard input.append(buffer) else {
+                        input.markAsFinished(); pumps.leave(); return
+                    }
+                }
             }
         }
-        await session.export()
-        poll.cancel()
-        guard session.status == .completed else { throw ExportError.failed(session.error?.localizedDescription ?? "Unknown error") }
+        drain(picture, from: frames, on: "com.focusflow.export.video", reporting: true)
+        if let speaker, let mixed { drain(speaker, from: mixed, on: "com.focusflow.export.audio", reporting: false) }
+        await withCheckedContinuation { continuation in
+            pumps.notify(queue: .global(qos: .userInitiated)) { continuation.resume() }
+        }
+
+        if reader.status == .failed {
+            writer.cancelWriting()
+            throw ExportError.failed(reader.error?.localizedDescription ?? "The recording could not be read.")
+        }
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw ExportError.failed(writer.error?.localizedDescription ?? "Unknown error")
+        }
         if FileManager.default.fileExists(atPath: destination.path) {
             _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
         } else { try FileManager.default.moveItem(at: temporary, to: destination) }
@@ -270,13 +404,45 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     /// hence the lock.
     private let historyLock = NSLock()
     private var history: [(time: Double, image: CIImage)] = []
+    /// When the wheel turned, in order. Worked out once: the recording does
+    /// not change under a composition.
+    private var scrollTimes: [Double]?
 
-    private func rememberAndBlend(_ image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
+    /// How far either side of a wheel event the shutter stays open.
+    static let scrollBlurWindow: Double = 0.22
+
+    /// Whether the content is moving under its own steam at this moment.
+    ///
+    /// Blending the neighbouring frames gives a scroll a real shutter, but
+    /// it is a frame of the recording mixed into another frame of it: where
+    /// nothing is scrolling it is a ghost over text that was perfectly
+    /// sharp, which is the recording made worse for nothing. So it is
+    /// spent where the recording says the wheel actually turned. A capture
+    /// that reports no wheel events at all — an imported video — says
+    /// nothing either way, and is softened throughout as it always was.
+    private func scrolling(at time: Double, settings: ExportSettings) -> Bool {
+        guard !settings.scrollEvents.isEmpty else { return true }
+        let times: [Double]
+        if let cached = scrollTimes { times = cached }
+        else { times = settings.scrollEvents.map(\.time).sorted(); scrollTimes = times }
+        let window = Self.scrollBlurWindow
+        var low = 0, high = times.count
+        while low < high {
+            let mid = (low + high) / 2
+            if times[mid] < time - window { low = mid + 1 } else { high = mid }
+        }
+        return low < times.count && times[low] <= time + window
+    }
+
+    /// `sourceTime` is where this frame sits in the recording, which is what
+    /// the wheel events are timed against; `time` is where it sits in the
+    /// composition, which is what decides whether two frames are neighbours.
+    private func rememberAndBlend(_ image: CIImage, at time: Double, sourceTime: Double? = nil, settings: ExportSettings) -> CIImage {
         historyLock.lock()
         defer { historyLock.unlock() }
 
-        let wanted = settings.motion.scrollBlur != false
-        let strength = max(0, min(1, settings.motion.scrollBlurStrength ?? 0.5))
+        let wanted = settings.motion.scrollBlur != false && scrolling(at: sourceTime ?? time, settings: settings)
+        let strength = max(0, min(1, settings.motion.scrollBlurStrength ?? 0.32))
         let step = 1 / Double(max(1, settings.exportOptions.frameRate.rawValue))
 
         // A seek or a jump leaves the history unrelated to this frame.
@@ -319,12 +485,12 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {
         renderContext = newRenderContext
-        historyLock.lock(); history.removeAll(); historyLock.unlock()
+        historyLock.lock(); history.removeAll(); scrollTimes = nil; historyLock.unlock()
     }
 
     func cancelAllPendingVideoCompositionRequests() {
         context.clearCaches()
-        historyLock.lock(); history.removeAll(); historyLock.unlock()
+        historyLock.lock(); history.removeAll(); scrollTimes = nil; historyLock.unlock()
     }
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
@@ -340,7 +506,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             var source = normalized(CIImage(cvPixelBuffer: sourceBuffer).transformed(by: instruction.screenTransform))
             // Applied to the recording only: the cursor and the window frame
             // are drawn later and must stay sharp.
-            source = rememberAndBlend(source, at: request.compositionTime.seconds, settings: settings)
+            source = rememberAndBlend(source, at: request.compositionTime.seconds, sourceTime: time, settings: settings)
             let camera = (instruction.cameraTrackID == kCMPersistentTrackID_Invalid ? nil : request.sourceFrame(byTrackID: instruction.cameraTrackID)).map {
                 normalized(CIImage(cvPixelBuffer: $0).transformed(by: instruction.cameraTransform))
             }
@@ -440,22 +606,38 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let next = MotionEngine.viewport(at: time + frameStep, segments: settings.segments, samples: settings.pointerSamples, crop: settings.frame.crop)
             let dx = (next.midX - previous.midX) / max(0.01, viewport.width) * layout.content.width
             let dy = (next.midY - previous.midY) / max(0.01, viewport.height) * layout.content.height
-            let zoomMotion = abs(next.width - previous.width) / max(0.01, viewport.width) * layout.content.width * 0.12
-            let radius = min(12, (hypot(dx, dy) * 0.16 + zoomMotion) * max(0, min(1, settings.motion.motionBlurStrength ?? 0.55)))
-            if radius > 0.6 {
+            let zoomMotion = abs(next.width - previous.width) / max(0.01, viewport.width) * layout.content.width * 0.1
+            // Measured as a share of the frame rather than in pixels. A
+            // twelve pixel smear is nothing across a 4K frame and ruinous
+            // across a small one, and it was the same twelve either way.
+            // The ceiling is deliberately low: blur is detail thrown away,
+            // and a moving frame needs only its hard edge taken off.
+            let ceiling = layout.content.width * 0.0035
+            let wanted = (hypot(dx, dy) * 0.12 + zoomMotion) * max(0, min(1, settings.motion.motionBlurStrength ?? 0.35))
+            let radius = min(ceiling, wanted)
+            // Below this it is invisible, and above the ceiling it is the
+            // ceiling — so a fast move is softened, never smeared.
+            if radius > ceiling * 0.12 && radius > 0.4 {
                 source = source.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [kCIInputRadiusKey: radius, kCIInputAngleKey: atan2(-dy, dx)]).cropped(to: layout.content)
             }
         }
         if let header = RenderAssets.header(settings.frame, rect: layout.header) { source = header.composited(over: source) }
+        // Corners and shadow are written in the editor's own pixels, where
+        // the canvas is 1920 across. They have to be read as a share of the
+        // frame, or the same project would have rounder corners the smaller
+        // it was exported — and the preview, which is composed at a size of
+        // its own, would not match the file.
+        let unit = canvas.width / 1920
         let rounded = CIFilter.roundedRectangleGenerator()
-        rounded.extent = layout.outer; rounded.radius = Float(settings.cornerRadius); rounded.color = .white
+        rounded.extent = layout.outer; rounded.radius = Float(settings.cornerRadius * unit); rounded.color = .white
         let mask = rounded.outputImage!.cropped(to: canvas)
         let clear = CIImage(color: .clear).cropped(to: canvas)
         source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: mask])
         if settings.shadow > 0 {
+            let shadow = settings.shadow * unit
             let shade = mask.applyingFilter("CIColorMatrix", parameters: ["inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.35)])
-                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: settings.shadow])
-                .transformed(by: CGAffineTransform(translationX: 0, y: -settings.shadow / 3))
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: shadow])
+                .transformed(by: CGAffineTransform(translationX: 0, y: -shadow / 3))
             source = source.composited(over: shade)
         }
         let motion = settings.motion
@@ -558,91 +740,36 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                                  settings: ExportSettings,
                                  stance: MotionEngine.FrameStance = MotionEngine.FrameStance()) -> CIImage {
         let move = settings.cameraMove
-        let span = max(0.2, move.duration)
         let elapsed = time - settings.trimStart
         guard elapsed >= 0 else { return image }
 
-        let raw = move.holds ? min(1, elapsed / max(0.2, settings.trimEnd - settings.trimStart)) : min(1, elapsed / span)
-        let progress = move.curve.value(raw)
-        // Settled, and not holding: nothing of the move is left. Where the
-        // frame has been placed by hand stays, though — that is not a move,
-        // it is where the frame stands.
-        let settled = !move.holds && raw >= 1
-        if settled, !move.isPlaced, !move.hasStandaloneBlur, stance.isNeutral { return image }
-
-        let tilt = max(0, min(1, move.tilt))
-        let amount = max(0, min(1, move.amount))
         let frame = image.extent
         guard frame.width > 1, frame.height > 1 else { return image }
-
-        // Corner insets as a fraction of the frame, per move.
-        var leanLeft = 0.0, leanRight = 0.0, leanTop = 0.0
-        var shiftX = 0.0, scale = 1.0
-
-        switch settled ? .none : move.move {
-        case .none:
-            break
-        case .glide:
-            // Holds its lean and travels across.
-            leanRight = tilt * 0.2
-            shiftX = (progress - 0.5) * amount * frame.width * 0.22
-            scale = 1 + tilt * 0.06
-        case .unfold:
-            // Opens out of the lean as it plays.
-            let remaining = 1 - progress
-            leanLeft = tilt * 0.26 * remaining
-            leanTop = tilt * 0.12 * remaining
-            scale = 1 - 0.06 * remaining
-        case .pullBack:
-            // Starts close, withdraws, keeping a slight lean.
-            leanTop = tilt * 0.09
-            scale = (1 + amount * 0.3) - amount * 0.3 * progress
-        }
+        let playing = move.performance(at: elapsed, clip: settings.trimEnd - settings.trimStart, width: Double(frame.width))
+        if playing.settled, !move.isPlaced, !move.hasStandaloneBlur, stance.isNeutral { return image }
+        let scale = playing.scale, shiftX = playing.shiftX
 
         // Turning and leaning by hand, on top of whatever the move is doing.
-        // An edge that recedes is pulled in and, because it is further away,
-        // is also shorter than the edge facing the viewer.
-        // Where the frame stands, plus whatever the timeline is leaning it to.
-        let placed = FramePose(pitch: move.pitch, yaw: move.yaw, roll: move.roll,
-                               panX: move.panX, panY: move.panY, zoom: move.zoom).added(stance.pose)
-        let yaw = max(-1, min(1, placed.yaw)), pitch = max(-1, min(1, placed.pitch))
-        leanRight += max(0, yaw) * 0.26
-        leanLeft += max(0, -yaw) * 0.26
-        leanTop += max(0, pitch) * 0.2
-        let leanBottom = max(0, -pitch) * 0.2
-
-        let dxRight = frame.width * leanRight
-        let dxLeft = frame.width * leanLeft
-        let dyTop = frame.height * leanTop
-        let dyBottom = frame.height * leanBottom
-        let squashRight = frame.height * max(0, yaw) * 0.12
-        let squashLeft = frame.height * max(0, -yaw) * 0.12
-        let squashTop = frame.width * max(0, pitch) * 0.12
-        let squashBottom = frame.width * max(0, -pitch) * 0.12
+        // Where the frame stands, plus whatever the timeline is leaning it
+        // to. The corners themselves are worked out by the shared geometry,
+        // so the handles drawn over the preview sit on the same quad.
+        let placed = move.pose.added(stance.pose)
+        let lean = placed.lean(adding: playing.lean)
+        let quad = placed.quad(in: frame, lean: lean)
 
         // Corners run bottom-left, bottom-right, top-right, top-left.
         let perspective = CIFilter.perspectiveTransform()
         perspective.inputImage = image
-        perspective.bottomLeft = CGPoint(x: frame.minX + dxLeft + squashBottom, y: frame.minY + dyBottom + squashLeft)
-        perspective.bottomRight = CGPoint(x: frame.maxX - dxRight - squashBottom, y: frame.minY + dyBottom + squashRight)
-        perspective.topRight = CGPoint(x: frame.maxX - dxRight * 0.35 - squashTop, y: frame.maxY - dyTop - squashRight)
-        perspective.topLeft = CGPoint(x: frame.minX + dxLeft * 0.35 + squashTop, y: frame.maxY - dyTop - squashLeft)
+        perspective.bottomLeft = quad.bottomLeft
+        perspective.bottomRight = quad.bottomRight
+        perspective.topRight = quad.topRight
+        perspective.topLeft = quad.topLeft
 
         guard var result = perspective.outputImage else { return image }
 
-        // Roll, slide and push in — the rest of standing the frame somewhere.
-        let zoom = max(0.2, min(3, placed.zoom))
-        let roll = max(-1, min(1, placed.roll)) * .pi / 5
-        let dx = shiftX + placed.panX * frame.width * 0.5
-        let dy = placed.panY * frame.height * 0.5
-        if scale * zoom != 1 || dx != 0 || dy != 0 || roll != 0 {
-            let centre = CGPoint(x: canvas.midX, y: canvas.midY)
-            let transform = CGAffineTransform(translationX: centre.x + dx, y: centre.y + dy)
-                .rotated(by: roll)
-                .scaledBy(x: scale * zoom, y: scale * zoom)
-                .translatedBy(x: -centre.x, y: -centre.y)
-            result = result.transformed(by: transform)
-        }
+        let transform = placed.transform(about: CGPoint(x: canvas.midX, y: canvas.midY),
+                                         frame: frame, scale: scale, shiftX: shiftX)
+        if !transform.isIdentity { result = result.transformed(by: transform) }
 
         // A blur asked for on the timeline is this moment's; the panel's is
         // the standing one.
@@ -672,13 +799,12 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
         // Depth of field across the receding axis. Skipped when there is no
         // lean to justify it, since a graduated blur is not cheap.
-        let lean = max(dxLeft, max(dxRight, dyTop))
-        if move.focusBlur > 0.01 && lean > frame.width * 0.004 {
+        if move.focusBlur > 0.01 && lean.depth > 0.004 {
             let strength = max(0, min(1, move.focusBlur))
             let radius = max(1.0, min(14.0, Double(frame.width) / 1920 * 13 * strength))
             let gradient = CIFilter.linearGradient()
             // Sharp where the frame is nearest, soft where it recedes.
-            let recedingRight = dxRight >= dxLeft
+            let recedingRight = lean.right >= lean.left
             gradient.point0 = CGPoint(x: recedingRight ? result.extent.minX : result.extent.maxX, y: result.extent.midY)
             gradient.point1 = CGPoint(x: recedingRight ? result.extent.maxX : result.extent.minX, y: result.extent.midY)
             // White keeps the frame sharp under CIBlendWithMask, so the near
@@ -767,7 +893,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
         let rounded = CIFilter.roundedRectangleGenerator()
         rounded.extent = target
-        rounded.radius = Float(settings.cameraShape == .circle ? height / 2 : min(height / 2, settings.cameraCornerRadius))
+        rounded.radius = Float(settings.cameraShape == .circle ? height / 2 : min(height / 2, settings.cameraCornerRadius * canvas.width / 1920))
         rounded.color = .white
         let transparent = CIImage(color: .clear).cropped(to: canvas)
         let clipped = camera.applyingFilter("CIBlendWithMask", parameters: [

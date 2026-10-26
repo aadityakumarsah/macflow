@@ -33,13 +33,13 @@ struct MotionAppearanceInspector: View {
             Toggle("Camera motion blur", isOn: Binding(get: { model.motionAppearance.automaticMotionBlur != false }, set: { model.motionAppearance.automaticMotionBlur = $0 }))
                 .help("Blurs the zooms and camera moves FocusFlow applies.")
             if model.motionAppearance.automaticMotionBlur != false {
-                InspectorSlider(title: "Camera blur", value: Binding(get: { model.motionAppearance.motionBlurStrength ?? 0.55 }, set: { model.motionAppearance.motionBlurStrength = $0 }), range: 0...1, suffix: "")
+                InspectorSlider(title: "Camera blur", value: Binding(get: { model.motionAppearance.motionBlurStrength ?? 0.35 }, set: { model.motionAppearance.motionBlurStrength = $0 }), range: 0...1, suffix: "")
             }
 
             Toggle("Smooth scrolling", isOn: Binding(get: { model.motionAppearance.scrollBlur != false }, set: { model.motionAppearance.scrollBlur = $0 }))
-                .help("Mixes the neighbouring frames into each one, giving scrolling a real shutter so it stops strobing.")
+                .help("Mixes the neighbouring frames into each one where the recording says the wheel turned, giving scrolling a real shutter so it stops strobing.")
             if model.motionAppearance.scrollBlur != false {
-                InspectorSlider(title: "Shutter", value: Binding(get: { model.motionAppearance.scrollBlurStrength ?? 0.5 }, set: { model.motionAppearance.scrollBlurStrength = $0 }), range: 0...1, suffix: "")
+                InspectorSlider(title: "Shutter", value: Binding(get: { model.motionAppearance.scrollBlurStrength ?? 0.32 }, set: { model.motionAppearance.scrollBlurStrength = $0 }), range: 0...1, suffix: "")
                 Toggle("Long shutter", isOn: Binding(get: { model.motionAppearance.scrollBlurLong == true }, set: { model.motionAppearance.scrollBlurLong = $0 }))
                     .help("Blends two neighbouring frames instead of one. Smoother on fast scrolls, slower to export.")
                 Text("Exporting at 60 fps smooths scrolling further.")
@@ -473,6 +473,11 @@ struct ExportInspector: View {
             Text("\(Int(size.width)) × \(Int(size.height)) · \(model.exportOptions.frameRate.rawValue) fps")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
+            Text(model.exportOptions.resolution == .source
+                 ? "Source keeps every pixel you recorded, encoded at no less than the recording's own rate."
+                 : "Smaller than the recording. Choose Source to keep the detail you captured.")
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -512,6 +517,8 @@ struct CameraMoveInspector: View {
 
     var body: some View {
         InspectorSection(title: "3D CAMERA MOVE") {
+            Toggle("Handles on the canvas", isOn: $model.show3DCanvas)
+                .help("Draws the frame where it is standing, over the preview, and lets you drag it there instead of using the sliders below.")
             Picker("Move", selection: $model.cameraMove.move) {
                 ForEach(CameraMove.allCases) { Text($0.rawValue).tag($0) }
             }.labelsHidden()
