@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The 3D camera, on the canvas rather than behind six sliders.
@@ -140,15 +141,23 @@ struct Frame3DOverlay: View {
 
     private func clamped(_ value: Double, _ limit: Double = 1) -> Double { max(-limit, min(limit, value)) }
 
+    /// Shift rounds the pose to a step, so a lean can be exactly a
+    /// quarter turn rather than nearly one. Read from the keyboard
+    /// directly: a drag is already under way by the time it is held, and
+    /// a gesture modifier would have to be decided before it began.
+    private func settle(_ pose: FramePose) -> FramePose {
+        NSEvent.modifierFlags.contains(.shift) ? pose.clamped.snapped() : pose.clamped
+    }
+
     private var turnAndLean: some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
             .onChanged { value in
                 let from = begin()
                 // Dragging an edge away from you turns the frame that way:
                 // pull the right side left and the right side recedes.
-                model.editedPose = from
+                model.editedPose = settle(from
                     .setting { $0.yaw = clamped(from.yaw - Double(value.translation.width / canvasSize.width) * 2) }
-                    .setting { $0.pitch = clamped(from.pitch + Double(value.translation.height / canvasSize.height) * 2) }
+                    .setting { $0.pitch = clamped(from.pitch + Double(value.translation.height / canvasSize.height) * 2) })
             }
             .onEnded { _ in grabbed = nil }
     }
@@ -157,9 +166,9 @@ struct Frame3DOverlay: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
             .onChanged { value in
                 let from = begin()
-                model.editedPose = from
+                model.editedPose = settle(from
                     .setting { $0.panX = clamped(from.panX + Double(value.translation.width / canvasSize.width) * 2) }
-                    .setting { $0.panY = clamped(from.panY - Double(value.translation.height / canvasSize.height) * 2) }
+                    .setting { $0.panY = clamped(from.panY - Double(value.translation.height / canvasSize.height) * 2) })
             }
             .onEnded { _ in grabbed = nil }
     }
@@ -168,9 +177,9 @@ struct Frame3DOverlay: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
             .onChanged { value in
                 let from = begin()
-                model.editedPose = from.setting {
+                model.editedPose = settle(from.setting {
                     $0.roll = clamped(from.roll + Double(value.translation.width / canvasSize.width) * 2)
-                }
+                })
             }
             .onEnded { _ in grabbed = nil }
     }
@@ -180,7 +189,7 @@ struct Frame3DOverlay: View {
             .onChanged { value in
                 let from = begin()
                 let zoom = from.zoom - Double(value.translation.height / canvasSize.height) * 1.2
-                model.editedPose = from.setting { $0.zoom = max(0.6, min(1.8, zoom)) }
+                model.editedPose = settle(from.setting { $0.zoom = max(0.6, min(1.8, zoom)) })
             }
             .onEnded { _ in grabbed = nil }
     }
@@ -199,11 +208,25 @@ struct Frame3DBar: View {
                 Text(editingSegment ? "3D camera on the timeline" : "Where the frame stands")
                     .font(.system(size: 11, weight: .semibold))
                 Text(editingSegment
-                     ? "Drag the picture to turn and lean this move."
-                     : "Drag the picture to turn and lean it for the whole recording.")
+                     ? "Drag the picture to turn and lean this move. Arrows nudge, ⌥ slides, ⇧ snaps."
+                     : "Drag the picture to turn and lean it. Arrows nudge, ⌥ slides, ⇧ snaps, , and . roll.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
             Spacer()
+            // The poses worth having one key away, and the keys that give
+            // them: a button someone can hit is also how they learn the
+            // shortcut for it.
+            HStack(spacing: 4) {
+                ForEach(CameraMoveSettings.quickPoses, id: \.name) { preset in
+                    Button(preset.name) { model.editedPose = preset.pose }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(model.editedPose == preset.pose ? AppTheme.green.opacity(0.16) : AppTheme.elevated,
+                                    in: RoundedRectangle(cornerRadius: 5))
+                        .help("\(preset.name) — press \(preset.key)")
+                }
+            }
             if !editingSegment {
                 Button("Make it a move") {
                     model.addSegment(.perspective)

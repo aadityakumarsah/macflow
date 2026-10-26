@@ -503,6 +503,8 @@ struct CanvasInspector: View {
             Divider()
             TypingFollowInspector()
             Divider()
+            SelectionFocusInspector()
+            Divider()
             CameraMoveInspector()
             Divider()
             GradeInspector()

@@ -101,12 +101,49 @@ struct CursorAppearanceInspector: View {
                         }
                     }
                     Picker("Style", selection: $model.cursorAppearance.style) { ForEach(PointerStyle.allCases) { Text($0.rawValue).tag($0) } }
+                    if model.cursorAppearance.style.isMark {
+                        Text("A ring or a dot marks where the pointer is rather than drawing an arrow, which is what survives a recording being watched at a quarter of its size. It is drawn in the effect colour below.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if model.cursorAppearance.style == .custom {
+                        HStack {
+                            Button("Choose image…") { chooseCursorImage() }
+                            if model.cursorAppearance.customImagePath != nil {
+                                Button("Clear") { model.cursorAppearance.customImagePath = nil }
+                            }
+                        }.font(.caption)
+                        if let path = model.cursorAppearance.customImagePath {
+                            Text((path as NSString).lastPathComponent)
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        } else {
+                            Text("Choose a PNG with a transparent background. Its top-left corner is the point it points at, and the size slider above scales it.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     Picker("Shape", selection: Binding(get: { model.cursorAppearance.shape ?? .automatic }, set: { model.cursorAppearance.shape = $0 })) {
                         ForEach(PointerShape.allCases) { Text($0.rawValue).tag($0) }
-                    }
+                    }.disabled(model.cursorAppearance.style.isMark || model.cursorAppearance.style == .custom)
                     Text("Automatic follows recorded arrow and text cursor changes.").font(.caption2).foregroundStyle(.secondary)
                     Toggle("Smooth movement", isOn: $model.smoothCursor)
                     Toggle("Cursor shadow", isOn: $model.cursorShadow)
+
+                    Toggle("Swell while moving", isOn: Binding(
+                        get: { model.cursorAppearance.swell == true },
+                        set: { model.cursorAppearance.swell = $0 }))
+                        .help("The pointer grows a little as it travels and settles when it arrives.")
+                    if model.cursorAppearance.swell == true {
+                        InspectorSlider(title: "Swell", value: optional(\.swellAmount, fallback: 0.3), range: 0.05...1, suffix: "")
+                    }
+                    Toggle("Motion trail", isOn: Binding(
+                        get: { model.cursorAppearance.trail == true },
+                        set: { model.cursorAppearance.trail = $0 }))
+                        .help("A comet of the accent colour behind a pointer that is travelling, and nothing behind one that is still.")
+                    if model.cursorAppearance.trail == true {
+                        InspectorSlider(title: "Trail length", value: optional(\.trailLength, fallback: 0.5), range: 0.1...1, suffix: "")
+                        InspectorSlider(title: "Trail strength", value: optional(\.trailOpacity, fallback: 0.3), range: 0.05...0.8, suffix: "")
+                    }
                 }.disabled(model.recordingMetadata.embeddedCursor == true)
                 Divider()
                 InspectorSection(title: "Click effects") {
@@ -167,6 +204,16 @@ struct CursorAppearanceInspector: View {
     }
     private func optional(_ path: WritableKeyPath<CursorAppearance, Double?>, fallback: Double) -> Binding<Double> {
         Binding(get: { model.cursorAppearance[keyPath: path] ?? fallback }, set: { model.cursorAppearance[keyPath: path] = $0 })
+    }
+
+    /// Someone's own pointer artwork. Copied nowhere: the project keeps
+    /// the path, as it does for a background image.
+    private func chooseCursorImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .tiff, .image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.cursorAppearance.customImagePath = url.path
     }
 }
 
@@ -559,8 +606,17 @@ struct CameraMoveInspector: View {
             }
 
             Divider()
+            Toggle("Keep text crisp", isOn: Binding(
+                get: { model.cameraMove.crisp != false },
+                set: { model.cameraMove.crisp = $0 }))
+                .help("Standing the frame in space resamples every pixel of it, which softens text very slightly. This puts the edges back before the lean takes them.")
             Picker("Blur", selection: $model.cameraMove.blur) {
                 ForEach(FrameBlur.allCases) { Text($0.rawValue).tag($0) }
+            }
+            if model.cameraMove.blur == .none {
+                Text("No blur, which is how a lean arrives now. Depth of field used to be on by default and softened the whole picture the moment anything leaned.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(model.cameraMove.blur.detail)
                 .font(.caption2).foregroundStyle(.secondary)
@@ -611,12 +667,22 @@ struct TypingFollowInspector: View {
                 InspectorSlider(title: "Travel per key", value: $model.typingFollow.advancePerKey, range: 0.002...0.03, suffix: "")
                 InspectorSlider(title: "Max travel", value: $model.typingFollow.maxTravel, range: 0.05...0.8, suffix: "")
                 InspectorSlider(title: "Hold still until", value: $model.typingFollow.deadZone, range: 0...1, suffix: "")
-                InspectorSlider(title: "Catch up over", value: $model.typingFollow.catchUp, range: 0.15...1.2, suffix: "s")
+                InspectorSlider(title: "Catch up over", value: $model.typingFollow.catchUp, range: 0.15...2.5, suffix: "s")
                 InspectorSlider(title: "Hold after", value: $model.typingFollow.hold, range: 0...2.5, suffix: "s")
                 InspectorSlider(title: "Pause splits run", value: $model.typingFollow.gap, range: 0.3...3, suffix: "s")
 
                 Picker("Ease in and out", selection: $model.typingFollow.curve) {
                     ForEach(MotionCurve.allCases) { Text($0.rawValue).tag($0) }
+                }
+
+                Toggle("Underline the words as they appear", isOn: Binding(
+                    get: { model.typingFollow.highlight != false },
+                    set: { model.typingFollow.highlight = $0 }))
+                    .help("Draws a soft accent band under the line being written, with a caret at its leading edge.")
+                if model.typingFollow.highlight != false {
+                    InspectorSlider(title: "Underline strength", value: Binding(
+                        get: { model.typingFollow.highlightOpacity ?? 0.2 },
+                        set: { model.typingFollow.highlightOpacity = $0 }), range: 0...0.6, suffix: "")
                 }
 
                 Text("A caret's position is not reported by anything, so the slide is estimated from how many keys were pressed. The frame holds still while the caret crosses **Hold still until** — a share of what is on screen — and then catches up in one move, rather than creeping along with every keystroke. Zero follows the caret continuously. Adjust **Travel per key** if the frame moves ahead of or behind the text.")
@@ -637,7 +703,40 @@ struct TypingFollowInspector: View {
             }
             .font(.caption)
             .disabled(model.videoURL == nil)
-            .help("Regenerates click zooms and typing follows with the current settings.")
+            .help("Regenerates click zooms, typing follows and selection focus with the current settings.")
+        }
+    }
+}
+
+/// Focusing on text as it is selected — the plainest statement a recording
+/// makes about what matters.
+struct SelectionFocusInspector: View {
+    @EnvironmentObject private var model: EditorModel
+
+    var body: some View {
+        InspectorSection(title: "TEXT SELECTION") {
+            Toggle("Focus on selected text", isOn: $model.selectionFocus.enabled)
+                .help("Zooms to text as it is dragged over, and washes the selected range in the accent colour.")
+
+            if model.selectionFocus.enabled {
+                InspectorSlider(title: "Zoom", value: $model.selectionFocus.zoom, range: 1.05...3.2, suffix: "×")
+                Toggle("Follow the range as it grows", isOn: $model.selectionFocus.tracks)
+                    .help("Travels with the drag rather than settling on the middle of where it finished.")
+                Toggle("Highlight the selection", isOn: $model.selectionFocus.highlight)
+                if model.selectionFocus.highlight {
+                    InspectorSlider(title: "Highlight strength", value: $model.selectionFocus.highlightOpacity, range: 0...0.6, suffix: "")
+                }
+                InspectorSlider(title: "Hold after", value: $model.selectionFocus.hold, range: 0...2.5, suffix: "s")
+                Text("A drag across text with the I-beam is read as a selection. An application's own selection colour is often a pale blue that disappears once a recording is scaled down, so the range is washed in your accent colour on top of it.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button { model.rebuildAutomaticEdit() } label: {
+                Label("Rebuild automatic edit", systemImage: "sparkles")
+            }
+            .font(.caption)
+            .disabled(model.videoURL == nil)
         }
     }
 }

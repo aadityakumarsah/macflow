@@ -22,12 +22,32 @@ final class FocusFlowTests {
             XCTAssertTrue(!edits.contains { $0.kind == unwanted })
         }
 
-        // A text selection still earns one steady zoom, rather than a zoom and
-        // a spotlight travelling across it together.
+        // A text selection earns one zoom that follows the range as it is
+        // dragged. It used to be a steady zoom on the midpoint of where
+        // the drag finished, which arrived before there was anything
+        // selected to look at — and before that a zoom and a spotlight
+        // travelling across it together, which was the busy thing the
+        // steady zoom was a retreat from. One tracking zoom, no spotlight.
         let selectionZooms = edits.filter { $0.start > 8.5 }
         XCTAssertEqual(selectionZooms.count, 1)
-        // And it does not pan: tracking is what made the frame travel.
-        XCTAssertTrue(selectionZooms.allSatisfy { $0.tracksSelection != true })
+        XCTAssertTrue(selectionZooms.allSatisfy { $0.tracksSelection == true })
+        XCTAssertTrue(selectionZooms.allSatisfy { $0.selectionStartTime != nil && $0.selectionEndTime != nil })
+
+        // Switched off, a selection is left alone entirely.
+        var ignored = SelectionFocusSettings(); ignored.enabled = false
+        let withoutSelection = MotionEngine.autoEdits(clicks: clicks, samples: samples, duration: 12, selection: ignored)
+        XCTAssertTrue(withoutSelection.allSatisfy { $0.start < 8.5 })
+
+        // A fixed camera target still retains both ends and the timing of
+        // the drag, so its highlight can reveal the selected text as it grows.
+        var fixed = SelectionFocusSettings(); fixed.tracks = false
+        let fixedEdits = MotionEngine.autoEdits(clicks: [], samples: samples, duration: 12, selection: fixed)
+        let fixedSelection = fixedEdits.last!
+        XCTAssertTrue(fixedSelection.tracksSelection != true)
+        XCTAssertEqual(fixedSelection.x, samples[4].x, accuracy: 0.0001)
+        XCTAssertEqual(fixedSelection.endX ?? 0, samples.last!.x, accuracy: 0.0001)
+        XCTAssertTrue(fixedSelection.selectionStartTime != nil)
+        XCTAssertTrue(fixedSelection.selectionEndTime != nil)
 
         XCTAssertTrue(edits.allSatisfy { $0.start >= 0 && $0.end <= 12 })
 
@@ -2012,6 +2032,264 @@ final class FocusFlowTests {
         // that never moved.
         let square = predicted(CameraMoveSettings())
         XCTAssertGreaterThan(abs(expected.maxX - square.maxX), 5)
+    }
+
+    /// A frame put into perspective must not come back softened. Depth of
+    /// field used to be the default, so the first lean anyone tried blurred
+    /// the whole picture — the thing they had leaned in order to see.
+    func testLeaningTheFrameKeepsItSharp() throws {
+        // Nothing is blurred unless it is asked for.
+        XCTAssertEqual(CameraMoveSettings().blur, .none)
+        XCTAssertEqual(CameraMoveSettings().focusBlur, 0, accuracy: 0.0001)
+        XCTAssertTrue(!CameraMoveSettings().hasStandaloneBlur)
+        var leaned = CameraMoveSettings(); leaned.yaw = 0.5
+        XCTAssertTrue(leaned.isActive && !leaned.hasStandaloneBlur)
+
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 480, height: 270)
+        // Fine vertical bars: what a page of text does to a resample.
+        let bars = (0..<60).reduce(CIImage(color: .black).cropped(to: canvas)) { image, index in
+            CIImage(color: index.isMultiple(of: 2) ? .white : CIColor(red: 0.1, green: 0.1, blue: 0.1))
+                .cropped(to: CGRect(x: index * 8, y: 0, width: 8, height: 270)).composited(over: image)
+        }
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.motion.automaticMotionBlur = false
+        settings.trimStart = 0; settings.trimEnd = 8
+
+        /// Total contrast between neighbouring pixels along a row: how much
+        /// of the bar pattern survived.
+        func detail(_ move: CameraMoveSettings) throws -> Double {
+            settings.cameraMove = move
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: bars, time: 1, settings: settings), from: canvas))
+            let data = pixels(image)
+            var total = 0.0
+            for row in [90, 135, 180] {
+                for column in 120..<360 {
+                    let a = Int(data[(row * 480 + column) * 4])
+                    let b = Int(data[(row * 480 + column + 1) * 4])
+                    total += Double(abs(a - b))
+                }
+            }
+            return total
+        }
+
+        var depth = leaned; depth.blur = .depth; depth.focusBlur = 1
+        let sharp = try detail(leaned), softened = try detail(depth)
+        XCTAssertGreaterThan(sharp, softened * 1.5)
+
+        // And the warp's own softness is taken back out, so a leaning frame
+        // keeps most of the detail a square one has.
+        var blunt = leaned; blunt.crisp = false
+        XCTAssertGreaterThan(sharp, try detail(blunt))
+        XCTAssertGreaterThan(sharp, try detail(CameraMoveSettings()) * 0.5)
+    }
+
+    /// Writing and selecting are drawn where they are happening: a band
+    /// under the words as they appear, and a wash over the range as it is
+    /// dragged. A camera move alone leaves a frame drifting for no visible
+    /// reason, because the thing it follows is three pixels wide.
+    func testWritingAndSelectionAreDrawnWhereTheyHappen() throws {
+        // The caret is where the keys say, not where the frame is.
+        let run = EditSegment(kind: .typing, start: 0, duration: 2, intensity: 1, x: 0.2, y: 0.5,
+                              transition: 0.4, endX: 0.6, endY: 0.5, travelFraction: 1)
+        XCTAssertEqual(Double(MotionEngine.caret(run, at: 0)?.x ?? 0), 0.2, accuracy: 0.001)
+        XCTAssertEqual(Double(MotionEngine.caret(run, at: 1)?.x ?? 0), 0.4, accuracy: 0.001)
+        XCTAssertEqual(Double(MotionEngine.caret(run, at: 5)?.x ?? 0), 0.6, accuracy: 0.001)
+        XCTAssertNil(MotionEngine.caret(EditSegment(kind: .zoom, start: 0, duration: 1, intensity: 2, x: 0.5, y: 0.5), at: 0.5))
+        XCTAssertTrue(MotionEngine.writes(run, at: 1))
+        // A run that stops typing halfway holds for the rest of itself,
+        // and the caret stops advancing and starts blinking there.
+        var held = run; held.travelFraction = 0.5
+        XCTAssertTrue(MotionEngine.writes(held, at: 0.9))
+        XCTAssertTrue(!MotionEngine.writes(held, at: 1.5))
+
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let page = CIImage(color: CIColor(red: 0.96, green: 0.96, blue: 0.96)).cropped(to: canvas)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [run], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.motion.automaticMotionBlur = false
+        settings.trimStart = 0; settings.trimEnd = 8
+
+        func frame() throws -> [UInt8] {
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: page, time: 1, settings: settings), from: canvas))
+            return pixels(image)
+        }
+        /// How blue a patch is against a grey page — the accent is blue by
+        /// default, so this is "the graphic is here".
+        func accented(_ data: [UInt8], rows: ClosedRange<Int>, columns: ClosedRange<Int>) -> Double {
+            var total = 0.0, count = 0.0
+            for row in rows { for column in columns {
+                let index = (row * 400 + column) * 4
+                total += Double(data[index + 2]) - Double(data[index]); count += 1
+            } }
+            return total / max(1, count)
+        }
+
+        let written = try frame()
+        settings.typingFollow.highlight = false
+        let plain = try frame()
+        // Under the written words, and nowhere near the end of the line
+        // the caret has not reached yet.
+        XCTAssertGreaterThan(accented(written, rows: 123...127, columns: 100...150), accented(plain, rows: 123...127, columns: 100...150) + 8)
+        XCTAssertEqual(accented(written, rows: 123...127, columns: 300...360), accented(plain, rows: 123...127, columns: 300...360), accuracy: 1)
+
+        // A selection is washed over the range the drag has covered.
+        let drag = EditSegment(kind: .zoom, start: 0, duration: 2, intensity: 1, x: 0.25, y: 0.5,
+                               transition: 0.4, endX: 0.7, endY: 0.5,
+                               tracksSelection: true, selectionStartTime: 0.2, selectionEndTime: 1.8)
+        settings.segments = [drag]
+        settings.typingFollow.highlight = false
+        let selected = try frame()
+        settings.selectionFocus.highlight = false
+        let unselected = try frame()
+        XCTAssertGreaterThan(accented(selected, rows: 110...130, columns: 110...170),
+                             accented(unselected, rows: 110...130, columns: 110...170) + 8)
+        // Past where the drag has reached at this moment, nothing is washed.
+        XCTAssertEqual(accented(selected, rows: 110...130, columns: 330...380),
+                       accented(unselected, rows: 110...130, columns: 330...380), accuracy: 1)
+
+        // And the camera follows the range rather than jumping to the end.
+        var tracking = drag; tracking.intensity = 2
+        let early = MotionEngine.viewport(at: 0.5, segments: [tracking], samples: [], crop: ContentRegion())
+        let late = MotionEngine.viewport(at: 1.6, segments: [tracking], samples: [], crop: ContentRegion())
+        XCTAssertGreaterThan(Double(late.midX), Double(early.midX) + 0.02)
+    }
+
+    /// A ring or a dot marks the point itself, where an arrow hangs down
+    /// and to the right of it, and someone's own artwork is used when they
+    /// have chosen some.
+    func testCursorMarksAndCustomArtwork() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let page = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: canvas)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: (0...20).map { PointerSample(time: Double($0) * 0.1, x: 0.5, y: 0.5) }, clicks: [], keystrokes: [], cursorSize: 3, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.motion.automaticMotionBlur = false
+        settings.cursorShadow = false
+        settings.trimStart = 0; settings.trimEnd = 8
+
+        func frame() throws -> [UInt8] {
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: page, time: 1, settings: settings), from: canvas))
+            return pixels(image)
+        }
+        /// How far a patch departs from the flat grey page.
+        func marked(_ data: [UInt8], rows: ClosedRange<Int>, columns: ClosedRange<Int>) -> Double {
+            var total = 0.0, count = 0.0
+            for row in rows { for column in columns {
+                let index = (row * 400 + column) * 4
+                for channel in 0..<3 { total += abs(Double(data[index + channel]) - 127) }
+                count += 3
+            } }
+            return total / max(1, count)
+        }
+
+        // The pointer sits at the middle of the frame: (200, 120).
+        settings.cursor.style = .light
+        let arrow = try frame()
+        // An arrow hangs below its tip and nothing is above it.
+        XCTAssertGreaterThan(marked(arrow, rows: 124...140, columns: 200...214), 8)
+        XCTAssertLessThan(marked(arrow, rows: 96...112, columns: 186...200), 2)
+
+        settings.cursor.style = .ring
+        let ring = try frame()
+        // A ring is drawn around the point, above it as much as below.
+        XCTAssertGreaterThan(marked(ring, rows: 100...115, columns: 190...210), 6)
+        XCTAssertGreaterThan(marked(ring, rows: 125...140, columns: 190...210), 6)
+
+        settings.cursor.style = .dot
+        XCTAssertGreaterThan(marked(try frame(), rows: 112...128, columns: 192...208), 10)
+
+        // Someone's own artwork, in place of all of it.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FocusFlow-cursor-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let artwork = directory.appendingPathComponent("pointer.png")
+        let drawn = NSImage(size: NSSize(width: 40, height: 40))
+        drawn.lockFocus()
+        NSColor(calibratedRed: 1, green: 0, blue: 0, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: 40, height: 40).fill()
+        drawn.unlockFocus()
+        try NSBitmapImageRep(data: drawn.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: artwork)
+
+        settings.cursor.style = .custom
+        settings.cursor.customImagePath = artwork.path
+        let custom = try frame()
+        // A solid red square hanging from the point it points at.
+        let index = (130 * 400 + 210) * 4
+        XCTAssertGreaterThan(Int(custom[index]), Int(custom[index + 2]) + 80)
+
+        // With nothing chosen it falls back rather than drawing nothing.
+        settings.cursor.customImagePath = nil
+        XCTAssertGreaterThan(marked(try frame(), rows: 120...140, columns: 200...215), 4)
+    }
+
+    /// A project saved against older defaults is read as what it would be
+    /// saved as today, so a fix to a default reaches the recordings people
+    /// already have rather than only new ones.
+    func testOlderProjectsAreBroughtUpToTodaysDefaults() throws {
+        let json = """
+        {"videoPath":"/tmp/v.mp4","segments":[
+          {"id":"35B6D9BA-EFE6-4591-970B-2AB70EE2E182","kind":"typing","start":1,"duration":4,"intensity":1.9,"x":0.2,"y":0.5,"followBand":0.236,"followSettle":0.45},
+          {"id":"45B6D9BA-EFE6-4591-970B-2AB70EE2E183","kind":"perspective","start":1,"duration":3,"intensity":2,"x":0.5,"y":0.5,"blur":"Depth of field","blurAmount":0.35}],
+         "background":"ocean","ratio":"Source","padding":7,"cornerRadius":18,"shadow":30,"cursorSize":1.2,"clickEffects":true,
+         "cameraMove":{"move":"None","tilt":0.55,"amount":0.5,"focusBlur":0.35,"duration":2.6,"curve":"Silky","holds":true,"blur":"Depth of field","yaw":0.4},
+         "typingFollow":{"enabled":true,"zoom":1.9,"advancePerKey":0.011,"maxTravel":0.42,"deadZone":0.45,"catchUp":0.45,"gap":1.1,"hold":0.7,"curve":"Silky"}}
+        """
+        let old = try JSONDecoder().decode(ProjectDocument.self, from: Data(json.utf8))
+        // As written: depth of field on a lean, and a fast follow.
+        XCTAssertEqual(old.cameraMove?.blur, .depth)
+        XCTAssertEqual(old.typingFollow?.catchUp ?? 0, 0.45, accuracy: 0.0001)
+
+        let now = old.migrated()
+        XCTAssertEqual(now.schema, ProjectDocument.schemaVersion)
+        XCTAssertEqual(now.cameraMove?.blur, FrameBlur.none)
+        XCTAssertEqual(now.cameraMove?.focusBlur ?? 1, 0, accuracy: 0.0001)
+        // The lean itself is untouched: it was a choice.
+        XCTAssertEqual(now.cameraMove?.yaw ?? 0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(now.typingFollow?.catchUp ?? 0, TypingFollowSettings().catchUp, accuracy: 0.0001)
+        XCTAssertEqual(now.typingFollow?.deadZone ?? 0, TypingFollowSettings().deadZone, accuracy: 0.0001)
+        // And the segments already built, which is where the frame
+        // actually takes its pace and its blur from.
+        let typing = try XCTUnwrap(now.segments.first { $0.kind == .typing })
+        XCTAssertEqual(typing.followSettle ?? 0, TypingFollowSettings().catchUp, accuracy: 0.0001)
+        XCTAssertLessThan(typing.followBand ?? 1, 0.236)
+        let lean = try XCTUnwrap(now.segments.first { $0.kind == .perspective })
+        XCTAssertEqual(lean.blur, FrameBlur.none)
+
+        // Run twice, it changes nothing further, and a value somebody
+        // actually chose is never moved.
+        var chosen = now
+        chosen.typingFollow?.catchUp = 0.3
+        chosen.schema = nil
+        XCTAssertEqual(chosen.migrated().typingFollow?.catchUp ?? 0, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(now.migrated().typingFollow?.catchUp ?? 0, TypingFollowSettings().catchUp, accuracy: 0.0001)
+    }
+
+    /// The poses the keyboard and the quick buttons reach for.
+    func testQuickPosesAndNudging() {
+        XCTAssertEqual(CameraMoveSettings.quickPoses.first?.pose, .neutral)
+        XCTAssertEqual(Set(CameraMoveSettings.quickPoses.map(\.key)).count, CameraMoveSettings.quickPoses.count)
+        XCTAssertTrue(CameraMoveSettings.quickPoses.allSatisfy { $0.pose == $0.pose.clamped })
+
+        // Nudging cannot walk the frame out of what the renderer accepts.
+        var pose = FramePose(pitch: 3, yaw: -4, roll: 9, panX: 2, panY: -2, zoom: 12)
+        pose = pose.clamped
+        XCTAssertEqual(pose.pitch, 1, accuracy: 0.0001)
+        XCTAssertEqual(pose.yaw, -1, accuracy: 0.0001)
+        XCTAssertEqual(pose.zoom, 1.8, accuracy: 0.0001)
+
+        // Shift snaps to a step, so a lean can be exactly a quarter turn.
+        let snapped = FramePose(pitch: 0.237, yaw: -0.481, zoom: 1.113).snapped()
+        XCTAssertEqual(snapped.pitch, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(snapped.yaw, -0.5, accuracy: 0.0001)
+        XCTAssertEqual(snapped.zoom, 1.1, accuracy: 0.0001)
     }
 
     private func pixels(_ image: CGImage) -> [UInt8] {

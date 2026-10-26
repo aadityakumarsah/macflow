@@ -96,6 +96,10 @@ enum MotionEngine {
                 x = region.midX; y = region.midY
                 targetZoom = min(targetZoom, 0.86 / region.width, 0.72 / region.height)
                 targetZoom = max(1.15, targetZoom)
+            } else if segment.selectionStartTime != nil, let endX = segment.endX, let endY = segment.endY {
+                // A fixed selection focus still stores the drag's starting
+                // point so its highlight can grow with the actual selection.
+                x = (x + endX) / 2; y = (y + endY) / 2
             } else if segment.kind == .typing {
                 // Slides from where typing began toward where the caret has
                 // reached. A caret advances a character per key, so the slide
@@ -172,6 +176,47 @@ enum MotionEngine {
         let through = bands - crossed
         let moved = max(0, crossed - 1 + curve.value(min(1, through / share)))
         return min(total, band * moved)
+    }
+
+    /// Whether this typing segment is still putting words down, as
+    /// opposed to holding on what was written.
+    static func writes(_ segment: EditSegment, at time: Double) -> Bool {
+        guard segment.kind == .typing else { return false }
+        let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
+        return time >= segment.start && time <= segment.start + travelling
+    }
+
+    /// The range actually selected: from where the drag began to where the
+    /// pointer has reached. Tight, unlike `selectionRegion`, which is the
+    /// box the camera frames and so carries padding around it.
+    static func selectedRange(_ segment: EditSegment, at time: Double, samples: [PointerSample]) -> CGRect {
+        let first = CGPoint(x: min(1, max(0, segment.x)), y: min(1, max(0, segment.y)))
+        let last = CGPoint(x: min(1, max(0, segment.endX ?? segment.x)), y: min(1, max(0, segment.endY ?? segment.y)))
+        let start = segment.selectionStartTime ?? segment.start
+        let end = max(start + 0.01, segment.selectionEndTime ?? segment.end)
+        let clamped = min(end, max(start, time))
+        let progress = MotionCurve.smooth.value((clamped - start) / (end - start))
+        let fallback = CGPoint(x: first.x + (last.x - first.x) * progress,
+                               y: first.y + (last.y - first.y) * progress)
+        let tracked = CursorMotion.sample(at: clamped, samples: samples, smoothed: true)
+        let current = CGPoint(x: tracked?.x ?? fallback.x, y: tracked?.y ?? fallback.y)
+        return CGRect(x: min(first.x, current.x), y: min(first.y, current.y),
+                      width: abs(current.x - first.x), height: abs(current.y - first.y))
+    }
+
+    /// Where the caret has reached inside a typing segment, and the line
+    /// it is on, in frame coordinates.
+    ///
+    /// The frame follows this at a distance — it holds while the caret
+    /// crosses a band and catches up afterwards — so the two are
+    /// deliberately not the same point, and anything drawn where the
+    /// writing is actually happening has to ask for this one.
+    static func caret(_ segment: EditSegment, at time: Double) -> CGPoint? {
+        guard segment.kind == .typing else { return nil }
+        let travelling = min(1, max(0.01, segment.travelFraction ?? 1)) * segment.duration
+        let progress = min(1, max(0, (time - segment.start) / max(0.01, travelling)))
+        let total = (segment.endX ?? segment.x) - segment.x
+        return CGPoint(x: segment.x + total * progress, y: segment.endY ?? segment.y)
     }
 
     /// How the frame is standing at this instant, and how it is softened.
@@ -367,7 +412,8 @@ enum MotionEngine {
                           samples: [PointerSample],
                           duration: Double,
                           typing: [TypingEvent] = [],
-                          typingFollow: TypingFollowSettings = TypingFollowSettings()) -> [EditSegment] {
+                          typingFollow: TypingFollowSettings = TypingFollowSettings(),
+                          selection: SelectionFocusSettings = SelectionFocusSettings()) -> [EditSegment] {
         guard duration > 0 else { return [] }
         let ordered = samples.sorted { $0.time < $1.time }
         var selections: [(PointerSample, PointerSample)] = []
@@ -405,17 +451,35 @@ enum MotionEngine {
         // and spotlight to every text selection — unasked-for decoration that
         // made a plain recording look busy. They remain available by hand from
         // the effects rail, where they are a deliberate choice.
-        for (first, last) in selections {
+        // Selecting text is the plainest statement a recording makes about
+        // what matters: this, here, is what I am talking about. So the
+        // frame goes to it, and follows the range as it grows rather than
+        // jumping to wherever the drag happened to finish — which is what
+        // one steady zoom on the midpoint did, arriving before there was
+        // anything selected to look at.
+        for (first, last) in selections where selection.enabled {
             let span = max(0, last.time - first.time)
-            // A selection still deserves a look, but one steady zoom rather
-            // than a zoom and a spotlight tracking across it together.
-            guard span >= 0.25 else { continue }
+            guard span >= 0.2 else { continue }
             let start = max(0, first.time - 0.2)
-            let length = min(duration - start, last.time + 0.7 - start)
+            let length = min(duration - start, last.time + max(0.1, selection.hold) - start)
             guard length >= 0.4 else { continue }
-            result.append(EditSegment(kind: .zoom, start: start, duration: length, intensity: 1.7,
-                                      x: (first.x + last.x) / 2, y: (first.y + last.y) / 2,
-                                      transition: clickZoomTransition))
+            let depth = max(1.05, min(4, selection.zoom))
+            if selection.tracks {
+                result.append(EditSegment(kind: .zoom, start: start, duration: length, intensity: depth,
+                                          x: first.x, y: first.y,
+                                          transition: clickZoomTransition,
+                                          endX: last.x, endY: last.y,
+                                          tracksSelection: true,
+                                          selectionStartTime: first.time,
+                                          selectionEndTime: last.time))
+            } else {
+                result.append(EditSegment(kind: .zoom, start: start, duration: length, intensity: depth,
+                                          x: first.x, y: first.y,
+                                          transition: clickZoomTransition,
+                                          endX: last.x, endY: last.y,
+                                          selectionStartTime: first.time,
+                                          selectionEndTime: last.time))
+            }
         }
 
         let follows = typingFollows(typing: typing, clicks: clicks, samples: samples,

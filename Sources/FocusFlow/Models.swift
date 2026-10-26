@@ -269,9 +269,73 @@ struct ProjectDocument: Codable {
     var grade: GradeSettings? = nil
     var cameraMove: CameraMoveSettings? = nil
     var typingFollow: TypingFollowSettings? = nil
+    var selectionFocus: SelectionFocusSettings? = nil
     var sounds: SoundSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
+    /// Which set of defaults this project was written against. Absent in
+    /// everything saved before there was one, which is what makes it
+    /// useful: see `migrated()`.
+    var schema: Int? = nil
+}
+
+extension ProjectDocument {
+    /// Bumped when a default changes in a way an existing project ought to
+    /// be carried across rather than left behind.
+    static let schemaVersion = 2
+
+    /// A project saved against older defaults, read as what it would be
+    /// saved as today.
+    ///
+    /// Every setting is written out, including the ones nobody touched, so
+    /// changing a default by itself reaches new recordings and leaves every
+    /// existing one exactly as it was — which, for a default that was
+    /// wrong, means it stays wrong for the people who already hit it. A
+    /// value still sitting on the default it was written with was not a
+    /// choice and is moved on; a value somebody actually changed is left
+    /// alone, which is why each of these is an exact match against an old
+    /// default rather than a range.
+    func migrated() -> ProjectDocument {
+        guard (schema ?? 1) < Self.schemaVersion else { return self }
+        var document = self
+        document.schema = Self.schemaVersion
+        let fresh = TypingFollowSettings()
+
+        func wasDefault(_ value: Double, _ previous: Double...) -> Bool {
+            previous.contains { abs(value - $0) < 0.0001 }
+        }
+
+        // Depth of field used to be on from the first lean, so standing a
+        // frame in space softened the whole picture.
+        if var move = document.cameraMove, move.blur == .depth, wasDefault(move.focusBlur, 0.35) {
+            move.blur = .none; move.focusBlur = 0
+            document.cameraMove = move
+        }
+
+        // The typing follow used to whip across a wide band in half a
+        // second, and the words arrived after the frame did.
+        if var typing = document.typingFollow {
+            if wasDefault(typing.deadZone, 0.45, 0.3) { typing.deadZone = fresh.deadZone }
+            if wasDefault(typing.catchUp, 0.45, 0.8) { typing.catchUp = fresh.catchUp }
+            if wasDefault(typing.zoom, 1.9) { typing.zoom = fresh.zoom }
+            document.typingFollow = typing
+        }
+
+        // Those two live on in every typing segment already built, which
+        // is where the frame actually gets its pace from.
+        document.segments = document.segments.map { segment in
+            var segment = segment
+            if segment.kind == .typing, let settle = segment.followSettle, wasDefault(settle, 0.45, 0.8) {
+                segment.followSettle = fresh.catchUp
+                segment.followBand = fresh.deadZone / max(1.05, segment.intensity)
+            }
+            if segment.kind == .perspective, segment.blur == .depth, wasDefault(segment.blurAmount ?? 0, 0.35) {
+                segment.blur = FrameBlur.none; segment.blurAmount = 0
+            }
+            return segment
+        }
+        return document
+    }
 }
 
 /// When a key was pressed, and nothing else.

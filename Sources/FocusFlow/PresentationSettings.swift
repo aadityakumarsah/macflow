@@ -86,7 +86,15 @@ struct MotionAppearance: Codable, Equatable {
 }
 enum PointerStyle: String, Codable, CaseIterable, Identifiable {
     case macOS = "macOS", light = "Pearl", dark = "Obsidian", accent = "Accent"
+    /// Not arrows at all: a ring around where the pointer is, and a filled
+    /// dot. A recording watched at a quarter of its size loses an arrow
+    /// among the pixels; a ring reads at any size, and neither of them
+    /// hides the thing being pointed at.
+    case ring = "Ring", dot = "Dot"
+    case custom = "Your own"
     var id: String { rawValue }
+    /// Drawn from the accent colour rather than from a fixed palette.
+    var isMark: Bool { self == .ring || self == .dot }
 }
 enum EffectAccent: String, Codable, CaseIterable, Identifiable {
     case mint = "Mint", blue = "Blue", violet = "Violet", amber = "Amber"
@@ -130,6 +138,24 @@ struct CursorAppearance: Codable, Equatable {
     /// Fades the pointer itself without touching its effects.
     var opacity: Double? = 1
 
+    /// A comet of the accent colour behind a pointer that is moving, and
+    /// nothing at all behind one that is still. It is the clearest way to
+    /// show that the pointer crossed the screen rather than teleporting,
+    /// which is what a cut-down frame rate makes a fast move look like.
+    var trail: Bool? = false
+    var trailLength: Double? = 0.5
+    var trailOpacity: Double? = 0.3
+
+    /// The pointer swells a little while it travels and settles when it
+    /// arrives, so the eye is carried along with it.
+    var swell: Bool? = false
+    var swellAmount: Double? = 0.3
+
+    /// Your own artwork, used in place of every drawn pointer. The image's
+    /// top-left corner is the point it points at, which is where every
+    /// cursor file puts its hotspot unless it says otherwise.
+    var customImagePath: String?
+
     /// The colour every cursor effect draws with.
     var accentRGB: (Double, Double, Double) {
         if let custom = customAccent { return (custom.r, custom.g, custom.b) }
@@ -153,8 +179,10 @@ struct CursorAppearance: Codable, Equatable {
 /// Following the caret while someone types.
 struct TypingFollowSettings: Codable, Equatable {
     var enabled: Bool = true
-    /// How close the frame gets to the line being written.
-    var zoom: Double = 1.9
+    /// How close the frame gets to the line being written. Closer magnifies
+    /// the travel as well as the text, so this is also how fast the follow
+    /// appears to move.
+    var zoom: Double = 1.75
     /// How far the frame travels per keypress, as a fraction of the width.
     /// A caret advances by roughly one character, and this is the stand-in
     /// for a character width — the recording does not report one.
@@ -168,18 +196,50 @@ struct TypingFollowSettings: Codable, Equatable {
     /// name has a dead zone. A frame that creeps along with every keystroke
     /// reads as drift, and it makes an estimated caret position look wrong in
     /// a way a still frame does not. Zero follows continuously.
-    var deadZone: Double = 0.3
+    var deadZone: Double = 0.26
     /// How long the frame takes to catch up once the caret has left the zone.
     ///
     /// A smaller band crossed more slowly: a wide band caught up in half a
     /// second is a whip across most of what is on screen, and the words
-    /// being written arrive after it rather than travelling with it.
-    var catchUp: Double = 0.8
+    /// being written arrive after it rather than travelling with it. Past
+    /// the time the caret itself takes to cross a band this stops being a
+    /// catch-up at all and becomes a glide that never quite finishes,
+    /// which is the gentlest the follow can be.
+    var catchUp: Double = 1.2
     /// Seconds of stillness that ends a run of typing.
     var gap: Double = 1.1
     /// How long the frame holds after the last keypress before releasing.
     var hold: Double = 0.7
     var curve: MotionCurve = .smooth
+
+    /// A soft accent band under the words as they are written, with a
+    /// brighter caret at its leading edge. The camera move says where to
+    /// look; this says what is happening there, and it is the difference
+    /// between a frame that drifts for no visible reason and a frame
+    /// following someone typing.
+    var highlight: Bool? = true
+    var highlightOpacity: Double? = 0.2
+}
+
+/// Focusing on text as it is selected.
+///
+/// A drag across text with the I-beam is the clearest statement of intent
+/// a recording contains: this, here, is what I am talking about. The camera
+/// follows the selection as it grows rather than jumping to where it ended
+/// up, and the range itself is washed in the accent colour so it is legible
+/// even where the application's own selection colour is faint.
+struct SelectionFocusSettings: Codable, Equatable {
+    var enabled: Bool = true
+    /// How close the frame gets. Capped by the size of the selection, so a
+    /// long drag across a paragraph pulls back rather than cropping it.
+    var zoom: Double = 1.8
+    /// Keeps following the range as it grows, rather than settling on the
+    /// middle of where it finished.
+    var tracks: Bool = true
+    var highlight: Bool = true
+    var highlightOpacity: Double = 0.22
+    /// How long the frame stays after the drag ends.
+    var hold: Double = 0.9
 }
 
 /// A move of the frame itself through space, rather than of the camera within
@@ -247,6 +307,21 @@ struct FramePose: Codable, Equatable {
         return FramePose(pitch: mix(pitch, other.pitch), yaw: mix(yaw, other.yaw), roll: mix(roll, other.roll),
                          panX: mix(panX, other.panX), panY: mix(panY, other.panY), zoom: mix(zoom, other.zoom))
     }
+    /// Inside what the renderer and the sliders will accept.
+    var clamped: FramePose {
+        FramePose(pitch: max(-1, min(1, pitch)), yaw: max(-1, min(1, yaw)), roll: max(-1, min(1, roll)),
+                  panX: max(-1, min(1, panX)), panY: max(-1, min(1, panY)), zoom: max(0.6, min(1.8, zoom)))
+    }
+
+    /// Rounded to a step, which is what holding Shift while dragging does:
+    /// a lean that is exactly a quarter turn rather than nearly one.
+    func snapped(to step: Double = 0.05) -> FramePose {
+        guard step > 0.0001 else { return self }
+        func snap(_ value: Double) -> Double { (value / step).rounded() * step }
+        return FramePose(pitch: snap(pitch), yaw: snap(yaw), roll: snap(roll),
+                         panX: snap(panX), panY: snap(panY), zoom: snap(zoom))
+    }
+
     /// Towards neutral, which is how a pose fades in and out.
     func weighted(_ amount: Double) -> FramePose { FramePose.neutral.blended(to: self, amount) }
     func setting(_ change: (inout FramePose) -> Void) -> FramePose {
@@ -435,7 +510,10 @@ struct CameraMoveSettings: Codable, Equatable {
     /// Pushes in or pulls back, 1 being where the frame sits by itself.
     var zoom: Double = 1
 
-    var blur: FrameBlur = .depth
+    /// None, unless it is asked for. Depth of field used to be the
+    /// default, so the first lean anyone tried softened the whole picture
+    /// — the thing they had just leaned in order to see better.
+    var blur: FrameBlur = .none
     /// Directional blur only: the angle it smears along, in degrees.
     var blurAngle: Double = 0
     /// Tilt shift only: where the sharp band sits, and how wide it is.
@@ -446,7 +524,7 @@ struct CameraMoveSettings: Codable, Equatable {
     /// How far it travels or withdraws.
     var amount: Double = 0.5
     /// Depth of field: the receding edge softens by this much.
-    var focusBlur: Double = 0.35
+    var focusBlur: Double = 0
     /// Seconds the move takes when it plays once.
     var duration: Double = 2.6
     var curve: MotionCurve = .smooth
@@ -456,6 +534,16 @@ struct CameraMoveSettings: Codable, Equatable {
     /// anywhere past `duration` the frame was untouched, so choosing a move
     /// and looking at the middle of a recording showed nothing at all.
     var holds: Bool = true
+
+    /// Takes the softness of the warp back out of the picture.
+    ///
+    /// Standing the frame in space resamples every pixel of it, and a
+    /// resample is a small low-pass filter: text that was sharp comes out
+    /// of a lean very slightly woolly even with every blur switched off.
+    /// A touch of luminance sharpening, scaled by how far the frame is
+    /// actually leaning, puts the edges back. Optional, because it is
+    /// still a filter and someone may want the frame exactly as warped.
+    var crisp: Bool? = true
 
     var isPlaced: Bool {
         pitch != 0 || yaw != 0 || roll != 0 || panX != 0 || panY != 0 || zoom != 1
@@ -473,8 +561,8 @@ struct CameraMoveSettings: Codable, Equatable {
     /// takes the one Swift would have written away. Where the frame stands
     /// and how it is blurred are set afterwards, as the inspector does.
     init(move: CameraMove = .none, tilt: Double = 0.55, amount: Double = 0.5,
-         focusBlur: Double = 0.35, duration: Double = 2.6,
-         curve: MotionCurve = .smooth, holds: Bool = true, blur: FrameBlur = .depth) {
+         focusBlur: Double = 0, duration: Double = 2.6,
+         curve: MotionCurve = .smooth, holds: Bool = true, blur: FrameBlur = .none) {
         self.move = move
         self.tilt = tilt
         self.amount = amount
@@ -493,17 +581,32 @@ struct CameraMoveSettings: Codable, Equatable {
         panX = try values.decodeIfPresent(Double.self, forKey: .panX) ?? 0
         panY = try values.decodeIfPresent(Double.self, forKey: .panY) ?? 0
         zoom = try values.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
-        blur = try values.decodeIfPresent(FrameBlur.self, forKey: .blur) ?? .depth
         blurAngle = try values.decodeIfPresent(Double.self, forKey: .blurAngle) ?? 0
         blurFocus = try values.decodeIfPresent(Double.self, forKey: .blurFocus) ?? 0.5
         blurBand = try values.decodeIfPresent(Double.self, forKey: .blurBand) ?? 0.3
         tilt = try values.decodeIfPresent(Double.self, forKey: .tilt) ?? 0.55
         amount = try values.decodeIfPresent(Double.self, forKey: .amount) ?? 0.5
-        focusBlur = try values.decodeIfPresent(Double.self, forKey: .focusBlur) ?? 0.35
+        focusBlur = try values.decodeIfPresent(Double.self, forKey: .focusBlur) ?? 0
+        // Before there was a choice of blur there was only depth of field,
+        // and `focusBlur` was how much of it. A project from then carries
+        // no `blur` key at all, so the only way to keep the look it was
+        // saved with is to read one back in for it.
+        blur = try values.decodeIfPresent(FrameBlur.self, forKey: .blur) ?? (focusBlur > 0.01 ? .depth : .none)
         duration = try values.decodeIfPresent(Double.self, forKey: .duration) ?? 2.6
         curve = try values.decodeIfPresent(MotionCurve.self, forKey: .curve) ?? .smooth
         holds = try values.decodeIfPresent(Bool.self, forKey: .holds) ?? true
+        crisp = try values.decodeIfPresent(Bool.self, forKey: .crisp)
     }
+
+    /// Poses worth having one key away: square, turned either way, leaning
+    /// back, and a three-quarter hero angle.
+    static let quickPoses: [(name: String, key: String, pose: FramePose)] = [
+        ("Square", "0", .neutral),
+        ("Left", "1", FramePose(yaw: -0.45, zoom: 0.97)),
+        ("Right", "2", FramePose(yaw: 0.45, zoom: 0.97)),
+        ("Lean back", "3", FramePose(pitch: 0.38, zoom: 0.97)),
+        ("Hero", "4", FramePose(pitch: 0.22, yaw: 0.34, roll: -0.05, zoom: 1.02)),
+    ]
 }
 
 extension CameraMoveSettings {

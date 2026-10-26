@@ -34,6 +34,13 @@ struct EditorKeys: ViewModifier {
         if event.window?.firstResponder is NSTextView { return false }
         // A sheet in front is its own world, and the editor is not in it.
         guard model.videoURL != nil, !model.showRecorder, !model.showLibrary, !model.showCropEditor else { return false }
+        // The 3D handles take the arrows and the number keys while they are
+        // on screen, Option among them for sliding the frame. They are a
+        // mode someone has turned on and can see, so the keys going
+        // somewhere else while it is on is the point of it.
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if model.show3DCanvas, modifiers.subtracting([.option, .shift]).isEmpty,
+           handlePose(event, sliding: modifiers.contains(.option), fine: modifiers.contains(.shift)) { return true }
         // Shift is a modifier these keys use; the rest belong to the menus.
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
         let coarse = event.modifierFlags.contains(.shift)
@@ -55,9 +62,39 @@ struct EditorKeys: ViewModifier {
             case "s": guard model.canSplitSelected else { return false }; model.splitSelected()
             case "[": model.seek(to: model.trimStart)
             case "]": model.seek(to: model.trimEnd)
+            case "d": model.show3DCanvas.toggle()
             default: return false
             }
         }
+        return true
+    }
+
+    /// The 3D handles, from the keyboard: the arrows turn and lean the
+    /// frame, Option slides it, Shift makes every step a fine one, the
+    /// brackets of the comma and full stop roll it, plus and minus push
+    /// in and pull back, and the number row is the poses worth having one
+    /// key away.
+    @MainActor private func handlePose(_ event: NSEvent, sliding: Bool, fine: Bool) -> Bool {
+        let step = fine ? 0.02 : 0.08
+        var pose = model.editedPose
+        switch event.keyCode {
+        case 123: if sliding { pose.panX -= step } else { pose.yaw -= step }    // left
+        case 124: if sliding { pose.panX += step } else { pose.yaw += step }    // right
+        case 125: if sliding { pose.panY -= step } else { pose.pitch -= step }  // down
+        case 126: if sliding { pose.panY += step } else { pose.pitch += step }  // up
+        default:
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case ",": pose.roll -= step
+            case ".": pose.roll += step
+            case "-", "_": pose.zoom -= step
+            case "=", "+": pose.zoom += step
+            case let typed? where CameraMoveSettings.quickPoses.contains(where: { $0.key == typed }):
+                pose = CameraMoveSettings.quickPoses.first { $0.key == typed }!.pose
+            default: return false
+            }
+        }
+        model.player.pause(); model.isPlaying = false
+        model.editedPose = pose.clamped
         return true
     }
 }

@@ -26,6 +26,7 @@ final class EditorModel: ObservableObject {
     @Published var grade = GradeSettings() { willSet { remember() } didSet { changed() } }
     @Published var cameraMove = CameraMoveSettings() { willSet { remember() } didSet { changed() } }
     @Published var typingFollow = TypingFollowSettings() { willSet { remember() } didSet { changed() } }
+    @Published var selectionFocus = SelectionFocusSettings() { willSet { remember() } didSet { changed() } }
     @Published var sounds = SoundSettings() { willSet { remember() } didSet { changed() } }
     /// Only meaningful while `ratio` is `.custom`.
     @Published var customRatio = CGSize(width: 16, height: 10) {
@@ -267,7 +268,7 @@ final class EditorModel: ObservableObject {
                 restoring = true
                 duration = seconds; trimEnd = seconds
                 sourceSize = CGSize(width: abs(size.width), height: abs(size.height))
-                segments = MotionEngine.autoEdits(clicks: self.metadata.clicks, samples: self.metadata.pointerSamples, duration: duration, typing: self.metadata.typingEvents ?? [], typingFollow: self.typingFollow)
+                segments = MotionEngine.autoEdits(clicks: self.metadata.clicks, samples: self.metadata.pointerSamples, duration: duration, typing: self.metadata.typingEvents ?? [], typingFollow: self.typingFollow, selection: self.selectionFocus)
                 restoring = false
                 if let saved = project ?? readProject(at: editsURL(for: url)) { restore(saved) }
                 changed()
@@ -330,8 +331,11 @@ final class EditorModel: ObservableObject {
             // nothing until six sliders have been found.
             segment.pose = FramePose(pitch: 0.22, yaw: 0.38, zoom: 1.04)
             segment.sweeps = true
-            segment.blur = .depth
-            segment.blurAmount = 0.35
+            // No blur: a lean is for looking at something more closely,
+            // and softening the picture is the opposite of that. The
+            // blur picker is right there for anyone who wants one.
+            segment.blur = FrameBlur.none
+            segment.blurAmount = 0
             segment.duration = min(3, max(0.6, duration - start))
             segment.transition = 0.8
         }
@@ -432,13 +436,19 @@ final class EditorModel: ObservableObject {
         grade = d.grade ?? GradeSettings()
         cameraMove = d.cameraMove ?? CameraMoveSettings()
         typingFollow = d.typingFollow ?? TypingFollowSettings()
+        selectionFocus = d.selectionFocus ?? SelectionFocusSettings()
         sounds = d.sounds ?? SoundSettings()
         restoring = false
     }
     private func document() -> ProjectDocument {
-        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, cameraMove: cameraMove, typingFollow: typingFollow, sounds: sounds, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height)
+        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, cameraMove: cameraMove, typingFollow: typingFollow, selectionFocus: selectionFocus, sounds: sounds, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height, schema: ProjectDocument.schemaVersion)
     }
-    private func readProject(at url: URL) -> ProjectDocument? { guard let data = try? Data(contentsOf: url) else { return nil }; return try? JSONDecoder().decode(ProjectDocument.self, from: data) }
+    /// Read, and brought up to today's defaults — a project saved before
+    /// one of them changed should not be stuck with it.
+    private func readProject(at url: URL) -> ProjectDocument? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONDecoder().decode(ProjectDocument.self, from: data))?.migrated()
+    }
     private func editsURL(for url: URL) -> URL { url.deletingPathExtension().appendingPathExtension("edits.json") }
     func saveProject() {
         guard let videoURL else { return }
@@ -450,7 +460,7 @@ final class EditorModel: ObservableObject {
         catch { message = error.localizedDescription }
     }
     func settings(preview: Bool = false) -> ExportSettings {
-        ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds)
+        ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds, typingFollow: typingFollow, selectionFocus: selectionFocus)
     }
     private func changed() {
         guard !restoring, let url = videoURL, duration > 0 else { return }
@@ -510,7 +520,8 @@ final class EditorModel: ObservableObject {
         guard videoURL != nil, duration > 0 else { return }
         lastHistory = .distantPast
         segments = MotionEngine.autoEdits(clicks: recordedClicks, samples: pointerSamples, duration: duration,
-                                          typing: metadata.typingEvents ?? [], typingFollow: typingFollow)
+                                          typing: metadata.typingEvents ?? [], typingFollow: typingFollow,
+                                          selection: selectionFocus)
     }
 
     func addAutoZooms() {
@@ -521,7 +532,7 @@ final class EditorModel: ObservableObject {
     func rebuildAutoEdits() {
         guard duration > 0 else { return }
         lastHistory = .distantPast
-        segments = MotionEngine.autoEdits(clicks: recordedClicks, samples: pointerSamples, duration: duration, typing: metadata.typingEvents ?? [], typingFollow: typingFollow)
+        segments = MotionEngine.autoEdits(clicks: recordedClicks, samples: pointerSamples, duration: duration, typing: metadata.typingEvents ?? [], typingFollow: typingFollow, selection: selectionFocus)
     }
     static func zoomSegments(from clicks: [RecordedClick], duration: Double) -> [EditSegment] {
         MotionEngine.autoZooms(clicks: clicks, duration: duration)

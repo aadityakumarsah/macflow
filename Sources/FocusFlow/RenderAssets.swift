@@ -14,8 +14,80 @@ enum RenderAssets {
         guard let cgImage = context.makeImage() else { return nil }
         let image = CIImage(cgImage: cgImage); cache.setObject(image, forKey: key as NSString); return image
     }
+    /// Someone's own artwork, in place of every drawn pointer.
+    ///
+    /// The image's top-left corner is taken as the point it points at,
+    /// which is where a cursor file puts its hotspot unless it carries one
+    /// of its own — and nothing in a PNG does. It is normalised to the
+    /// height the drawn arrow has, so the size slider means the same thing
+    /// whichever pointer is in use.
+    static func custom(path: String) -> CIImage? {
+        let key = "custom-cursor-\(path)" as NSString
+        if let image = cache.object(forKey: key) { return image }
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path),
+              let loaded = NSImage(contentsOfFile: path) else { return nil }
+        var rect = CGRect(origin: .zero, size: loaded.size)
+        guard let cgImage = loaded.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+              cgImage.width > 0, cgImage.height > 0 else { return nil }
+        // 150 pixels tall is what the drawn arrow occupies at the same
+        // three-times scale the pointer is composited at.
+        let scale = 150 / Double(cgImage.height)
+        let image = CIImage(cgImage: cgImage)
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: 0, y: -150))
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// A ring or a dot, drawn in the accent colour and centred on the
+    /// point rather than hanging off it. An arrow is a glyph that has to
+    /// be read; a mark is just a place, and it survives a recording being
+    /// watched at a quarter of its size.
+    static func mark(_ appearance: CursorAppearance) -> CIImage? {
+        let filled = appearance.style == .dot
+        let image = bitmap(key: "mark-\(appearance.style)-\(appearance.accentKey)", width: 180, height: 180) { context in
+            let accent = appearance.accentColor
+            let centre = CGPoint(x: 90, y: 90)
+            // A soft halo, so the mark reads over light and dark alike.
+            if let space = accent.colorSpace,
+               let glow = CGGradient(colorsSpace: space,
+                                     colors: [accent.copy(alpha: 0.28)!, accent.copy(alpha: 0)!] as CFArray,
+                                     locations: [0, 1]) {
+                context.drawRadialGradient(glow, startCenter: centre, startRadius: 20,
+                                           endCenter: centre, endRadius: 86, options: [])
+            }
+            let body = CGRect(x: 44, y: 44, width: 92, height: 92)
+            if filled {
+                context.setFillColor(accent)
+                context.fillEllipse(in: body.insetBy(dx: 14, dy: 14))
+                context.setStrokeColor(CGColor(gray: 1, alpha: 0.9))
+                context.setLineWidth(5)
+                context.strokeEllipse(in: body.insetBy(dx: 14, dy: 14))
+            } else {
+                context.setStrokeColor(CGColor(gray: 1, alpha: 0.85))
+                context.setLineWidth(13)
+                context.strokeEllipse(in: body)
+                context.setStrokeColor(accent)
+                context.setLineWidth(8)
+                context.strokeEllipse(in: body)
+                context.setFillColor(accent)
+                context.fillEllipse(in: CGRect(x: 84, y: 84, width: 12, height: 12))
+            }
+        }
+        // Centred: a mark points at what is underneath it, not down-right
+        // of it the way an arrow's tip does.
+        return image?.transformed(by: CGAffineTransform(translationX: -90, y: -90))
+    }
+
     static func cursor(_ appearance: CursorAppearance, shape: PointerShape = .arrow) -> CIImage? {
-        if appearance.style == .macOS || shape == .text {
+        // Chosen looks win over the shape the system reported: someone who
+        // picked a ring wants a ring, over text as much as anywhere.
+        if appearance.style == .custom {
+            if let image = custom(path: appearance.customImagePath ?? "") { return image }
+        } else if appearance.style.isMark {
+            return mark(appearance)
+        }
+        if appearance.style == .macOS || appearance.style == .custom || shape == .text {
             let key = "system-cursor-\(shape)" as NSString
             if let image = cache.object(forKey: key) { return image }
             let native = shape == .text ? NSCursor.iBeam : NSCursor.arrow

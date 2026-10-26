@@ -49,6 +49,8 @@ struct ExportSettings {
     var typingEvents: [TypingEvent] = []
     var scrollEvents: [ScrollEvent] = []
     var sounds = SoundSettings()
+    var typingFollow = TypingFollowSettings()
+    var selectionFocus = SelectionFocusSettings()
 }
 
 enum ExportError: LocalizedError {
@@ -566,6 +568,8 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather])
             source = source.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: softMask])
         }
+        source = applySelectionHighlight(to: source, at: time, settings: settings)
+        source = applyWritingHighlight(to: source, at: time, settings: settings)
         source = applyInteractionEffects(to: source, at: time, target: source.extent, settings: settings)
         for outline in settings.segments where outline.kind == .outline {
             let strength = MotionEngine.envelope(outline, time: time)
@@ -621,6 +625,23 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 source = source.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [kCIInputRadiusKey: radius, kCIInputAngleKey: atan2(-dy, dx)]).cropped(to: layout.content)
             }
         }
+        // A frame standing in space is resampled corner to corner later on,
+        // and a resample is a small low-pass filter: text comes out of a
+        // lean very slightly woolly even with every blur switched off. The
+        // answer is to put the edges back before the warp takes them, while
+        // the content is still a solid rectangle — sharpening afterwards
+        // would work on the transparent surround too and rim the frame.
+        let stance = MotionEngine.stance(at: time, segments: settings.segments)
+        if settings.cameraMove.crisp != false {
+            let depth = leaning(at: time, settings: settings, stance: stance, width: Double(layout.content.width))
+            let sharpness = min(0.6, depth * 2.2)
+            if sharpness > 0.03 {
+                source = source.applyingFilter("CISharpenLuminance", parameters: [
+                    "inputSharpness": sharpness,
+                    kCIInputRadiusKey: max(1.0, Double(layout.content.width) / 1920 * 1.6),
+                ]).cropped(to: layout.content)
+            }
+        }
         if let header = RenderAssets.header(settings.frame, rect: layout.header) { source = header.composited(over: source) }
         // Corners and shadow are written in the editor's own pixels, where
         // the canvas is 1920 across. They have to be read as a share of the
@@ -645,7 +666,6 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         // A 3D camera laid on the timeline is a move for a few seconds; the
         // one in the canvas panel is where the frame stands for the whole
         // recording. Both end up in the same transform.
-        let stance = MotionEngine.stance(at: time, segments: settings.segments)
         if settings.cameraMove.isActive || !stance.isNeutral {
             source = applyCameraMove(source, at: time, canvas: canvas, settings: settings, stance: stance)
         }
@@ -903,6 +923,107 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         return clipped.composited(over: background).cropped(to: canvas)
     }
 
+    /// How far the frame is leaning at this moment, as a fraction of its
+    /// width — the pose, plus whatever a playing move is adding.
+    private func leaning(at time: Double, settings: ExportSettings,
+                         stance: MotionEngine.FrameStance, width: Double) -> Double {
+        let move = settings.cameraMove
+        guard move.isActive || !stance.isNeutral else { return 0 }
+        let playing = move.performance(at: time - settings.trimStart,
+                                       clip: settings.trimEnd - settings.trimStart, width: width)
+        return move.pose.added(stance.pose).lean(adding: playing.lean).depth
+    }
+
+    /// A soft accent band under the words as they are written, with a
+    /// caret at its leading edge.
+    ///
+    /// The camera move says where to look; this says what is happening
+    /// there. Without it a typing follow is a frame drifting along a line
+    /// for no visible reason, since the thing it is following — an
+    /// insertion point in somebody else's application — is three pixels
+    /// wide and often not even blinking.
+    private func applyWritingHighlight(to image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
+        guard settings.typingFollow.highlight != false else { return image }
+        let extent = image.extent
+        let unit = extent.width / 1920
+        let opacity = max(0, min(1, settings.typingFollow.highlightOpacity ?? 0.2))
+        guard opacity > 0.01 else { return image }
+        var result = image
+
+        for segment in settings.segments where segment.kind == .typing {
+            let strength = MotionEngine.envelope(segment, time: time)
+            guard strength > 0.01, let caret = MotionEngine.caret(segment, at: time) else { continue }
+            let line = max(10, 34 * unit)
+            let centre = (1 - caret.y) * extent.height
+            let from = min(segment.x, caret.x) * extent.width
+            let to = max(segment.x, caret.x) * extent.width
+
+            // The band sits under the line rather than over the words, the
+            // way an underline does, so nothing is obscured by it.
+            let band = CGRect(x: from - line * 0.28, y: centre - line * 0.62,
+                              width: max(line * 0.6, to - from + line * 0.56), height: line * 0.2)
+            if let bar = rounded(band, radius: band.height / 2, color: settings.cursor.accentColor) {
+                result = self.opacity(bar, strength * opacity * 1.6).composited(over: result)
+            }
+
+            // The caret itself: steady while words are going in, and
+            // blinking once they have stopped, which is what a real one
+            // does and what makes a still frame look live rather than
+            // frozen.
+            let writing = MotionEngine.writes(segment, at: time)
+            let blink = writing ? 1 : 0.45 + 0.55 * pow(cos(.pi * time * 1.1), 2)
+            let stem = CGRect(x: caret.x * extent.width - max(1.5, 3 * unit) / 2,
+                              y: centre - line * 0.52, width: max(1.5, 3 * unit), height: line)
+            if let mark = rounded(stem, radius: stem.width / 2, color: settings.cursor.accentColor) {
+                result = self.opacity(mark, strength * blink * 0.85).composited(over: result)
+            }
+        }
+        return result.cropped(to: extent)
+    }
+
+    /// A wash over the text someone is selecting, following the range as
+    /// it grows. An application's own selection colour is often a pale
+    /// blue that all but disappears once a recording is scaled down.
+    private func applySelectionHighlight(to image: CIImage, at time: Double, settings: ExportSettings) -> CIImage {
+        guard settings.selectionFocus.highlight else { return image }
+        let extent = image.extent
+        let unit = extent.width / 1920
+        let opacity = max(0, min(1, settings.selectionFocus.highlightOpacity))
+        guard opacity > 0.01 else { return image }
+        var result = image
+
+        for segment in settings.segments where segment.selectionStartTime != nil && segment.selectionEndTime != nil {
+            let strength = MotionEngine.envelope(segment, time: time)
+            guard strength > 0.01 else { continue }
+            let range = MotionEngine.selectedRange(segment, at: time, samples: settings.pointerSamples)
+            let line = max(10, 34 * unit)
+            // A drag along one line has no height of its own, so it is
+            // given a line's worth; a drag down a paragraph keeps its own.
+            // Frame coordinates run down the picture and image ones run up
+            // it, so the range's bottom edge is the larger y.
+            let bottom = (1 - range.maxY) * extent.height - line * 0.5
+            let top = (1 - range.minY) * extent.height + line * 0.5
+            let box = CGRect(x: range.minX * extent.width - line * 0.12,
+                             y: bottom,
+                             width: max(line * 0.4, range.width * extent.width + line * 0.24),
+                             height: max(line, top - bottom))
+            guard let wash = rounded(box, radius: min(box.height / 2, line * 0.28), color: settings.cursor.accentColor) else { continue }
+            result = self.opacity(wash, strength * opacity).composited(over: result)
+        }
+        return result.cropped(to: extent)
+    }
+
+    /// A filled, rounded rectangle in one colour — the shape every one of
+    /// these graphics is made of.
+    private func rounded(_ rect: CGRect, radius: Double, color: CGColor) -> CIImage? {
+        guard rect.width > 0.5, rect.height > 0.5 else { return nil }
+        let filter = CIFilter.roundedRectangleGenerator()
+        filter.extent = rect
+        filter.radius = Float(max(0, min(radius, Double(min(rect.width, rect.height)) / 2)))
+        filter.color = CIColor(cgColor: color)
+        return filter.outputImage?.cropped(to: rect)
+    }
+
     private func applyInteractionEffects(to image: CIImage, at time: Double, target: CGRect, settings: ExportSettings) -> CIImage {
         var result = image
         let click = settings.clicks.last(where: { time >= $0.time && time - $0.time < 0.8 })
@@ -928,6 +1049,34 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 result = opacity(placed, 0.95 * pow(1 - phase, 1.5)).composited(over: result)
             }
         }
+        // A comet behind a pointer that is travelling, and nothing behind
+        // one that is still. Thirty frames a second turns a fast move into
+        // a pointer that was here and is suddenly there; a trail is what
+        // says it crossed the distance.
+        if settings.showCursor, settings.cursor.trail == true,
+           let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor),
+           let glow = RenderAssets.highlight(accent: settings.cursor.accentColor, key: settings.cursor.accentKey) {
+            let unit = target.width / 1920
+            let span = 0.1 + 0.26 * max(0, min(1, settings.cursor.trailLength ?? 0.5))
+            let strength = max(0, min(1, settings.cursor.trailOpacity ?? 0.3))
+            let steps = 12
+            for step in 1...steps {
+                let share = Double(step) / Double(steps)
+                guard let past = CursorMotion.sample(at: time - span * share, samples: settings.pointerSamples, smoothed: true) else { continue }
+                // Only where it actually moved: a still pointer would
+                // otherwise pile its own trail up underneath itself.
+                let travelled = hypot(past.x - pointer.x, past.y - pointer.y)
+                guard travelled > 0.002 else { continue }
+                let size = 78 * unit * settings.cursorSize * 0.45 * (1 - share * 0.5)
+                let placed = glow
+                    .transformed(by: CGAffineTransform(scaleX: size / glow.extent.width, y: size / glow.extent.height))
+                    .transformed(by: CGAffineTransform(translationX: past.x * target.width - size / 2,
+                                                       y: (1 - past.y) * target.height - size / 2))
+                // Thinning towards the tail, and towards a pointer that is
+                // barely moving, so the comet is as long as the move was.
+                result = opacity(placed, strength * pow(1 - share * 0.75, 1.6) * min(1, travelled * 25)).composited(over: result)
+            }
+        }
         // Drawn before the pointer so the pointer sits on top of it.
         if settings.showCursor, settings.cursor.highlight == true,
            let pointer = CursorMotion.sample(at: time, samples: settings.pointerSamples, smoothed: settings.smoothCursor),
@@ -949,8 +1098,15 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             let typing = MotionEngine.isTyping(at: time, segments: settings.segments)
             let resolvedShape = automatic ? (typing ? .text : pointer.shape ?? .arrow) : settings.cursor.shape!
             guard let cursor = RenderAssets.cursor(settings.cursor, shape: resolvedShape) else { return result.cropped(to: image.extent) }
-            let isText = resolvedShape == .text
-            let isSystem = settings.cursor.style == .macOS || isText
+            // A ring, a dot or someone's own artwork is the pointer
+            // whatever the system said was under it, and it is drawn at
+            // the same three-times scale as the arrow rather than at
+            // system size.
+            let style = settings.cursor.style
+            let drawnMark = style.isMark
+            let ownArtwork = style == .custom && RenderAssets.custom(path: settings.cursor.customImagePath ?? "") != nil
+            let isText = resolvedShape == .text && !drawnMark && !ownArtwork
+            let isSystem = !drawnMark && !ownArtwork && (style == .macOS || style == .custom || isText)
             // The I-beam is a thin glyph and reads much smaller than the arrow
             // at the same scale, so it carries its own multiplier.
             let shapeScale = settings.cursorSize * (isText ? max(0.1, settings.cursor.textScale) : 1)
@@ -958,6 +1114,15 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             if settings.clickEffects, let click {
                 let age = (time - click.time) / 0.42
                 if age < 1 { scale *= 1 - 0.22 * exp(-age * 10) + 0.15 * sin(age * .pi) }
+            }
+            // Swells while it travels and settles when it arrives, so the
+            // eye is carried along with the move rather than having to
+            // find where the pointer stopped.
+            if settings.cursor.swell == true,
+               let before = CursorMotion.sample(at: time - 0.06, samples: settings.pointerSamples, smoothed: true),
+               let after = CursorMotion.sample(at: time + 0.06, samples: settings.pointerSamples, smoothed: true) {
+                let speed = hypot(after.x - before.x, after.y - before.y) / 0.12
+                scale *= 1 + min(1, speed / 1.6) * max(0, min(1, settings.cursor.swellAmount ?? 0.3))
             }
             var angle = 0.0
             if settings.cursor.sway,
