@@ -3,43 +3,39 @@ import SwiftUI
 
 /// The 3D camera, on the canvas rather than behind six sliders.
 ///
-/// Leaning a frame through space is a thing you do by looking at it, and
+/// Leaning the recorded content through space is a thing you do by looking at it, and
 /// the inspector made it a thing you do by reading labels and guessing
-/// which number moves which edge. This draws the frame where it is actually
-/// standing — the same quad the renderer warps the picture onto, worked out
+/// which number moves which edge. This draws the content where it is actually
+/// standing — the same quad the renderer projects the picture onto, worked out
 /// by the same code — and lets it be taken hold of: drag the picture to
 /// turn and lean it, the handle in the middle to slide it, the one above
 /// to roll it, the one below to push in and pull back.
 ///
 /// What it holds is whichever pose is in front of you: a 3D camera segment
-/// when the playhead is inside the selected one, otherwise where the frame
+/// when the playhead is inside the selected one, otherwise where the content
 /// stands for the whole recording.
 struct Frame3DOverlay: View {
     @EnvironmentObject private var model: EditorModel
     let canvasSize: CGSize
 
     /// The pose when the drag began, so a drag is an offset from where the
-    /// frame was rather than an accumulation of deltas.
+    /// content was rather than an accumulation of deltas.
     @State private var grabbed: FramePose?
 
     private var canvas: CGRect { CGRect(origin: .zero, size: canvasSize) }
 
-    /// The frame itself, in view coordinates before it leans anywhere.
+    /// The recorded content opening, in view coordinates.
     private var square: CGRect {
         let layout = FrameLayout.make(canvas: canvas, sourceSize: model.contentSize,
                                       padding: model.padding, frame: model.frameAppearance)
-        return layout.outer
+        return layout.content
     }
 
-    /// Where a pose puts the frame, in view coordinates.
-    ///
-    /// The renderer warps the whole canvas and the frame travels with it,
-    /// so the frame's corners are found by carrying them through the canvas
-    /// map — not by warping the frame on its own, which would drift from
-    /// the picture as the lean deepens.
+    /// Where the renderer projects the content before clipping it back into
+    /// the window's fixed opening.
     private func quad(for pose: FramePose) -> FrameQuad {
-        let warped = pose.projection(of: canvas, canvas: canvas, lean: pose.lean())
-        return ProjectiveMap(canvas, to: warped).quad(of: square).flipped(in: canvasSize.height)
+        pose.projection(of: square, canvas: square, lean: pose.lean())
+            .flipped(in: canvasSize.height)
     }
 
     private var pose: FramePose { model.editedPose }
@@ -54,20 +50,18 @@ struct Frame3DOverlay: View {
         let depthHandle = CGPoint(x: (outline.bottomLeft.x + outline.bottomRight.x) / 2,
                                   y: min(canvasSize.height - 14, (outline.bottomLeft.y + outline.bottomRight.y) / 2 + 26))
         ZStack(alignment: .topLeading) {
-            // The whole frame is the grip for turning and leaning: a 3D
-            // camera is the picture itself being moved, so that is what you
-            // take hold of.
+            // The projected content is the grip for turning and leaning.
             shape(outline)
                 .fill(AppTheme.green.opacity(0.001))
                 .contentShape(shape(outline))
                 .gesture(turnAndLean)
-                .help("Drag to turn and lean the frame")
+                .help("Drag to turn and lean the recorded content")
 
             shape(outline)
                 .stroke(AppTheme.green, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
                 .allowsHitTesting(false)
 
-            // Where the frame is actually standing at this moment, when a
+            // Where the content is actually projected at this moment, when a
             // move or a sweep has it somewhere other than the pose being
             // held. Without it, dragging inside a segment that sweeps looks
             // like the handles are lying.
@@ -82,8 +76,8 @@ struct Frame3DOverlay: View {
                     .position(corner.element).allowsHitTesting(false)
             }
 
-            handle(at: centre, icon: "move.3d", help: "Drag to slide the frame", gesture: pan)
-            handle(at: rollHandle, icon: "rotate.3d", help: "Drag to roll the frame", gesture: roll)
+            handle(at: centre, icon: "move.3d", help: "Drag to slide the content", gesture: pan)
+            handle(at: rollHandle, icon: "rotate.3d", help: "Drag to roll the content", gesture: roll)
             handle(at: depthHandle, icon: "arrow.up.and.down", help: "Drag up to push in, down to pull back", gesture: push)
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
@@ -91,7 +85,7 @@ struct Frame3DOverlay: View {
 
     /// The faint outline, drawn only when it says something the solid one
     /// does not: a move that is playing, or a segment partway through its
-    /// sweep, puts the frame somewhere other than the pose being held.
+    /// sweep, puts the content somewhere other than the pose being held.
     private var ghost: FrameQuad? {
         let standing = model.standingPose
         return standing == pose ? nil : quad(for: standing)
@@ -206,13 +200,13 @@ struct Frame3DBar: View {
                         Button(preset.name) { model.editedPose = preset.pose }
                     }
                 } label: { Image(systemName: "rotate.3d") }
-                    .help("Static poses for the frame")
+                    .help("Static poses for the recorded content")
                 Button { model.show3DCanvas = false } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("Hide the 3D controls")
             }
             Text(model.posedSegment != nil
                  ? "Drag to adjust this move. Change strength and duration in the inspector."
-                 : "Choose a look to animate. Drag the frame to adjust its overall angle.")
+                 : "Choose a look to animate. Drag the content to adjust its overall angle.")
                 .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption)

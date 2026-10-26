@@ -92,19 +92,23 @@ struct ThreeDPresetThumbnail: View {
     var body: some View {
         Canvas { context, size in
             let canvas = CGRect(origin: .zero, size: size)
-            let projection = pose.projection(of: canvas, canvas: canvas, lean: pose.lean())
-            let map = ProjectiveMap(canvas, to: projection)
+            let frame = canvas.insetBy(dx: size.width * 0.16, dy: size.height * 0.16)
+            let projection = pose.projection(of: frame, canvas: frame, lean: pose.lean())
+            let map = ProjectiveMap(frame, to: projection)
             func path(_ rect: CGRect) -> Path {
                 let quad = map.quad(of: rect).flipped(in: size.height)
                 var path = Path()
                 path.addLines(quad.corners + [quad.bottomLeft]); path.closeSubpath()
                 return path
             }
-            let frame = canvas.insetBy(dx: size.width * 0.16, dy: size.height * 0.16)
+            let opening = Path(roundedRect: CGRect(x: frame.minX, y: size.height - frame.maxY,
+                                                    width: frame.width, height: frame.height), cornerRadius: 3)
+            context.fill(opening, with: .color(AppTheme.elevated))
+            context.clip(to: opening)
             context.fill(path(frame), with: .linearGradient(
                 Gradient(colors: [AppTheme.green.opacity(0.8), Color.blue.opacity(0.55)]),
                 startPoint: .zero, endPoint: CGPoint(x: size.width, y: size.height)))
-            context.stroke(path(frame), with: .color(.white.opacity(0.7)), lineWidth: 1)
+            context.stroke(opening, with: .color(.white.opacity(0.7)), lineWidth: 1)
             for row in 0..<3 {
                 let line = CGRect(x: frame.minX + frame.width * 0.12,
                                   y: frame.minY + frame.height * (0.22 + Double(row) * 0.22),

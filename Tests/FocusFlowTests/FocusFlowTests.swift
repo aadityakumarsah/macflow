@@ -101,7 +101,13 @@ final class FocusFlowTests {
     func testThreeDPresetsRenderAndRoundTrip() throws {
         let renderer = FocusFlowCompositor(), context = CIContext()
         let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
-        let source = CIImage(color: .white).cropped(to: canvas)
+        let source = CIImage.empty().applyingFilter("CICheckerboardGenerator", parameters: [
+            "inputCenter": CIVector(x: 0, y: 0),
+            "inputColor0": CIColor(red: 0.95, green: 0.95, blue: 0.95),
+            "inputColor1": CIColor(red: 0.2, green: 0.2, blue: 0.2),
+            "inputWidth": 12,
+            "inputSharpness": 1,
+        ]).cropped(to: canvas)
         var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 12, cornerRadius: 10, shadow: 20, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
         settings.motion.ambientGraphics = false; settings.motion.automaticMotionBlur = false
         func frame() throws -> [UInt8] {
@@ -1366,7 +1372,7 @@ final class FocusFlowTests {
     func testCameraMovesTiltAndSettle() throws {
         let renderer = FocusFlowCompositor(), context = CIContext()
         let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
-        let source = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas)
+        var source = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas)
 
         var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 6, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 10, cameraShape: .circle)
         settings.showCursor = false
@@ -1450,28 +1456,15 @@ final class FocusFlowTests {
         }
         XCTAssertGreaterThan(edgeSharpness(focused, column: 40), edgeSharpness(focused, column: 360))
 
-        // The frame can also just be stood somewhere, with no move playing.
-        // Each of these is a different shape on screen from square-on.
-        func shape(_ place: (inout CameraMoveSettings) -> Void) throws -> (Int, Int) {
-            var move = CameraMoveSettings(move: .none, focusBlur: 0)
-            move.blur = .none
-            place(&move)
-            settings.cameraMove = move
-            let data = try frame(0.3)
-            return (litInRow(data, row: 30), litInRow(data, row: 210))
-        }
-        let square = try shape { _ in }
-        XCTAssertEqual(square.0, square.1)
-
-        // Leaning the top away makes the top edge the narrow one, and leaning
-        // the other way turns it over.
-        let leaned = try shape { $0.pitch = 1 }
-        XCTAssertLessThan(leaned.0, leaned.1)
-        let leanedBack = try shape { $0.pitch = -1 }
-        XCTAssertGreaterThan(leanedBack.0, leanedBack.1)
-        // Turning, rolling, panning and pushing in all move the frame. Row
-        // widths cannot see a vertical pan — the frame is just as wide a
-        // little higher up — so these are read off the whole picture.
+        // Static poses now move the recording inside its fixed opening.
+        // A patterned source makes the internal motion visible in pixels.
+        source = CIImage.empty().applyingFilter("CICheckerboardGenerator", parameters: [
+            "inputCenter": CIVector(x: 0, y: 0),
+            "inputColor0": CIColor(red: 0.95, green: 0.95, blue: 0.95),
+            "inputColor1": CIColor(red: 0.12, green: 0.12, blue: 0.12),
+            "inputWidth": 8,
+            "inputSharpness": 1,
+        ]).cropped(to: canvas)
         func picture(_ place: (inout CameraMoveSettings) -> Void) throws -> [UInt8] {
             var move = CameraMoveSettings(move: .none, focusBlur: 0)
             move.blur = .none
@@ -1488,6 +1481,8 @@ final class FocusFlowTests {
             }
             return total / Double(image.count / 41) > 0.5
         }
+        XCTAssertTrue(try differs { $0.pitch = 1 })
+        XCTAssertTrue(try differs { $0.pitch = -1 })
         XCTAssertTrue(try differs { $0.yaw = 1 })
         XCTAssertTrue(try differs { $0.roll = 0.6 })
         XCTAssertTrue(try differs { $0.panY = 0.5 })
@@ -2100,9 +2095,8 @@ final class FocusFlowTests {
         XCTAssertEqual(settings[AVVideoHeightKey] as? Int, 1080)
     }
 
-    /// The 3D handles drawn over the preview are worked out by the code
-    /// that warps the picture, so the outline someone drags is the frame
-    /// they are looking at rather than something close to it.
+    /// The 3D guide tracks a feature inside the recording, while the window
+    /// opening itself stays fixed.
     func testThreeDHandlesSitOnTheRenderedFrame() throws {
         // Square to the viewer, the map leaves every point where it was.
         let canvas = CGRect(x: 0, y: 0, width: 400, height: 240)
@@ -2111,7 +2105,9 @@ final class FocusFlowTests {
         XCTAssertEqual(Double(identity(CGPoint(x: 137, y: 61)).y), 61, accuracy: 0.001)
 
         let renderer = FocusFlowCompositor(), context = CIContext()
-        let source = CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas)
+        let marker = CGRect(x: 120, y: 100, width: 14, height: 14)
+        let source = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: marker)
+            .composited(over: CIImage(color: CIColor(red: 0.95, green: 0.95, blue: 0.95)).cropped(to: canvas))
         var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 6, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
         settings.showCursor = false
         settings.motion.ambientGraphics = false
@@ -2120,44 +2116,73 @@ final class FocusFlowTests {
         settings.trimStart = 0; settings.trimEnd = 8
         settings.customBackground = CustomBackground(kind: .solid, top: RGBColor(r: 0, g: 0, b: 0))
 
-        /// Where the lit frame actually ended up in the rendered pixels.
-        func rendered() throws -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
+        /// The lit window bounds and the red feature inside the content.
+        func rendered() throws -> (bounds: CGRect, point: CGPoint) {
             let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 1, settings: settings), from: canvas))
             let data = pixels(image)
             var minX = 400.0, maxX = 0.0, minRow = 240.0, maxRow = 0.0
-            for row in 0..<240 {
-                for column in 0..<400 where Int(data[(row * 400 + column) * 4]) > 110 {
+            var redX = 0.0, redY = 0.0, redCount = 0.0
+            for row in 0..<240 { for column in 0..<400 {
+                let index = (row * 400 + column) * 4
+                if Int(data[index]) > 110 {
                     minX = min(minX, Double(column)); maxX = max(maxX, Double(column))
                     minRow = min(minRow, Double(row)); maxRow = max(maxRow, Double(row))
                 }
-            }
-            // Pixel rows run down the image; the geometry runs up it.
-            return (minX, maxX, 240 - maxRow, 240 - minRow)
+                if data[index] > 170 && data[index + 1] < 90 && data[index + 2] < 90 {
+                    redX += Double(column); redY += Double(240 - row)
+                    redCount += 1
+                }
+            } }
+            XCTAssertGreaterThan(redCount, 20)
+            return (CGRect(x: minX, y: 240 - maxRow, width: maxX - minX, height: maxRow - minRow),
+                    CGPoint(x: redX / redCount, y: redY / redCount))
         }
 
-        /// Where the handles say the frame is.
-        func predicted(_ move: CameraMoveSettings) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
-            let layout = FrameLayout.make(canvas: canvas, sourceSize: canvas.size, padding: 6, frame: settings.frame)
-            let pose = move.pose
-            let warped = pose.projection(of: canvas, canvas: canvas, lean: pose.lean())
-            let quad = ProjectiveMap(canvas, to: warped).quad(of: layout.outer)
-            let xs = quad.corners.map { Double($0.x) }, ys = quad.corners.map { Double($0.y) }
-            return (xs.min()!, xs.max()!, ys.min()!, ys.max()!)
-        }
-
+        let flat = try rendered()
         var move = CameraMoveSettings()
         move.yaw = 0.5; move.pitch = 0.25; move.zoom = 0.9
         move.blur = .none
         settings.cameraMove = move
-        let leaning = try rendered(), expected = predicted(move)
-        XCTAssertEqual(leaning.minX, expected.minX, accuracy: 3)
-        XCTAssertEqual(leaning.maxX, expected.maxX, accuracy: 3)
-        XCTAssertEqual(leaning.minY, expected.minY, accuracy: 3)
-        XCTAssertEqual(leaning.maxY, expected.maxY, accuracy: 3)
-        // It is actually leaning, rather than the two agreeing on a frame
-        // that never moved.
-        let square = predicted(CameraMoveSettings())
-        XCTAssertGreaterThan(abs(expected.maxX - square.maxX), 5)
+        let leaning = try rendered()
+        XCTAssertEqual(leaning.bounds.minX, flat.bounds.minX, accuracy: 1)
+        XCTAssertEqual(leaning.bounds.maxX, flat.bounds.maxX, accuracy: 1)
+        XCTAssertEqual(leaning.bounds.minY, flat.bounds.minY, accuracy: 1)
+        XCTAssertEqual(leaning.bounds.maxY, flat.bounds.maxY, accuracy: 1)
+
+        let layout = FrameLayout.make(canvas: canvas, sourceSize: canvas.size,
+                                      padding: 6, frame: settings.frame)
+        let start = CGPoint(x: layout.content.minX + marker.midX / canvas.width * layout.content.width,
+                            y: layout.content.minY + marker.midY / canvas.height * layout.content.height)
+        let projected = move.pose.projection(of: layout.content, canvas: layout.content,
+                                              lean: move.pose.lean())
+        let expected = ProjectiveMap(layout.content, to: projected)(start)
+        XCTAssertEqual(leaning.point.x, expected.x, accuracy: 3)
+        XCTAssertEqual(leaning.point.y, expected.y, accuracy: 3)
+        XCTAssertGreaterThan(hypot(leaning.point.x - flat.point.x,
+                                   leaning.point.y - flat.point.y), 5)
+
+        // Even at the ends of the controls, the content opening must not
+        // expose transparent wedges of the black background.
+        for pose in [FramePose(pitch: 1, yaw: 1), FramePose(pitch: -1, yaw: -1),
+                     FramePose(panX: 1, panY: 1), FramePose(zoom: 0.6),
+                     FramePose(pitch: 0.7, yaw: -0.8, roll: 0.7)] {
+            settings.cameraMove = CameraMoveSettings()
+            settings.cameraMove.pitch = pose.pitch
+            settings.cameraMove.yaw = pose.yaw
+            settings.cameraMove.roll = pose.roll
+            settings.cameraMove.panX = pose.panX
+            settings.cameraMove.panY = pose.panY
+            settings.cameraMove.zoom = pose.zoom
+            let image = try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: source, time: 1, settings: settings), from: canvas))
+            let data = pixels(image)
+            for x in [Int(layout.content.minX) + 3, Int(layout.content.maxX) - 4] {
+                for y in [Int(layout.content.minY) + 3, Int(layout.content.maxY) - 4] {
+                    let row = 239 - y
+                    let value = Int(data[(row * 400 + x) * 4])
+                    XCTAssertGreaterThan(value, 150)
+                }
+            }
+        }
     }
 
     /// A frame put into perspective must not come back softened. Depth of

@@ -654,6 +654,22 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
                 ]).cropped(to: layout.content)
             }
         }
+        // The 3D pose belongs to the recording. Project it while it is still
+        // the content layer, before the window chrome, rounded mask and shadow
+        // are drawn. Those surrounding parts should stay anchored on canvas.
+        var contentMove = settings.cameraMove
+        contentMove.move = .none
+        if settings.cameraMove.move != .none {
+            // The older animated window effect owns its blur. A simultaneous
+            // content pose should not apply that blur a second time.
+            contentMove.blur = .none
+            contentMove.focusBlur = 0
+        }
+        if contentMove.isActive || !stance.isNeutral {
+            source = applyCameraMove(source, at: time, canvas: layout.content,
+                                     settings: settings, move: contentMove,
+                                     stance: stance, fillContent: true)
+        }
         if let header = RenderAssets.header(settings.frame, rect: layout.header) { source = header.composited(over: source) }
         // Corners and shadow are written in the editor's own pixels, where
         // the canvas is 1920 across. They have to be read as a share of the
@@ -675,11 +691,14 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         }
         let motion = settings.motion
         let progress = MotionCurve.smooth.value((time - settings.trimStart) / max(0.1, motion.duration))
-        // A 3D camera laid on the timeline is a move for a few seconds; the
-        // one in the canvas panel is where the frame stands for the whole
-        // recording. Both end up in the same transform.
-        if settings.cameraMove.isActive || !stance.isNeutral {
-            source = applyCameraMove(source, at: time, canvas: canvas, settings: settings, stance: stance)
+        // Keep the older whole-window Glide, Unfold and Pull back animations
+        // working. Their motion is separate from the editable content pose.
+        if settings.cameraMove.move != .none {
+            var windowMove = settings.cameraMove
+            windowMove.pitch = 0; windowMove.yaw = 0; windowMove.roll = 0
+            windowMove.panX = 0; windowMove.panY = 0; windowMove.zoom = 1
+            source = applyCameraMove(source, at: time, canvas: canvas,
+                                     settings: settings, move: windowMove)
         }
         if motion.entrance != .none {
             var transform = CGAffineTransform.identity
@@ -761,7 +780,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         return result
     }
 
-    /// Leans the framed recording into perspective and moves it through space.
+    /// Projects either the recorded content or a legacy whole-window move.
     ///
     /// `CIPerspectiveTransform` maps the four corners of the image onto an
     /// arbitrary quad, which is exactly a tilt: pull one edge in and push the
@@ -770,8 +789,9 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
     /// skewed rectangle.
     private func applyCameraMove(_ image: CIImage, at time: Double, canvas: CGRect,
                                  settings: ExportSettings,
-                                 stance: MotionEngine.FrameStance = MotionEngine.FrameStance()) -> CIImage {
-        let move = settings.cameraMove
+                                 move: CameraMoveSettings,
+                                 stance: MotionEngine.FrameStance = MotionEngine.FrameStance(),
+                                 fillContent: Bool = false) -> CIImage {
         let elapsed = time - settings.trimStart
         guard elapsed >= 0 else { return image }
 
@@ -787,21 +807,65 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
         // so the handles drawn over the preview sit on the same quad.
         let placed = move.pose.added(stance.pose)
         let lean = placed.lean(adding: playing.lean)
-        let quad = placed.quad(in: frame, lean: lean)
+        let quad = placed.projection(of: frame, canvas: canvas, lean: lean,
+                                     scale: scale, shiftX: shiftX)
 
-        // Corners run bottom-left, bottom-right, top-right, top-left.
-        let perspective = CIFilter.perspectiveTransform()
-        perspective.inputImage = image
-        perspective.bottomLeft = quad.bottomLeft
-        perspective.bottomRight = quad.bottomRight
-        perspective.topRight = quad.topRight
-        perspective.topLeft = quad.topLeft
+        var result: CIImage
+        if fillContent && placed.isNeutral {
+            // A blur with no 3D pose needs no perspective resampling.
+            result = image
+        } else {
+            // Corners run bottom-left, bottom-right, top-right, top-left.
+            let perspective = CIFilter.perspectiveTransform()
+            if fillContent {
+                // Extend edge pixels before projecting, then crop back to the
+                // window's content opening. This prevents transparent wedges.
+                let overscan = max(0.22, min(1.5,
+                    abs(placed.yaw) * 0.42 + abs(placed.pitch) * 0.34 +
+                    abs(placed.panX) * 0.7 + abs(placed.panY) * 0.7 +
+                    max(0, 1 - placed.zoom) * 1.4))
+                let expanded = frame.insetBy(dx: -frame.width * overscan,
+                                             dy: -frame.height * overscan)
+                let extendedQuad = ProjectiveMap(frame, to: quad).quad(of: expanded)
+                perspective.inputImage = image.clampedToExtent().cropped(to: expanded)
+                perspective.bottomLeft = extendedQuad.bottomLeft
+                perspective.bottomRight = extendedQuad.bottomRight
+                perspective.topRight = extendedQuad.topRight
+                perspective.topLeft = extendedQuad.topLeft
+            } else {
+                perspective.inputImage = image
+                perspective.bottomLeft = quad.bottomLeft
+                perspective.bottomRight = quad.bottomRight
+                perspective.topRight = quad.topRight
+                perspective.topLeft = quad.topLeft
+            }
+            guard let projected = perspective.outputImage else { return image }
+            result = projected
+        }
 
-        guard var result = perspective.outputImage else { return image }
-
-        let transform = placed.transform(about: CGPoint(x: canvas.midX, y: canvas.midY),
-                                         frame: frame, scale: scale, shiftX: shiftX)
-        if !transform.isIdentity { result = result.transformed(by: transform) }
+        if fillContent {
+            result = result.cropped(to: frame)
+            // The original recording is the rear plane. At an extreme turn
+            // the projected plane can reveal a sliver of it; keep that real
+            // content visible instead of a transparent hole to the canvas.
+            if !placed.isNeutral { result = result.composited(over: image).cropped(to: frame) }
+            // A restrained falloff on the receding side gives the moving
+            // picture a light cue while leaving the chrome and text sharp.
+            let depth = min(1, abs(placed.yaw) + abs(placed.pitch))
+            if depth > 0.04 {
+                let gradient = CIFilter.linearGradient()
+                let directionX = placed.yaw / depth, directionY = placed.pitch / depth
+                gradient.point0 = CGPoint(x: frame.midX - directionX * frame.width * 0.5,
+                                          y: frame.midY - directionY * frame.height * 0.5)
+                gradient.point1 = CGPoint(x: frame.midX + directionX * frame.width * 0.5,
+                                          y: frame.midY + directionY * frame.height * 0.5)
+                gradient.color0 = .clear
+                gradient.color1 = CIColor(red: 0, green: 0, blue: 0, alpha: min(0.11, depth * 0.08))
+                if let shade = gradient.outputImage?.cropped(to: frame) {
+                    result = shade.composited(over: result).cropped(to: frame)
+                }
+            }
+        }
 
         // A blur asked for on the timeline is this moment's; the panel's is
         // the standing one.
@@ -831,8 +895,7 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
 
         // Depth of field across the receding axis. Skipped when there is no
         // lean to justify it, since a graduated blur is not cheap.
-        if move.focusBlur > 0.01 && lean.depth > 0.004 {
-            let strength = max(0, min(1, move.focusBlur))
+        if strength > 0.01 && lean.depth > 0.004 {
             let radius = max(1.0, min(14.0, Double(frame.width) / 1920 * 13 * strength))
             let gradient = CIFilter.linearGradient()
             // Sharp where the frame is nearest, soft where it recedes.

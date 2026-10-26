@@ -299,7 +299,7 @@ struct PreviewArea: View {
                                             in: RoundedRectangle(cornerRadius: 7))
                         }
                         .buttonStyle(.plain).foregroundStyle(AppTheme.green)
-                        .help("Choose a ready-made 3D move or adjust the frame on the canvas")
+                        .help("Choose a ready-made 3D move or adjust the recorded content on the canvas")
                         .accessibilityLabel("Show 3D camera handles")
                         .accessibilityAddTraits(model.show3DCanvas ? .isSelected : [])
                         Button {
