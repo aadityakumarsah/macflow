@@ -89,17 +89,34 @@ enum CaptionRenderer {
             cache.setObject(drawn, forKey: key); artwork = drawn
         } else { return nil }
 
-        let size = artwork.extent.size
-        let margin = canvas.height * 0.055
-        let x = canvas.midX - size.width / 2
-        var y: CGFloat
-        switch settings.placement {
-        case .bottom: y = canvas.minY + margin
-        case .middle: y = canvas.midY - size.height / 2
-        case .top: y = canvas.maxY - margin - size.height
-        }
-        y -= canvas.height * settings.offset
-        return Drawn(image: artwork, box: CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height))
+        return Drawn(image: artwork, box: box(size: artwork.extent.size, cue: cue, settings: settings, canvas: canvas))
+    }
+
+    /// Where the drawn line sits on the canvas.
+    ///
+    /// Kept apart from the drawing so the handle over the preview can ask
+    /// the same question without rendering anything, and so a caption can
+    /// be clicked where it actually is.
+    static func box(size: CGSize, cue: CaptionCue?, settings: CaptionSettings, canvas: CGRect) -> CGRect {
+        let anchor = settings.anchor(for: cue, height: Double(size.height / max(1, canvas.height)))
+        // The anchor is measured down the canvas, the way the preview and
+        // the camera layer are; Core Image measures up it.
+        let centreX = canvas.minX + canvas.width * anchor.x
+        let centreY = canvas.minY + canvas.height * (1 - anchor.y)
+        let x = min(canvas.maxX - size.width, max(canvas.minX, centreX - size.width / 2))
+        let y = min(canvas.maxY - size.height, max(canvas.minY, centreY - size.height / 2))
+        return CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height)
+    }
+
+    /// The size a line would be drawn at, without drawing it. Used by the
+    /// preview handle, which needs somewhere to put the outline before any
+    /// frame has been rendered.
+    static func measure(cue: CaptionCue, settings: CaptionSettings, canvas: CGRect) -> CGSize? {
+        let fontSize = max(9, canvas.height * max(0.012, min(0.2, settings.size)))
+        let text = settings.casing.apply(cue.text)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return bitmap(text: text, activeWord: nil, settings: settings,
+                      accent: CGColor(gray: 1, alpha: 1), fontSize: fontSize, canvas: canvas)?.extent.size
     }
 
     private static func accentKey(_ color: CGColor) -> String {

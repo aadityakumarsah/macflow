@@ -165,6 +165,21 @@ struct TopBar: View {
                 Text(model.videoURL == nil ? "Your screen, beautifully presented" : model.saveStatus).font(.system(size: 10)).foregroundStyle(.secondary)
             }
             Spacer()
+            // Captions written without being asked for still have to be
+            // visible while they are being written, or a recording simply
+            // sits there for a minute doing something invisible.
+            if let progress = model.captionProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress).frame(width: 64)
+                    Text("Writing captions \(Int(progress * 100))%").font(.system(size: 10))
+                    Button("Stop") { model.cancelCaptions() }.buttonStyle(.plain).font(.system(size: 10))
+                        .foregroundStyle(AppTheme.green)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(AppTheme.elevated, in: Capsule())
+                .help("Transcribing the narration. The audio stays on this Mac.")
+            }
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!model.canUndo).help("Undo ⌘Z")
             Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!model.canRedo).help("Redo ⇧⌘Z")
             Menu {
@@ -341,6 +356,7 @@ struct PreviewArea: View {
                         NativeVideoPlayer(player: model.player).allowsHitTesting(false)
                         EditableFocusOverlay(canvasSize: canvas)
                         if model.showCamera, model.cameraURL != nil { EditableCameraOverlay(canvasSize: canvas) }
+                        if model.captions.isVisible { EditableCaptionOverlay(canvasSize: canvas) }
                         if model.show3DCanvas && (model.selectedSegment?.poseKeyframes?.isEmpty != false || model.posedSegment != nil) { Frame3DOverlay(canvasSize: canvas) }
                         if model.isPreparingPreview { ProgressView("Preparing preview…").padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
                     } else { EmptyCanvas() }
@@ -394,6 +410,58 @@ struct EditableCameraOverlay: View {
                 model.cameraY = max(height / 2, min(canvasSize.height - height / 2, origin.y + value.translation.height)) / canvasSize.height
             }.onEnded { _ in origin = nil })
             .help("Drag to reposition camera")
+    }
+}
+
+/// The caption on the preview, picked up and put where you want it.
+///
+/// The outline is placed with the same geometry the renderer draws with,
+/// so what is grabbed is what is on screen. Dragging with a line selected
+/// moves that line alone; with nothing selected it moves them all, which
+/// is what someone dragging "the caption" almost always means.
+struct EditableCaptionOverlay: View {
+    @EnvironmentObject private var model: EditorModel
+    let canvasSize: CGSize
+    @State private var origin: CGPoint?
+    @State private var hovered = false
+
+    /// The line on screen at the playhead, or the selected one if it is not
+    /// its turn yet — so a line can be placed without hunting for its moment.
+    private var cue: CaptionCue? {
+        model.captions.cue(at: model.playhead) ?? model.selectedCaption
+    }
+
+    var body: some View {
+        let canvas = CGRect(origin: .zero, size: canvasSize)
+        if let cue, let size = CaptionRenderer.measure(cue: cue, settings: model.captions, canvas: canvas) {
+            let box = CaptionRenderer.box(size: size, cue: cue, settings: model.captions, canvas: canvas)
+            // Core Image measures up the canvas and a view measures down it.
+            let centre = CGPoint(x: box.midX, y: canvasSize.height - box.midY)
+            let moving = model.selectedCaptionID == cue.id
+            RoundedRectangle(cornerRadius: 6)
+                .fill(.clear).contentShape(Rectangle())
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(hovered || moving ? AppTheme.green : .clear,
+                                style: StrokeStyle(lineWidth: 1.5, dash: [5])))
+                .frame(width: box.width, height: box.height)
+                .position(x: centre.x, y: centre.y)
+                .onHover { hovered = $0 }
+                .gesture(
+                    DragGesture(coordinateSpace: .named("canvas"))
+                        .onChanged { value in
+                            if origin == nil { origin = centre; model.beginCaptionGesture() }
+                            guard let origin else { return }
+                            let point = CGPoint(x: (origin.x + value.translation.width) / max(1, canvasSize.width),
+                                                y: (origin.y + value.translation.height) / max(1, canvasSize.height))
+                            model.placeCaption(at: point, cue: moving ? cue.id : nil)
+                        }
+                        .onEnded { _ in origin = nil; model.endCaptionGesture() }
+                )
+                .onTapGesture { model.selectCaption(cue.id) }
+                .help(moving ? "Drag to place this line. Other lines stay where they are."
+                             : "Drag to move every caption. Click to select this line and move it alone.")
+        }
     }
 }
 

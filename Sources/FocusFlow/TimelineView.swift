@@ -67,13 +67,14 @@ struct TimelineView: View {
                             .gesture(videoTrackDrag(width: width))
                     }
                     ForEach(lanes) { lane in row(lane: lane, width: width) }
+                    if !model.captions.cues.isEmpty { captionRow(width: width) }
                 }
                 .padding(.horizontal, 9)
                 .overlay(alignment: .topLeading) {
                     if model.duration > 0 {
                         VStack(spacing: 0) {
                             RoundedRectangle(cornerRadius: 2).fill(AppTheme.green).frame(width: 8, height: 10)
-                            Rectangle().fill(AppTheme.green).frame(width: 1, height: CGFloat(62 + lanes.count * 33))
+                            Rectangle().fill(AppTheme.green).frame(width: 1, height: CGFloat(62 + (lanes.count + captionRows) * 33))
                         }.offset(x: 9 + labelWidth + width * model.playhead / model.duration - 4, y: 3).allowsHitTesting(false)
                     }
                 }
@@ -89,9 +90,30 @@ struct TimelineView: View {
                 Button("Set out") { model.setTrimEnd() }
                 Button("Reset trim") { model.resetTrim() }
             }.font(.caption2).buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 12).disabled(model.videoURL == nil)
-        }.frame(height: min(330, CGFloat(146 + lanes.count * 33))).background(AppTheme.panel)
+        }.frame(height: min(330, CGFloat(146 + (lanes.count + captionRows) * 33))).background(AppTheme.panel)
         .onDeleteCommand { model.deleteSelected() }
     }
+    /// The caption track takes a row of its own when there is one.
+    private var captionRows: Int { model.captions.cues.isEmpty ? 0 : 1 }
+
+    /// Every spoken line, on the timeline, where they can be moved, retimed
+    /// and picked for editing like any other part of the edit.
+    private func captionRow(width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Label("Captions", systemImage: "captions.bubble")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(model.captions.enabled ? .secondary : .tertiary)
+                .frame(width: labelWidth, alignment: .leading)
+                .help(model.captions.enabled ? "Spoken lines" : "Captions are switched off in the Captions panel")
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 5).fill(AppTheme.elevated)
+                ForEach(model.captions.cues) { CaptionBlock(cue: $0, fullWidth: width) }
+            }.frame(width: width, height: 27).clipped()
+            .coordinateSpace(name: SegmentBlock.space)
+            .opacity(model.captions.enabled ? 1 : 0.45)
+        }
+    }
+
     /// Near enough to an end to mean that end. Generous, because an edge is
     /// a line and a pointer is a hand.
     private static let grabRadius: CGFloat = 13
@@ -179,6 +201,88 @@ struct TrimMark: View {
             // covers the frame it is pointing at.
             .offset(x: trailing ? position - 10 : position)
             .allowsHitTesting(false)
+    }
+}
+
+/// One spoken line on the timeline.
+///
+/// Dragged by its middle to move it, by either end to retime it, and
+/// clicked to edit it. Measured against the track rather than itself, for
+/// the same reason `SegmentBlock` is: a block placed by an offset that the
+/// drag is changing has a coordinate space that travels with the pointer.
+struct CaptionBlock: View {
+    @EnvironmentObject private var model: EditorModel
+    let cue: CaptionCue
+    let fullWidth: CGFloat
+    @State private var grab: Edge?
+    @State private var grabOffset: Double = 0
+    @State private var hovered = false
+
+    enum Edge { case leading, trailing, body }
+    /// Narrow blocks are all edge otherwise, and could never be moved.
+    private static let handle: CGFloat = 7
+
+    private var selected: Bool { model.selectedCaptionID == cue.id }
+    private var scale: Double { fullWidth / max(0.001, model.duration) }
+
+    var body: some View {
+        let x = CGFloat(cue.start * scale)
+        let width = max(6, CGFloat(cue.duration * scale))
+        RoundedRectangle(cornerRadius: 5)
+            .fill(Color.teal.opacity(selected ? 0.85 : hovered ? 0.6 : 0.45))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? Color.white : .clear, lineWidth: 1.5))
+            .overlay(alignment: .leading) {
+                Text(cue.text).font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
+                    .lineLimit(1).padding(.horizontal, 6).allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                // A line that has been put somewhere of its own says so,
+                // otherwise there is no way to tell it from the rest.
+                if cue.isPlaced {
+                    Image(systemName: "pin.fill").font(.system(size: 7))
+                        .foregroundStyle(.white.opacity(0.9)).padding(2).allowsHitTesting(false)
+                }
+            }
+            .frame(width: width, height: 21)
+            .offset(x: x)
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            .help(cue.text)
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named(SegmentBlock.space))
+                    .onChanged { value in
+                        if grab == nil {
+                            model.selectCaption(cue.id)
+                            model.beginCaptionGesture()
+                            let into = value.startLocation.x - x
+                            grab = into < Self.handle ? .leading
+                                 : into > width - Self.handle ? .trailing : .body
+                            grabOffset = Double(into) / scale
+                        }
+                        let at = Double(value.location.x) / scale
+                        switch grab {
+                        case .leading: model.resizeCaption(cue.id, leading: true, to: at)
+                        case .trailing: model.resizeCaption(cue.id, leading: false, to: at)
+                        default: model.moveCaption(cue.id, to: at - grabOffset)
+                        }
+                    }
+                    .onEnded { _ in
+                        model.endCaptionGesture()
+                        grab = nil
+                        model.seek(to: cue.start + 0.01)
+                    }
+            )
+            .contextMenu {
+                Button("Edit this line") { model.selectCaption(cue.id) }
+                Button("Jump to it") { model.seek(to: cue.start + 0.01) }
+                if cue.isPlaced {
+                    Button("Unpin from its own place") {
+                        model.updateCaptionCue(cue.id) { $0.x = nil; $0.y = nil }
+                    }
+                }
+                Divider()
+                Button("Delete", role: .destructive) { model.removeCaptionCue(cue.id) }
+            }
     }
 }
 

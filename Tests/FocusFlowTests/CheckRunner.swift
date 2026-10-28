@@ -81,6 +81,8 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try await tests.testCaptionsAreDrawnOverTheFinishedFrame()
             try await tests.testCaptionsPersistAndFollowTheEdit()
             try await tests.testCaptionAudioIsSlicedOutOfTheRecording()
+            try await tests.testCaptionsCanBePlacedAnywhere()
+            try await tests.testCaptionsAreEditableFromTheTimeline()
             print("Checking the selection and cursor graphics…")
             try tests.testSelectionIsDrawnWhereItHappens()
             try tests.testCursorMarksAndCustomArtwork()

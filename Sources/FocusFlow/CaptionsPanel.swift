@@ -83,6 +83,14 @@ private struct CaptionGenerateSection: View {
                 }.font(.caption)
             }
 
+            Toggle("Write captions automatically after recording", isOn: Binding(
+                get: { model.automaticCaptions },
+                set: { model.automaticCaptions = $0 }))
+            Text(model.automaticCaptions
+                 ? "A recording with narration in it is transcribed as soon as it opens. macOS asks for permission the first time."
+                 : "Captions are written only when you press the button above.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
             if let status = model.captionStatus {
                 Text(status).font(.caption2)
                     .foregroundStyle(status.hasSuffix("words.") ? Color.secondary : Color.orange)
@@ -213,11 +221,22 @@ private struct CaptionTimingSection: View {
     var body: some View {
         InspectorSection(title: "PLACING") {
             Picker("Position", selection: binding(\.placement)) {
-                ForEach(CaptionPlacement.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(CaptionPlacement.presets) { Text($0.rawValue).tag($0) }
+                if model.captions.placement == .free { Text("Dragged").tag(CaptionPlacement.free) }
             }.pickerStyle(.segmented)
-            InspectorSlider(title: "Nudge", value: Binding(
-                get: { model.captions.offset * 100 },
-                set: { model.captions.offset = $0 / 100 }), range: -40...40, suffix: "%")
+            HStack {
+                Text("Or drag the caption on the preview to put it anywhere.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                if model.captions.placement == .free || model.captions.cues.contains(where: \.isPlaced) {
+                    Button("Reset") { model.resetCaptionPlacement() }.font(.caption)
+                }
+            }.fixedSize(horizontal: false, vertical: true)
+            if model.captions.placement != .free {
+                InspectorSlider(title: "Nudge", value: Binding(
+                    get: { model.captions.offset * 100 },
+                    set: { model.captions.offset = $0 / 100 }), range: -40...40, suffix: "%")
+            }
             InspectorSlider(title: "Widest line", value: Binding(
                 get: { model.captions.maxWidth * 100 },
                 set: { model.captions.maxWidth = $0 / 100 }), range: 20...100, suffix: "%")
@@ -252,6 +271,8 @@ private struct CaptionLinesSection: View {
                 Spacer()
                 Button { model.addCaptionCue() } label: { Label("Add", systemImage: "plus") }.font(.caption)
             }
+            Text("Lines also appear on the timeline: drag them to retime, click one to edit it here, and drag it on the preview to place it.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach(model.captions.cues) { cue in
                 CaptionCueRow(cue: cue)
             }
@@ -266,14 +287,21 @@ private struct CaptionCueRow: View {
     @FocusState private var editing: Bool
 
     private var isCurrent: Bool { model.playhead >= cue.start && model.playhead < cue.end }
+    private var isSelected: Bool { model.selectedCaptionID == cue.id }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                Button { model.seek(to: cue.start + 0.01) } label: {
+                Button { model.selectCaption(cue.id); model.seek(to: cue.start + 0.01) } label: {
                     Text(stamp(cue.start)).font(.system(size: 10, design: .monospaced))
-                }.buttonStyle(.plain).help("Jump to this line")
+                }.buttonStyle(.plain).help("Jump to this line and select it")
                 Text("→ \(stamp(cue.end))").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                if cue.isPlaced {
+                    Button { model.updateCaptionCue(cue.id) { $0.x = nil; $0.y = nil } } label: {
+                        Image(systemName: "pin.fill").font(.system(size: 9))
+                    }.buttonStyle(.plain).foregroundStyle(AppTheme.green)
+                        .help("This line has a place of its own. Click to return it to the others.")
+                }
                 Spacer()
                 Button { model.removeCaptionCue(cue.id) } label: { Image(systemName: "trash") }
                     .buttonStyle(.plain).font(.system(size: 10)).help("Delete this line")
@@ -285,7 +313,10 @@ private struct CaptionCueRow: View {
                 .onChange(of: editing) { if !editing { commit() } }
         }
         .padding(8)
-        .background(isCurrent ? AppTheme.green.opacity(0.1) : AppTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+        .background(isSelected ? AppTheme.green.opacity(0.18) : isCurrent ? AppTheme.green.opacity(0.08) : AppTheme.elevated,
+                    in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(isSelected ? AppTheme.green : .clear))
+        .onTapGesture { model.selectCaption(cue.id) }
         .onAppear { draft = cue.text }
         .onChange(of: cue.text) { draft = cue.text }
     }

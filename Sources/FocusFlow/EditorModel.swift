@@ -39,6 +39,15 @@ final class EditorModel: ObservableObject {
     @Published var captions = CaptionSettings() { willSet { remember() } didSet { changed(reusingMedia: true) } }
     @Published var captionProgress: Double?
     @Published var captionStatus: String?
+    /// The line the caption controls and the preview handle are acting on.
+    @Published var selectedCaptionID: UUID?
+    /// Whether a finished recording is transcribed without being asked.
+    /// A preference rather than a project setting: it is about how this Mac
+    /// behaves, not about one video.
+    @Published var automaticCaptions = UserDefaults.standard.object(forKey: EditorModel.automaticCaptionsKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(automaticCaptions, forKey: Self.automaticCaptionsKey) }
+    }
+    static let automaticCaptionsKey = "FocusFlow.automaticCaptions"
     /// Only meaningful while `ratio` is `.custom`.
     @Published var customRatio = CGSize(width: 16, height: 10) {
         willSet { remember() }
@@ -116,6 +125,9 @@ final class EditorModel: ObservableObject {
     private var movePreviewEnd: Double?
     private var openTask: Task<Void, Never>?
     private var captionTask: Task<Void, Never>?
+    /// Set by a finished recording, acted on once the file has been opened
+    /// and its duration is known.
+    private var captionsWantedOnOpen = false
     private var metadata = RecordingMetadata.empty
     var recordingMetadata: RecordingMetadata { metadata }
 
@@ -303,6 +315,7 @@ final class EditorModel: ObservableObject {
         customRatio = CGSize(width: 16, height: 10)
         grade = GradeSettings(); cameraMove = CameraMoveSettings(); typingFollow = TypingFollowSettings(); sounds = SoundSettings()
         captions = CaptionSettings(); captionProgress = nil; captionStatus = nil; captionTask?.cancel(); captionTask = nil
+        selectedCaptionID = nil
         if let camera = self.metadata.cameraPresentation {
             cameraX = camera.x; cameraY = camera.y; cameraSize = camera.size; cameraShape = camera.shape; cameraMirrored = camera.mirrored
         }
@@ -329,6 +342,10 @@ final class EditorModel: ObservableObject {
                 restoring = false
                 if let saved = project ?? readProject(at: editsURL(for: url)) { restore(saved) }
                 changed()
+                if captionsWantedOnOpen {
+                    captionsWantedOnOpen = false
+                    await captionFreshRecording(asset)
+                }
             } catch is CancellationError {} catch { isPreparingPreview = false; message = "Could not open recording: \(error.localizedDescription)" }
         }
     }
@@ -336,6 +353,10 @@ final class EditorModel: ObservableObject {
     func finishRecording(url: URL, metadata: RecordingMetadata) async {
         do { try await library.register(url, metadata: metadata) }
         catch { message = "Video saved, but metadata could not be written: \(error.localizedDescription)" }
+        // A recording that was just made is the one case where transcribing
+        // without being asked is wanted: the narration is fresh, and nobody
+        // records themselves talking in order to not have it written down.
+        captionsWantedOnOpen = automaticCaptions
         open(url: url, metadata: metadata)
     }
     func openLibraryItem(_ item: RecordingItem) { open(url: item.url, metadata: library.metadata(for: item.url)); showLibrary = false }
@@ -412,6 +433,25 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Transcribes a recording that has just been made, quietly.
+    ///
+    /// Quietly is the point: nothing is asked, nothing pops up, and a
+    /// recording with no narration in it simply produces no captions
+    /// rather than an error in the middle of the editor. Anything that
+    /// went wrong is left in the Captions panel for whoever goes looking.
+    private func captionFreshRecording(_ asset: AVAsset) async {
+        guard automaticCaptions, !captionsBusy else { return }
+        // A refusal already on record is not worth asking about again after
+        // every recording. The first time, macOS asks — which is the one
+        // interruption this feature cannot avoid, and it happens with the
+        // recording in front of you rather than out of nowhere.
+        guard !CaptionTranscriber.permissionRefused else { return }
+        // Nothing was said, so there is nothing to write down. No captions
+        // and no complaint.
+        guard let tracks = try? await asset.loadTracks(withMediaType: .audio), !tracks.isEmpty else { return }
+        generateCaptions()
+    }
+
     func cancelCaptions() {
         captionTask?.cancel(); captionTask = nil
         captionProgress = nil
@@ -441,12 +481,14 @@ final class EditorModel: ObservableObject {
         updated.cues.sort { $0.start < $1.start }
         updated.enabled = true
         captions = updated
+        selectCaption(cue.id)
     }
 
     func removeCaptionCue(_ id: UUID) {
         var updated = captions
         updated.cues.removeAll { $0.id == id }
         captions = updated
+        if selectedCaptionID == id { selectedCaptionID = nil }
     }
 
     func updateCaptionCue(_ id: UUID, _ change: (inout CaptionCue) -> Void) {
@@ -456,6 +498,71 @@ final class EditorModel: ObservableObject {
         updated.cues[index].duration = max(0.2, updated.cues[index].duration)
         updated.cues.sort { $0.start < $1.start }
         captions = updated
+    }
+
+    // MARK: - Caption lines on the timeline and the canvas
+
+    var selectedCaption: CaptionCue? { captions.cue(selectedCaptionID) }
+
+    func selectCaption(_ id: UUID?) {
+        selectedCaptionID = id
+        if id != nil {
+            selectedSegmentID = nil
+            inspectorTab = "Captions"
+        }
+    }
+
+    /// Moves a line, or the whole track, to a point on the canvas.
+    ///
+    /// With a line selected the drag moves that line alone, which is what
+    /// the caption that happens to sit over the thing being pointed at
+    /// needs. With nothing selected it moves every line together, which is
+    /// what someone dragging the caption usually means.
+    func placeCaption(at point: CGPoint, cue id: UUID?) {
+        let x = min(1, max(0, point.x)), y = min(1, max(0, point.y))
+        if let id, captions.cues.contains(where: { $0.id == id }) {
+            updateCaptionCue(id) { $0.x = x; $0.y = y }
+        } else {
+            var updated = captions
+            updated.placement = .free
+            updated.x = x; updated.y = y
+            // Lines pinned somewhere of their own would ignore the drag and
+            // look like nothing happened, so they come along with it.
+            for index in updated.cues.indices { updated.cues[index].x = nil; updated.cues[index].y = nil }
+            captions = updated
+        }
+    }
+
+    /// Back to a preset placement, dropping any by-hand positions.
+    func resetCaptionPlacement() {
+        var updated = captions
+        updated.placement = .bottom
+        updated.x = 0.5; updated.y = 0.86; updated.offset = 0
+        for index in updated.cues.indices { updated.cues[index].x = nil; updated.cues[index].y = nil }
+        captions = updated
+    }
+
+    /// One undo step for a whole drag, rather than one every 0.4 seconds.
+    func beginCaptionGesture() { beginPoseGesture() }
+    func endCaptionGesture() { endPoseGesture() }
+
+    /// Moves a line bodily along the timeline, keeping its length.
+    func moveCaption(_ id: UUID, to start: Double) {
+        updateCaptionCue(id) { $0.start = max(0, min(duration - $0.duration, start)) }
+    }
+
+    /// Drags one end of a line. The other end stays, and a line keeps at
+    /// least a fifth of a second of itself.
+    func resizeCaption(_ id: UUID, leading: Bool, to time: Double) {
+        updateCaptionCue(id) { cue in
+            if leading {
+                let start = min(cue.end - 0.2, max(0, time))
+                cue.duration = cue.end - start
+                cue.start = start
+            } else {
+                cue.duration = max(0.2, min(duration - cue.start, time - cue.start))
+            }
+        }
     }
 
     /// The lines as the exported file sees them: trimmed away where the
@@ -684,6 +791,7 @@ final class EditorModel: ObservableObject {
         segments.append(segment); selectedSegmentID = segment.id; inspectorTab = "Segment"
     }
     func deleteSelected() {
+        if let id = selectedCaptionID { removeCaptionCue(id); return }
         guard let id = selectedSegmentID else { return }
         lastHistory = .distantPast; segments.removeAll { $0.id == id }; selectedSegmentID = nil
     }

@@ -19,7 +19,14 @@ struct CaptionCue: Identifiable, Codable, Equatable {
     var duration: Double
     var text: String
     var words: [CaptionWord] = []
+    /// Where this one line sits, if it has been dragged somewhere of its
+    /// own. Nil follows the track's placement, which is almost always what
+    /// is wanted — the override exists for the line that would otherwise
+    /// cover the thing it is talking about.
+    var x: Double? = nil
+    var y: Double? = nil
     var end: Double { start + duration }
+    var isPlaced: Bool { x != nil && y != nil }
 
     /// Word timings that match the text as it stands.
     ///
@@ -45,7 +52,12 @@ struct CaptionCue: Identifiable, Codable, Equatable {
 
 enum CaptionPlacement: String, Codable, CaseIterable, Identifiable {
     case bottom = "Bottom", middle = "Middle", top = "Top"
+    /// Wherever it was dragged to. Not offered as a button — it is what
+    /// the preview sets when the caption is moved by hand.
+    case free = "Custom"
     var id: String { rawValue }
+    /// The three that are worth a button.
+    static let presets: [CaptionPlacement] = [.top, .middle, .bottom]
 }
 
 enum CaptionBackdrop: String, Codable, CaseIterable, Identifiable {
@@ -177,7 +189,14 @@ struct CaptionSettings: Codable, Equatable {
 
     var casing: CaptionCasing = .spoken
     var placement: CaptionPlacement = .bottom
-    /// Moves the line off its placement, as a share of the canvas height.
+    /// Where the caption sits when it has been dragged, as a share of the
+    /// canvas measured from its top-left — the same way the camera layer's
+    /// position is kept. Only read while `placement` is `.free`.
+    var x: Double = 0.5
+    var y: Double = 0.86
+    /// Moves the line off a preset placement, as a share of the canvas
+    /// height. A dragged caption carries its position outright, so this
+    /// does not apply to one.
     var offset: Double = 0
     /// The widest a line may run, as a share of the canvas width.
     var maxWidth: Double = 0.82
@@ -201,6 +220,26 @@ struct CaptionSettings: Codable, Equatable {
     /// Nothing is drawn unless there is something to draw.
     var isVisible: Bool { enabled && !cues.isEmpty }
 
+    /// Where the middle of a line belongs, as a share of the canvas from
+    /// its top-left corner.
+    ///
+    /// One answer, used by the renderer and by the handle drawn over the
+    /// preview, so what is dragged is what is drawn. `height` is the share
+    /// of the canvas the line occupies, which is what keeps a preset
+    /// placement clear of the edge whatever size the type is.
+    func anchor(for cue: CaptionCue?, height: Double) -> CGPoint {
+        if let cue, let x = cue.x, let y = cue.y { return CGPoint(x: x, y: y) }
+        if placement == .free { return CGPoint(x: x, y: y) }
+        let margin = 0.055 + height / 2
+        let centre: Double
+        switch placement {
+        case .top: centre = margin
+        case .middle: centre = 0.5
+        case .bottom, .free: centre = 1 - margin
+        }
+        return CGPoint(x: 0.5, y: centre + offset)
+    }
+
     /// The cue covering a moment, if any.
     func cue(at time: Double) -> CaptionCue? {
         cues.last { time >= $0.start && time < $0.end }
@@ -215,6 +254,12 @@ struct CaptionSettings: Codable, Equatable {
          "\(backdropColor)", String(format: "%.3f", backdropOpacity), String(format: "%.3f", backdropRadius),
          String(format: "%.3f", backdropPadding), String(format: "%.3f", outlineWidth), "\(outlineColor)",
          String(format: "%.3f", shadow), animation.rawValue].joined(separator: "|")
+    }
+
+    /// The cue the caption controls are acting on, if that one is still here.
+    func cue(_ id: UUID?) -> CaptionCue? {
+        guard let id else { return nil }
+        return cues.first { $0.id == id }
     }
 }
 
@@ -349,6 +394,13 @@ enum CaptionTranscriber {
 
     static func onDeviceAvailable(_ language: String) -> Bool {
         SFSpeechRecognizer(locale: Locale(identifier: language))?.supportsOnDeviceRecognition ?? false
+    }
+
+    /// Whether there is any point starting: a refusal already on record
+    /// should not be asked about again after every recording.
+    static var permissionRefused: Bool {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        return status == .denied || status == .restricted
     }
 
     static func authorize() async -> SFSpeechRecognizerAuthorizationStatus {

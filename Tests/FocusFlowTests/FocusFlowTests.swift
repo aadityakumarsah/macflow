@@ -2950,6 +2950,170 @@ final class FocusFlowTests {
         }
     }
 
+    /// Captions can be put anywhere, one line or all of them, and the
+    /// outline drawn over the preview sits exactly where the renderer
+    /// draws the words.
+    @MainActor func testCaptionsCanBePlacedAnywhere() throws {
+        let canvas = CGRect(x: 0, y: 0, width: 1280, height: 720)
+        var settings = CaptionSettings()
+        settings.enabled = true
+        settings.size = 0.06
+        let first = CaptionCue(start: 0, duration: 2, text: "First line")
+        let second = CaptionCue(start: 2, duration: 2, text: "Second line")
+        settings.cues = [first, second]
+
+        let size = try XCTUnwrap(CaptionRenderer.measure(cue: first, settings: settings, canvas: canvas))
+        let share = Double(size.height / canvas.height)
+
+        // A preset keeps the line centred and clear of the edge it is nearest.
+        let bottom = CaptionRenderer.box(size: size, cue: first, settings: settings, canvas: canvas)
+        XCTAssertEqual(bottom.midX, canvas.midX, accuracy: 1)
+        XCTAssertLessThan(bottom.minY, canvas.height * 0.2)
+        settings.placement = .top
+        let top = CaptionRenderer.box(size: size, cue: first, settings: settings, canvas: canvas)
+        XCTAssertGreaterThan(top.minY, canvas.height * 0.7)
+
+        // Dragged, it goes where it was put — measured down the canvas the
+        // way the preview is, not up it the way Core Image is.
+        settings.placement = .free
+        settings.x = 0.25; settings.y = 0.2
+        let placed = CaptionRenderer.box(size: size, cue: first, settings: settings, canvas: canvas)
+        XCTAssertEqual(placed.midX, canvas.width * 0.25, accuracy: 1)
+        XCTAssertEqual(canvas.height - placed.midY, canvas.height * 0.2, accuracy: 1)
+
+        // Never off the canvas, however far it is dragged.
+        settings.x = 1.4; settings.y = -0.5
+        let shoved = CaptionRenderer.box(size: size, cue: first, settings: settings, canvas: canvas)
+        XCTAssertGreaterThan(shoved.minX, -0.5)
+        XCTAssertLessThanOrEqual(shoved.maxX, canvas.maxX + 0.5)
+        XCTAssertLessThanOrEqual(shoved.maxY, canvas.maxY + 0.5)
+
+        // A line pinned to its own place ignores the track's placement; the
+        // others do not move with it.
+        settings.placement = .bottom
+        var pinned = first
+        pinned.x = 0.8; pinned.y = 0.3
+        settings.cues = [pinned, second]
+        let alone = CaptionRenderer.box(size: size, cue: pinned, settings: settings, canvas: canvas)
+        XCTAssertEqual(alone.midX, canvas.width * 0.8, accuracy: 1)
+        XCTAssertEqual(CaptionRenderer.box(size: size, cue: second, settings: settings, canvas: canvas).midX,
+                       canvas.midX, accuracy: 1)
+        XCTAssertEqual(settings.anchor(for: pinned, height: share), CGPoint(x: 0.8, y: 0.3))
+
+        // And the words really are drawn there, not merely reported there.
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let page = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: canvas)
+        var export = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        export.showCursor = false
+        export.motion.ambientGraphics = false
+        export.motion.scrollBlur = false
+        export.motion.automaticMotionBlur = false
+        export.trimStart = 0; export.trimEnd = 8
+        var free = CaptionSettings()
+        free.enabled = true; free.size = 0.06; free.animation = .none; free.backdrop = .none; free.shadow = 0
+        free.placement = .free; free.x = 0.25; free.y = 0.25
+        free.cues = [first]
+        export.captions = free
+        let data = pixels(try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: page, time: 1, settings: export), from: canvas)))
+        /// How far a patch departs from the flat grey page. Rows count down
+        /// from the top of the bitmap, which is how the caption's own y reads.
+        func ink(rows: ClosedRange<Int>, columns: ClosedRange<Int>) -> Double {
+            var total = 0.0
+            for row in rows { for column in columns {
+                let index = (row * 1280 + column) * 4
+                for channel in 0..<3 { total += abs(Double(data[index + channel]) - 127) }
+            } }
+            return total / Double(rows.count * columns.count * 3)
+        }
+        // Upper left quarter, where it was placed — and not along the bottom.
+        XCTAssertGreaterThan(ink(rows: 140...220, columns: 180...460), 2)
+        XCTAssertLessThan(ink(rows: 620...700, columns: 0...1279), 0.2)
+    }
+
+    /// A line can be retimed and moved from the timeline, selection follows
+    /// it, and a finished recording is transcribed without being asked.
+    @MainActor func testCaptionsAreEditableFromTheTimeline() throws {
+        let model = EditorModel(restoreLatest: false)
+        model.duration = 20; model.trimEnd = 20
+        model.videoURL = URL(fileURLWithPath: "/tmp/caption-timeline-nonexistent.mp4")
+        defer { model.videoURL = nil }
+        var captions = CaptionSettings()
+        captions.enabled = true
+        captions.cues = [CaptionCue(start: 1, duration: 2, text: "One"),
+                         CaptionCue(start: 5, duration: 2, text: "Two")]
+        model.captions = captions
+        let one = try XCTUnwrap(model.captions.cues.first)
+        let two = try XCTUnwrap(model.captions.cues.last)
+
+        // Selecting a line takes the editor to the caption controls, and
+        // nothing else is selected at the same time.
+        model.selectedSegmentID = UUID()
+        model.selectCaption(one.id)
+        XCTAssertEqual(model.inspectorTab, "Captions")
+        XCTAssertNil(model.selectedSegmentID)
+        XCTAssertEqual(model.selectedCaption?.text, "One")
+
+        // Moved bodily: the length is kept.
+        model.moveCaption(one.id, to: 8)
+        XCTAssertEqual(model.captions.cue(one.id)?.start, 8)
+        XCTAssertEqual(model.captions.cue(one.id)?.duration, 2)
+        // And it cannot be dragged off either end of the recording.
+        model.moveCaption(one.id, to: -5)
+        XCTAssertEqual(model.captions.cue(one.id)?.start, 0)
+        model.moveCaption(one.id, to: 999)
+        XCTAssertEqual(model.captions.cue(one.id)?.start, 18)
+
+        // Dragged by an end: the other end stays put.
+        model.moveCaption(one.id, to: 4)
+        model.resizeCaption(one.id, leading: false, to: 9)
+        XCTAssertEqual(model.captions.cue(one.id)?.start, 4)
+        XCTAssertEqual(try XCTUnwrap(model.captions.cue(one.id)?.end), 9, accuracy: 0.0001)
+        model.resizeCaption(one.id, leading: true, to: 7)
+        XCTAssertEqual(model.captions.cue(one.id)?.start, 7)
+        XCTAssertEqual(try XCTUnwrap(model.captions.cue(one.id)?.end), 9, accuracy: 0.0001)
+        // A line always keeps something of itself.
+        model.resizeCaption(one.id, leading: true, to: 100)
+        XCTAssertGreaterThan(try XCTUnwrap(model.captions.cue(one.id)?.duration), 0.19)
+
+        // Dragging on the preview with a line selected moves that line only.
+        model.placeCaption(at: CGPoint(x: 0.3, y: 0.4), cue: one.id)
+        XCTAssertEqual(model.captions.cue(one.id)?.x, 0.3)
+        // Lines are kept in time order, so "the other one" is named rather
+        // than taken from an end of the list that moves as they are retimed.
+        XCTAssertNil(model.captions.cue(two.id)?.x)
+        XCTAssertEqual(model.captions.placement, .bottom)
+
+        // With nothing selected it moves the whole track, and takes any
+        // pinned line along rather than leaving it behind on its own.
+        model.placeCaption(at: CGPoint(x: 0.7, y: 0.2), cue: nil)
+        XCTAssertEqual(model.captions.placement, .free)
+        XCTAssertEqual(model.captions.x, 0.7)
+        XCTAssertTrue(model.captions.cues.allSatisfy { !$0.isPlaced })
+
+        // Reset puts them back at the bottom.
+        model.resetCaptionPlacement()
+        XCTAssertEqual(model.captions.placement, .bottom)
+        XCTAssertEqual(model.captions.offset, 0)
+
+        // Delete acts on whichever thing is selected.
+        model.selectCaption(one.id)
+        model.deleteSelected()
+        XCTAssertEqual(model.captions.cues.count, 1)
+        XCTAssertNil(model.selectedCaptionID)
+
+        // Adding a line puts it at the playhead and selects it to be typed in.
+        model.playhead = 12
+        model.addCaptionCue()
+        XCTAssertEqual(model.captions.cues.count, 2)
+        XCTAssertEqual(model.selectedCaption?.start, 12)
+
+        // Automatic transcription is a preference of this Mac, remembered.
+        let was = model.automaticCaptions
+        model.automaticCaptions = !was
+        XCTAssertEqual(UserDefaults.standard.bool(forKey: EditorModel.automaticCaptionsKey), !was)
+        model.automaticCaptions = was
+    }
+
     /// The loudest sample in a file, as a share of full scale.
     private func loudest(of url: URL) async throws -> Double {
         let asset = AVURLAsset(url: url)
