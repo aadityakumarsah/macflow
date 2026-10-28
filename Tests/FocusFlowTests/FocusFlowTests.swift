@@ -2897,8 +2897,8 @@ final class FocusFlowTests {
         try await makeSpokenFixture(at: source, seconds: 8)
 
         let asset = AVURLAsset(url: source)
-        let slice = directory.appendingPathComponent("piece.m4a")
-        try await CaptionTranscriber.extractAudio(from: asset, range: CMTimeRange(
+        let slice = directory.appendingPathComponent("piece.wav")
+        let peak = try await CaptionTranscriber.extractAudio(from: asset, range: CMTimeRange(
             start: CMTime(seconds: 3, preferredTimescale: 600),
             duration: CMTime(seconds: 2, preferredTimescale: 600)), to: slice)
 
@@ -2906,6 +2906,32 @@ final class FocusFlowTests {
         XCTAssertEqual(try await cut.load(.duration).seconds, 2, accuracy: 0.2)
         XCTAssertEqual(try await cut.loadTracks(withMediaType: .audio).count, 1)
         XCTAssertTrue(try await cut.load(.isPlayable))
+        XCTAssertGreaterThan(peak, 0.1)
+
+        // A FocusFlow recording keeps system audio and the microphone as
+        // two tracks, and the narration is on the second one. Reading only
+        // the first handed the recogniser the silence the screen was
+        // making while somebody talked over it — which is a recording that
+        // produces no captions at all and no useful reason why.
+        let twoTrack = directory.appendingPathComponent("narrated.mp4")
+        try await makeTwoTrackFixture(at: twoTrack, seconds: 6)
+        let narrated = AVURLAsset(url: twoTrack)
+        XCTAssertEqual(try await narrated.loadTracks(withMediaType: .audio).count, 2)
+        let both = directory.appendingPathComponent("both.wav")
+        let mixedPeak = try await CaptionTranscriber.extractAudio(from: narrated, range: CMTimeRange(
+            start: .zero, duration: CMTime(seconds: 5, preferredTimescale: 600)), to: both)
+        XCTAssertGreaterThan(mixedPeak, 0.1)
+        XCTAssertGreaterThan(try await loudest(of: both), 0.1)
+        XCTAssertEqual(try await AVURLAsset(url: both).loadTracks(withMediaType: .audio).count, 1)
+
+        // Silence is told apart from speech that was not recognised, so the
+        // panel can name the actual problem.
+        let quiet = directory.appendingPathComponent("quiet.mp4")
+        try await makeTwoTrackFixture(at: quiet, seconds: 4, narration: false)
+        let quietPiece = directory.appendingPathComponent("quiet.wav")
+        let quietPeak = try await CaptionTranscriber.extractAudio(from: AVURLAsset(url: quiet), range: CMTimeRange(
+            start: .zero, duration: CMTime(seconds: 3, preferredTimescale: 600)), to: quietPiece)
+        XCTAssertLessThan(quietPeak, CaptionTranscriber.silence)
 
         // The pieces overlap, so a word spoken across a join is heard whole
         // and the repeat is dropped when they are stitched back together.
@@ -2922,6 +2948,123 @@ final class FocusFlowTests {
         } catch let error as CaptionError {
             guard case .noAudio = error else { return XCTFail("Expected the no-audio refusal, got \(error)") }
         }
+    }
+
+    /// The loudest sample in a file, as a share of full scale.
+    private func loudest(of url: URL) async throws -> Double {
+        let asset = AVURLAsset(url: url)
+        let track = try await XCTUnwrap(asset.loadTracks(withMediaType: .audio).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false, AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsBigEndianKey: false])
+        reader.add(output)
+        reader.startReading()
+        var peak = 0.0
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            var length = 0
+            var pointer: UnsafeMutablePointer<Int8>?
+            guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
+                                              totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
+                  let pointer else { continue }
+            pointer.withMemoryRebound(to: Int16.self, capacity: length / 2) { samples in
+                for index in 0..<(length / 2) {
+                    peak = max(peak, abs(Double(samples[index])) / 32768)
+                }
+            }
+        }
+        return peak
+    }
+
+    /// A recording shaped like FocusFlow's own: a picture, a silent system
+    /// audio track, and the microphone second.
+    private func makeTwoTrackFixture(at url: URL, seconds: Double, narration: Bool = true) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let picture = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 160, AVVideoHeightKey: 90])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: picture, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+            kCVPixelBufferWidthKey as String: 160, kCVPixelBufferHeightKey as String: 90,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true])
+        writer.add(picture)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000]
+        let system = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        let microphone = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        writer.add(system); writer.add(microphone)
+        writer.startWriting(); writer.startSession(atSourceTime: .zero)
+
+        // The writer throttles an input that has run ahead of the others,
+        // so filling the tracks one after another deadlocks on the first.
+        async let spoken: Void = fill(system, seconds: seconds, amplitude: 0)
+        async let narrated: Void = fill(microphone, seconds: seconds, amplitude: narration ? 0.35 : 0)
+        let context = CGContext(data: nil, width: 160, height: 90, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)!
+        context.setFillColor(CGColor(gray: 0.5, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 160, height: 90))
+        let still = context.makeImage()!
+        for frame in 0..<Int(seconds * 10) {
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+            let pixels = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixels, [])
+            let target = CGContext(data: CVPixelBufferGetBaseAddress(pixels), width: 160, height: 90,
+                                   bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixels),
+                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)!
+            target.draw(still, in: CGRect(x: 0, y: 0, width: 160, height: 90))
+            CVPixelBufferUnlockBaseAddress(pixels, [])
+            while !picture.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            XCTAssertTrue(adaptor.append(pixels, withPresentationTime: CMTime(value: Int64(frame), timescale: 10)))
+        }
+        picture.markAsFinished()
+        try await spoken
+        try await narrated
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+    }
+
+    /// Writes a tone, or silence, into an audio input.
+    private func fill(_ input: AVAssetWriterInput, seconds: Double, amplitude: Double) async throws {
+        let rate = 44_100.0, block = 4_410
+        var description = AudioStreamBasicDescription(mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 4,
+            mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1, mBitsPerChannel: 32, mReserved: 0)
+        var format: CMFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &description, layoutSize: 0,
+                                       layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil,
+                                       formatDescriptionOut: &format)
+        let shape = try XCTUnwrap(format)
+        var written = 0
+        let total = Int(seconds * rate)
+        while written < total {
+            let count = min(block, total - written)
+            var samples = [Float](repeating: 0, count: count)
+            if amplitude > 0 {
+                for index in 0..<count {
+                    samples[index] = Float(sin(Double(written + index) * 2 * .pi * 300 / rate) * amplitude)
+                }
+            }
+            var buffer: CMBlockBuffer?
+            let bytes = count * 4
+            CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes,
+                blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+                dataLength: bytes, flags: 0, blockBufferOut: &buffer)
+            let holder = try XCTUnwrap(buffer)
+            _ = samples.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: holder, offsetIntoDestination: 0, dataLength: bytes) }
+            var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+                presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate)),
+                decodeTimeStamp: .invalid)
+            var sample: CMSampleBuffer?
+            CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: holder, formatDescription: shape,
+                sampleCount: count, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                sampleSizeEntryCount: 1, sampleSizeArray: [4], sampleBufferOut: &sample)
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            XCTAssertTrue(input.append(try XCTUnwrap(sample)))
+            written += count
+        }
+        input.markAsFinished()
     }
 
     /// A few seconds of tone, written as a real AAC file.
@@ -2961,7 +3104,7 @@ final class FocusFlowTests {
                 blockLength: bytes, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
                 offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &buffer)
             let block = try XCTUnwrap(buffer)
-            samples.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) }
+            _ = samples.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) }
             var sample: CMSampleBuffer?
             var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
                                             presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate)),

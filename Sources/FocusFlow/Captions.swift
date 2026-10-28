@@ -296,7 +296,7 @@ enum CaptionBuilder {
 }
 
 enum CaptionError: LocalizedError {
-    case denied, restricted, unavailable(String), noAudio, failed(String), cancelled
+    case denied, restricted, unavailable(String), noAudio, silent, noSpeech, failed(String), cancelled
     var errorDescription: String? {
         switch self {
         case .denied:
@@ -307,6 +307,10 @@ enum CaptionError: LocalizedError {
             "Speech recognition is not available for \(language) on this Mac. Choose another language, or add it under System Settings › General › Language & Region."
         case .noAudio:
             "This recording has no audio to caption. Record with the microphone or system audio switched on."
+        case .silent:
+            "This recording's audio is silent, so there is nothing to caption. Switch Microphone on in the recorder before recording narration — microphone capture needs macOS 15 or newer."
+        case .noSpeech:
+            "No speech was recognised. Check that the spoken language above matches the narration, and that the voice is clear of background audio."
         case .cancelled:
             "Caption generation was cancelled."
         case .failed(let reason):
@@ -329,6 +333,8 @@ enum CaptionTranscriber {
     /// Pieces overlap so a word spoken across a join is not lost. The
     /// repeated words are dropped when the pieces are stitched together.
     static let overlap: Double = 1.5
+    /// Below this, a track is carrying its own noise floor and nothing else.
+    static let silence = 0.004
     /// How long one piece may take before it is given up on. Recognising
     /// fifty seconds takes a few seconds on device; this is an abandoned
     /// request, not a slow one.
@@ -382,16 +388,21 @@ enum CaptionTranscriber {
         let step = chunk - overlap
         let pieces = max(1, Int(ceil(duration / step)))
         var collected: [CaptionWord] = []
+        var loudest = 0.0
         for piece in 0..<pieces {
             try Task.checkCancellation()
             let offset = Double(piece) * step
             let length = min(chunk, duration - offset)
             guard length > 0.2 else { break }
             progress(Double(piece) / Double(pieces))
-            let slice = scratch.appendingPathComponent("piece-\(piece).m4a")
-            try await extractAudio(from: asset, range: CMTimeRange(
+            let slice = scratch.appendingPathComponent("piece-\(piece).wav")
+            let peak = try await extractAudio(from: asset, range: CMTimeRange(
                 start: CMTime(seconds: offset, preferredTimescale: 600),
                 duration: CMTime(seconds: length, preferredTimescale: 600)), to: slice)
+            loudest = max(loudest, peak)
+            // Nothing on the track but the noise floor. Handing that to the
+            // recogniser costs seconds per piece and returns nothing.
+            guard peak > silence else { continue }
             let spoken = try await recognize(slice, recognizer: recognizer, onDevice: onDevice)
             for word in spoken {
                 let placed = CaptionWord(text: word.text, start: word.start + offset, duration: word.duration)
@@ -403,24 +414,86 @@ enum CaptionTranscriber {
         }
         progress(1)
         guard !collected.isEmpty else {
-            throw CaptionError.failed("no speech was recognised in this recording.")
+            throw loudest > silence ? CaptionError.noSpeech : CaptionError.silent
         }
         return collected
     }
 
     /// The audio of one stretch of the recording, on its own, as a file the
-    /// recogniser will accept.
-    static func extractAudio(from asset: AVAsset, range: CMTimeRange, to url: URL) async throws {
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
-            throw CaptionError.failed("this recording's audio could not be read.")
+    /// recogniser will accept. Returns the loudest sample in it, which is
+    /// how "nothing was said" is told apart from "nothing was recorded".
+    ///
+    /// Every audio track is mixed down, not just the first one. A FocusFlow
+    /// recording keeps system audio and the microphone as separate tracks,
+    /// and the narration is on the second of them — so taking the first
+    /// track hands the recogniser the silence the screen was making while
+    /// somebody talked over it.
+    @discardableResult
+    static func extractAudio(from asset: AVAsset, range: CMTimeRange, to url: URL) async throws -> Double {
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !tracks.isEmpty else { throw CaptionError.noAudio }
+
+        let reader = try AVAssetReader(asset: asset)
+        reader.timeRange = range
+        // One mono channel at the rate speech recognition works in. Written
+        // uncompressed: the piece is seconds long, lives in a temporary
+        // directory, and re-encoding it would only cost quality and time.
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1,
+        ]
+        let mixed = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: settings)
+        mixed.alwaysCopiesSampleData = false
+        guard reader.canAdd(mixed) else { throw CaptionError.failed("this recording's audio could not be read.") }
+        reader.add(mixed)
+
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .wav)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else { throw CaptionError.failed("this recording's audio could not be written out.") }
+        writer.add(input)
+        guard reader.startReading(), writer.startWriting() else {
+            throw CaptionError.failed(reader.error?.localizedDescription ?? writer.error?.localizedDescription ?? "the audio could not be separated.")
         }
-        session.outputURL = url
-        session.outputFileType = .m4a
-        session.timeRange = range
-        await session.export()
-        guard session.status == .completed else {
-            throw CaptionError.failed(session.error?.localizedDescription ?? "the audio could not be separated.")
+        writer.startSession(atSourceTime: range.start)
+
+        var peak = 0.0
+        while reader.status == .reading {
+            guard let buffer = mixed.copyNextSampleBuffer() else { break }
+            if let block = CMSampleBufferGetDataBuffer(buffer) {
+                var length = 0
+                var pointer: UnsafeMutablePointer<Int8>?
+                if CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
+                                               totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
+                   let pointer {
+                    pointer.withMemoryRebound(to: Int16.self, capacity: length / 2) { samples in
+                        for index in stride(from: 0, to: length / 2, by: 7) {
+                            let level = abs(Double(samples[index])) / 32768
+                            if level > peak { peak = level }
+                        }
+                    }
+                }
+            }
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 2_000_000)
+            }
+            guard input.append(buffer) else { break }
         }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw CaptionError.failed(writer.error?.localizedDescription ?? "the audio could not be separated.")
+        }
+        if reader.status == .failed {
+            throw CaptionError.failed(reader.error?.localizedDescription ?? "the audio could not be read.")
+        }
+        return peak
     }
 
     private static func recognize(_ url: URL, recognizer: SFSpeechRecognizer, onDevice: Bool) async throws -> [CaptionWord] {
