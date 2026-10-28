@@ -290,6 +290,7 @@ struct ProjectDocument: Codable {
     var typingFollow: TypingFollowSettings? = nil
     var selectionFocus: SelectionFocusSettings? = nil
     var sounds: SoundSettings? = nil
+    var captions: CaptionSettings? = nil
     var customRatioWidth: Double? = nil
     var customRatioHeight: Double? = nil
     /// Which set of defaults this project was written against. Absent in

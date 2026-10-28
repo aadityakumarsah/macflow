@@ -34,6 +34,11 @@ final class EditorModel: ObservableObject {
     @Published var typingFollow = TypingFollowSettings() { willSet { remember() } didSet { changed() } }
     @Published var selectionFocus = SelectionFocusSettings() { willSet { remember() } didSet { changed() } }
     @Published var sounds = SoundSettings() { willSet { remember() } didSet { changed() } }
+    /// Captions only change pixels, so the assembled tracks — music loops,
+    /// hundreds of sound cues — are reused rather than rebuilt for a colour.
+    @Published var captions = CaptionSettings() { willSet { remember() } didSet { changed(reusingMedia: true) } }
+    @Published var captionProgress: Double?
+    @Published var captionStatus: String?
     /// Only meaningful while `ratio` is `.custom`.
     @Published var customRatio = CGSize(width: 16, height: 10) {
         willSet { remember() }
@@ -110,6 +115,7 @@ final class EditorModel: ObservableObject {
     private var movePreviewTask: Task<Void, Never>?
     private var movePreviewEnd: Double?
     private var openTask: Task<Void, Never>?
+    private var captionTask: Task<Void, Never>?
     private var metadata = RecordingMetadata.empty
     var recordingMetadata: RecordingMetadata { metadata }
 
@@ -296,6 +302,7 @@ final class EditorModel: ObservableObject {
         customBackground = CustomBackground(); exportOptions = ExportOptions()
         customRatio = CGSize(width: 16, height: 10)
         grade = GradeSettings(); cameraMove = CameraMoveSettings(); typingFollow = TypingFollowSettings(); sounds = SoundSettings()
+        captions = CaptionSettings(); captionProgress = nil; captionStatus = nil; captionTask?.cancel(); captionTask = nil
         if let camera = self.metadata.cameraPresentation {
             cameraX = camera.x; cameraY = camera.y; cameraSize = camera.size; cameraShape = camera.shape; cameraMirrored = camera.mirrored
         }
@@ -366,6 +373,124 @@ final class EditorModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         musicURL = url
     }
+    // MARK: - Captions
+
+    var captionsBusy: Bool { captionProgress != nil }
+
+    /// Listens to the recording and writes the lines.
+    ///
+    /// Anything already there is replaced, which is what "generate" means
+    /// — and it is one undo step, so a set of hand-edited lines is never
+    /// lost to a stray press.
+    func generateCaptions() {
+        guard let videoURL, !captionsBusy else { return }
+        captionStatus = nil
+        captionProgress = 0
+        let language = captions.language
+        let perLine = captions.wordsPerLine
+        captionTask = Task {
+            do {
+                let words = try await CaptionTranscriber.words(in: videoURL, language: language) { share in
+                    Task { @MainActor in
+                        guard self.captionProgress != nil else { return }
+                        self.captionProgress = min(0.99, share)
+                    }
+                }
+                try Task.checkCancellation()
+                var updated = captions
+                updated.cues = CaptionBuilder.cues(from: words, wordsPerLine: perLine)
+                updated.enabled = true
+                captions = updated
+                captionProgress = nil
+                captionStatus = "\(updated.cues.count) lines from \(words.count) words."
+            } catch is CancellationError {
+                captionProgress = nil
+            } catch {
+                captionProgress = nil
+                captionStatus = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelCaptions() {
+        captionTask?.cancel(); captionTask = nil
+        captionProgress = nil
+        captionStatus = "Caption generation stopped."
+    }
+
+    func applyCaptionPreset(_ preset: CaptionPreset) {
+        var updated = preset.apply(to: captions)
+        updated.cues = CaptionBuilder.reflow(captions.cues, wordsPerLine: updated.wordsPerLine)
+        captions = updated
+    }
+
+    /// Re-splits the existing lines, which is cheap — no second listen.
+    func reflowCaptions(wordsPerLine: Int) {
+        var updated = captions
+        updated.wordsPerLine = wordsPerLine
+        updated.cues = CaptionBuilder.reflow(captions.cues, wordsPerLine: wordsPerLine)
+        captions = updated
+    }
+
+    func addCaptionCue() {
+        var updated = captions
+        let start = min(max(playhead, 0), max(0, duration - 0.6))
+        let next = updated.cues.first { $0.start > start }?.start ?? .greatestFiniteMagnitude
+        let cue = CaptionCue(start: start, duration: min(2, max(0.6, next - start)), text: "New line")
+        updated.cues.append(cue)
+        updated.cues.sort { $0.start < $1.start }
+        updated.enabled = true
+        captions = updated
+    }
+
+    func removeCaptionCue(_ id: UUID) {
+        var updated = captions
+        updated.cues.removeAll { $0.id == id }
+        captions = updated
+    }
+
+    func updateCaptionCue(_ id: UUID, _ change: (inout CaptionCue) -> Void) {
+        guard let index = captions.cues.firstIndex(where: { $0.id == id }) else { return }
+        var updated = captions
+        change(&updated.cues[index])
+        updated.cues[index].duration = max(0.2, updated.cues[index].duration)
+        updated.cues.sort { $0.start < $1.start }
+        captions = updated
+    }
+
+    /// The lines as the exported file sees them: trimmed away where the
+    /// edit trims, and on the output clock, so a subtitle file dropped on
+    /// YouTube beside the export lines up with it.
+    func exportableCues() -> [CaptionCue] {
+        let origin = timeMap.outputTime(for: trimStart)
+        return captions.cues.compactMap { cue in
+            let from = max(cue.start, trimStart), to = min(cue.end, trimEnd)
+            guard to > from + 0.05 else { return nil }
+            let start = timeMap.outputTime(for: from) - origin
+            let end = timeMap.outputTime(for: to) - origin
+            guard end > start else { return nil }
+            var moved = cue
+            moved.start = start; moved.duration = end - start
+            return moved
+        }
+    }
+
+    /// Writes the lines out as a subtitle file, for a platform that would
+    /// rather have them switchable than burned into the picture.
+    func exportCaptionFile(asVTT: Bool = false) {
+        let cues = exportableCues()
+        guard !cues.isEmpty else { message = "There are no caption lines to write out."; return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = (videoURL?.deletingPathExtension().lastPathComponent ?? "Captions")
+            + (asVTT ? ".vtt" : ".srt")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let text = asVTT ? CaptionBuilder.vtt(cues, casing: captions.casing)
+                         : CaptionBuilder.srt(cues, casing: captions.casing)
+        do { try text.write(to: url, atomically: true, encoding: .utf8); saveStatus = "Captions written" }
+        catch { message = error.localizedDescription }
+    }
+
     func seek(to seconds: Double) {
         playhead = max(0, min(duration, seconds))
         player.seek(to: CMTime(seconds: playerTimeMap.outputTime(for: playhead), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -665,10 +790,11 @@ final class EditorModel: ObservableObject {
         typingFollow = d.typingFollow ?? TypingFollowSettings()
         selectionFocus = d.selectionFocus ?? SelectionFocusSettings()
         sounds = d.sounds ?? SoundSettings()
+        captions = d.captions ?? CaptionSettings()
         restoring = false
     }
     private func document() -> ProjectDocument {
-        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, cameraMove: cameraMove, typingFollow: typingFollow, selectionFocus: selectionFocus, sounds: sounds, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height, schema: ProjectDocument.schemaVersion)
+        ProjectDocument(videoPath: videoURL?.path ?? "", segments: segments, background: background, ratio: ratio, padding: padding, cornerRadius: cornerRadius, shadow: shadow, cursorSize: cursorSize, clickEffects: clickEffects, showCursor: showCursor, smoothCursor: smoothCursor, cursorShadow: cursorShadow, showKeystrokes: showKeystrokes, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicPath: musicURL?.path, musicVolume: musicVolume, metadata: metadata, frameAppearance: frameAppearance, motionAppearance: motionAppearance, cursorAppearance: cursorAppearance, customBackground: customBackground, exportOptions: exportOptions, grade: grade, cameraMove: cameraMove, typingFollow: typingFollow, selectionFocus: selectionFocus, sounds: sounds, captions: captions, customRatioWidth: customRatio.width, customRatioHeight: customRatio.height, schema: ProjectDocument.schemaVersion)
     }
     /// Read, and brought up to today's defaults — a project saved before
     /// one of them changed should not be stuck with it.
@@ -687,7 +813,7 @@ final class EditorModel: ObservableObject {
         catch { message = error.localizedDescription }
     }
     func settings(preview: Bool = false) -> ExportSettings {
-        ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds, selectionFocus: selectionFocus)
+        ExportSettings(background: background, canvasSize: preview ? previewCanvasSize : canvasSize, padding: padding, cornerRadius: cornerRadius, shadow: shadow, segments: segments, pointerSamples: pointerSamples, clicks: recordedClicks, keystrokes: keystrokes, cursorSize: cursorSize, clickEffects: clickEffects, showKeystrokes: showKeystrokes, cameraURL: cameraURL, showCamera: showCamera, cameraSize: cameraSize, cameraHeightScale: cameraHeightScale, cameraSubjectScale: cameraSubjectScale, cameraX: cameraX, cameraY: cameraY, cameraCornerRadius: cameraCornerRadius, cameraShape: cameraShape, showCursor: showCursor && metadata.embeddedCursor != true, smoothCursor: smoothCursor, cursorShadow: cursorShadow, cameraMirrored: cameraMirrored, trimStart: trimStart, trimEnd: trimEnd, playbackRate: playbackRate, muted: muted, musicURL: musicURL, musicVolume: musicVolume, cameraTimeOffset: metadata.cameraTimeOffset ?? 0, frame: frameAppearance, motion: motionAppearance, cursor: cursorAppearance, cursorPointScale: sourceSize.width / max(1, metadata.sourcePointWidth ?? sourceSize.width), customBackground: customBackground, grade: grade, cameraMove: cameraMove, exportOptions: exportOptions, typingEvents: metadata.typingEvents ?? [], scrollEvents: metadata.scrollEvents ?? [], sounds: sounds, selectionFocus: selectionFocus, captions: captions)
     }
     private func changed(reusingMedia: Bool = false) {
         guard !restoring, let url = videoURL, duration > 0 else { return }

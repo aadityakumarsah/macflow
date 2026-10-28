@@ -66,7 +66,8 @@ Only zooms are generated automatically. Spotlights, outlines, pixelation and cal
 - **Timeline alignment** — Effect edges snap to nearby edits and the playhead. Hold Option for free placement. Rows stay fixed during a drag, and the timeline scrolls when many layers overlap.
 - **Editable 3D paths** — Open **3D → Draw my move**, choose Start or End, or scrub and add a point. Drag the picture to tilt, the centre to slide, the top handle to rotate, and the bottom handle to move closer or back. Drag a diamond to change its timing. Frame-step buttons allow precise placement; **Return at end** restores a neutral pose. Each drag is undoable.
 - **Full screen preview** — Use **Full screen** or ⌃⌘F to give the preview the whole display. **Edit 3D** keeps the motion path controls available; Escape exits.
-- **Export** — MP4 or MOV, Source to 4K, 30 or 60 fps. **Source** is the resolution you recorded at, encoded at no less than the rate the recording itself was carrying, so a 4K capture leaves as a 4K file.
+- **Captions** — **Captions → Generate captions** listens to the narration and writes it out in time with what was said, on this Mac, for any language with an on-device model. Six looks (Clean, Bold, Shorts, Podcast, Neon, Broadcast), any installed font, size, weight, letter and line spacing, colour, outline, shadow, capitals, position and width. Backgrounds behind the words: a block, a rounded panel, a soft fade, or the picture itself blurred. Animation: cut, fade, pop, rise, word-by-word with the spoken word lit, or typewriter. Lines are editable, and can be written out as .srt or .vtt on the export's own clock.
+- **Export** — MP4 or MOV, Source to 4K, 30 or 60 fps. **Source** is the resolution you recorded at, encoded at no less than the rate the recording itself was carrying, so a 4K capture leaves as a 4K file. A Mac's screen is recorded at its real pixel size: a Retina display gives a Retina recording, not a half-resolution one.
 
 Every camera move — a click zoom, a typing follow, a pan — is smoothed over a window centred on the moment, so the frame can never change speed abruptly however abruptly the thing it is following does.
 
@@ -91,13 +92,13 @@ An honest comparison, including where FocusFlow is behind:
 | Platform | macOS 14+ | macOS | macOS, Windows, web | macOS, Windows, Linux |
 | Signed with a paid Developer ID | **No** | Yes | Yes | Yes |
 | Cloud sharing links | No | No | Yes | No |
-| Transcription, captions, AI summaries | No | Some | Yes | No |
+| Transcription and captions | **Yes**, on device | Some | Yes | No |
 | Live streaming | No | No | No | Yes |
 | Maturity | Early | Mature | Mature | Mature |
 
 **Choose FocusFlow** if you want automatic click zooms and a motion editor, free and open source, with nothing leaving your Mac.
 
-**Choose something else** if you need captions or transcription, cloud share links, Windows or Linux, live streaming, or a notarized build your IT policy will accept.
+**Choose something else** if you need cloud share links, Windows or Linux, live streaming, AI summaries, or a notarized build your IT policy will accept.
 
 ---
 
@@ -135,13 +136,13 @@ It is signed ad-hoc rather than with a paid Apple Developer ID, so Gatekeeper bl
 For automatic click zooms, 3D camera moves, backgrounds and cursor styling, yes — and it is free and open source. Screen Studio is a mature, notarized commercial product and FocusFlow is early. FocusFlow also records a single Chrome tab, which Screen Studio does not.
 
 **Is it a Loom alternative?**
-Only for recording and editing. FocusFlow has no cloud sharing, no share links, no viewer analytics and no transcription. If you need to send someone a link, Loom does that and this does not.
+Only for recording and editing. FocusFlow has no cloud sharing, no share links and no viewer analytics. If you need to send someone a link, Loom does that and this does not.
 
 **Can it record a single browser tab?**
 Yes. Chrome's picker is restricted to tabs, and only the page content is recorded — no browser toolbar. Click zooms work there too.
 
 **Does it do captions or transcription?**
-No.
+Yes. **Captions → Generate captions** transcribes the narration and lays it over the video in sync, styled however you like, and can also write a .srt or .vtt file beside the export. Recognition runs on this Mac for any language with an on-device model installed, so the audio does not leave it; a language without one falls back to Apple's speech service, and the panel says so before you press the button. It does not write AI summaries or rewrite what you said.
 
 **Does it work on Intel Macs or Windows?**
 Builds target Apple silicon on macOS 14+. There is no Windows or Linux version.

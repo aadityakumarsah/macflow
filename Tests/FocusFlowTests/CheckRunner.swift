@@ -75,13 +75,19 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try await tests.testEditablePosePath()
             try await tests.testThreeDPresetWorkflowAndPreviewReuse()
             try tests.testOlderProjectsAreBroughtUpToTodaysDefaults()
+            print("Checking capture resolution and captions…")
+            tests.testCaptureUsesEveryPixelTheScreenHas()
+            try tests.testCaptionsBreakIntoReadableLines()
+            try await tests.testCaptionsAreDrawnOverTheFinishedFrame()
+            try await tests.testCaptionsPersistAndFollowTheEdit()
+            try await tests.testCaptionAudioIsSlicedOutOfTheRecording()
             print("Checking the selection and cursor graphics…")
             try tests.testSelectionIsDrawnWhereItHappens()
             try tests.testCursorMarksAndCustomArtwork()
             print("Rendering and validating MP4 exports…")
             try await tests.testRenderedExportTrimSpeedRegionalBlurAndCamera()
         } catch { XCTFail(error.localizedDescription) }
-        if failures.isEmpty { print("PASS: 12 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, keys/editor controls, smoothing/output quality/3D handles, selection/cursor graphics, real MP4 export.") }
+        if failures.isEmpty { print("PASS: 13 check groups — cursor, compatibility, crop/motion/persistence, rendered presentation, undo/bounds, browser bridge, backgrounds/export options, updater, keys/editor controls, smoothing/output quality/3D handles, capture resolution/captions, selection/cursor graphics, real MP4 export.") }
         else { failures.forEach { print("FAIL: \($0)") }; exit(1) }
     }
 }

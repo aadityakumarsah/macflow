@@ -2605,6 +2605,379 @@ final class FocusFlowTests {
         XCTAssertEqual(snapped.zoom, 1.1, accuracy: 0.0001)
     }
 
+    /// A Mac's screen is reported in points and recorded in pixels, and
+    /// those are not the same number on any Mac made in the last decade.
+    func testCaptureUsesEveryPixelTheScreenHas() {
+        // A 14-inch MacBook Pro's built-in display.
+        let retina = ScreenRecorder.capturePixels(points: CGSize(width: 1512, height: 982), scale: 2)
+        XCTAssertEqual(retina, CGSize(width: 3024, height: 1964))
+        // An external display at one pixel per point is unchanged.
+        XCTAssertEqual(ScreenRecorder.capturePixels(points: CGSize(width: 2560, height: 1440), scale: 1),
+                       CGSize(width: 2560, height: 1440))
+        // Odd results are nudged even; H.264 will not take them otherwise.
+        let odd = ScreenRecorder.capturePixels(points: CGSize(width: 801, height: 507), scale: 1)
+        XCTAssertEqual(odd.width.truncatingRemainder(dividingBy: 2), 0)
+        XCTAssertEqual(odd.height.truncatingRemainder(dividingBy: 2), 0)
+        // A scale that was never reported must not collapse the capture.
+        XCTAssertEqual(ScreenRecorder.capturePixels(points: CGSize(width: 1440, height: 900), scale: 0),
+                       CGSize(width: 1440, height: 900))
+
+        func rate(_ settings: [String: Any]) -> Int {
+            ((settings[AVVideoCompressionPropertiesKey] as? [String: Any])?[AVVideoAverageBitRateKey] as? Int) ?? 0
+        }
+        let hd30 = ScreenRecorder.captureSettings(width: 1920, height: 1080, frameRate: 30)
+        let hd60 = ScreenRecorder.captureSettings(width: 1920, height: 1080, frameRate: 60)
+        let retina60 = ScreenRecorder.captureSettings(width: 3024, height: 1964, frameRate: 60)
+        // Twice the frames, and four times the pixels, each cost bits —
+        // the flat per-pixel figure this replaced charged for neither.
+        XCTAssertGreaterThan(rate(hd60), rate(hd30))
+        XCTAssertGreaterThan(rate(retina60), rate(hd60) * 2)
+        XCTAssertEqual(hd60[AVVideoWidthKey] as? Int, 1920)
+        XCTAssertEqual(hd60[AVVideoCodecKey] as? AVVideoCodecType, .h264)
+        // Beyond H.264's reach the encoder would simply refuse.
+        XCTAssertEqual(ScreenRecorder.captureSettings(width: 6016, height: 3384, frameRate: 60)[AVVideoCodecKey] as? AVVideoCodecType, .hevc)
+    }
+
+    /// Recognised words become lines that can be read: split where a
+    /// sentence or a breath ends, never overlapping, never silently
+    /// dropping a word.
+    func testCaptionsBreakIntoReadableLines() throws {
+        func word(_ text: String, _ start: Double, _ duration: Double = 0.3) -> CaptionWord {
+            CaptionWord(text: text, start: start, duration: duration)
+        }
+        let spoken = [
+            word("Today", 0.2), word("we", 0.6), word("are", 0.9), word("recording.", 1.2),
+            word("Then", 3.0), word("we", 3.3), word("edit", 3.6), word("it", 3.9),
+            word("and", 4.2), word("we", 4.5), word("publish", 4.8), word("it", 5.1),
+        ]
+        let cues = CaptionBuilder.cues(from: spoken, wordsPerLine: 7)
+        XCTAssertGreaterThan(cues.count, 2)
+        // The full stop ends a line, and the pause after it starts the next.
+        XCTAssertEqual(cues[0].text, "Today we are recording.")
+        XCTAssertEqual(cues[1].start, 3.0, accuracy: 0.0001)
+        // Nothing overlaps, and the words all survive.
+        for pair in zip(cues, cues.dropFirst()) { XCTAssertLessThanOrEqual(pair.0.end, pair.1.start + 0.0001) }
+        XCTAssertEqual(cues.flatMap { $0.text.split(separator: " ") }.count, spoken.count)
+        // A line is held past its last word so it can be finished reading.
+        XCTAssertGreaterThan(cues[0].end, 1.5)
+        // No line may fill the screen, however long the sentence runs.
+        let chatter = (0..<40).map { word("word\($0)", Double($0) * 0.25) }
+        XCTAssertTrue(CaptionBuilder.cues(from: chatter, wordsPerLine: 4).allSatisfy { $0.text.split(separator: " ").count <= 4 })
+        // Re-splitting is done from the words, without listening again.
+        let reflowed = CaptionBuilder.reflow(cues, wordsPerLine: 3)
+        XCTAssertTrue(reflowed.allSatisfy { $0.text.split(separator: " ").count <= 3 })
+        XCTAssertEqual(reflowed.flatMap { $0.text.split(separator: " ") }.count, spoken.count)
+
+        // Recognised timings stand while the line is the recognised one.
+        XCTAssertEqual(cues[0].timedWords.map(\.start), [0.2, 0.6, 0.9, 1.2])
+        // Rewritten, they are shared out rather than pointing at the wrong word.
+        var edited = cues[0]; edited.text = "Today we are filming"
+        let shared = edited.timedWords
+        XCTAssertEqual(shared.count, 4)
+        XCTAssertEqual(shared[0].start, edited.start, accuracy: 0.0001)
+        XCTAssertEqual(shared.last!.end, edited.end, accuracy: 0.001)
+        for pair in zip(shared, shared.dropFirst()) { XCTAssertEqual(pair.0.end, pair.1.start, accuracy: 0.0001) }
+
+        // A subtitle file carries the same lines, stamped as SubRip wants.
+        let srt = CaptionBuilder.srt(Array(cues.prefix(1)))
+        XCTAssertTrue(srt.hasPrefix("1\n00:00:00,200 --> "))
+        XCTAssertTrue(srt.contains("Today we are recording."))
+        XCTAssertTrue(CaptionBuilder.vtt(cues).hasPrefix("WEBVTT"))
+        XCTAssertTrue(CaptionBuilder.srt(Array(cues.prefix(1)), casing: .upper).contains("TODAY WE ARE RECORDING."))
+    }
+
+    /// The caption is drawn where it was asked for, in the colour it was
+    /// asked for, and only while its line is on.
+    @MainActor func testCaptionsAreDrawnOverTheFinishedFrame() throws {
+        let renderer = FocusFlowCompositor(), context = CIContext()
+        let canvas = CGRect(x: 0, y: 0, width: 480, height: 270)
+        let page = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: canvas)
+        var settings = ExportSettings(background: .graphite, canvasSize: canvas.size, padding: 0, cornerRadius: 0, shadow: 0, segments: [], pointerSamples: [], clicks: [], keystrokes: [], cursorSize: 1, clickEffects: false, showKeystrokes: false, cameraURL: nil, showCamera: false, cameraSize: 0.2, cameraX: 0.8, cameraY: 0.8, cameraCornerRadius: 0, cameraShape: .circle)
+        settings.showCursor = false
+        settings.motion.ambientGraphics = false
+        settings.motion.scrollBlur = false
+        settings.motion.automaticMotionBlur = false
+        settings.trimStart = 0; settings.trimEnd = 8
+
+        var captions = CaptionSettings()
+        captions.enabled = true
+        captions.animation = .none
+        captions.backdrop = .none
+        captions.shadow = 0
+        captions.size = 0.1
+        captions.cues = [CaptionCue(start: 1, duration: 2, text: "Hello there", words: [
+            CaptionWord(text: "Hello", start: 1, duration: 0.9),
+            CaptionWord(text: "there", start: 1.9, duration: 1.1),
+        ])]
+        settings.captions = captions
+
+        func frame(_ time: Double) throws -> [UInt8] {
+            pixels(try XCTUnwrap(context.createCGImage(renderer.renderFrame(source: page, time: time, settings: settings), from: canvas)))
+        }
+        /// How far a band of rows departs from the flat grey page.
+        func ink(_ data: [UInt8], rows: ClosedRange<Int>) -> Double {
+            var total = 0.0
+            for row in rows { for column in 0..<480 {
+                let index = (row * 480 + column) * 4
+                for channel in 0..<3 { total += abs(Double(data[index + channel]) - 127) }
+            } }
+            return total / Double(rows.count * 480 * 3)
+        }
+        // Rows are counted from the top of the bitmap, so the lower part
+        // of the picture is the higher row numbers.
+        let lower = 200...265, upper = 5...70
+
+        let during = try frame(2)
+        XCTAssertGreaterThan(ink(during, rows: lower), 2)
+        // Before the line is due, and after it has gone, the page is clean.
+        let before = try frame(0.5)
+        XCTAssertLessThan(ink(before, rows: lower), 0.2)
+        XCTAssertLessThan(ink(try frame(4), rows: lower), 0.2)
+        // Switched off, nothing is drawn even while the line is current.
+        settings.captions.enabled = false
+        XCTAssertLessThan(ink(try frame(2), rows: lower), 0.2)
+        settings.captions.enabled = true
+
+        // Placed at the top, the words move with it.
+        settings.captions.placement = .top
+        let top = try frame(2)
+        XCTAssertGreaterThan(ink(top, rows: upper), 2)
+        XCTAssertLessThan(ink(top, rows: lower), 0.2)
+        settings.captions.placement = .bottom
+
+        // The text colour is the text colour.
+        settings.captions.textColor = RGBColor(r: 1, g: 0.1, b: 0.1)
+        let red = try frame(2)
+        func warmth(_ data: [UInt8]) -> Double {
+            var total = 0.0
+            for row in lower { for column in 0..<480 {
+                let index = (row * 480 + column) * 4
+                total += Double(data[index]) - Double(data[index + 2])
+            } }
+            return total
+        }
+        XCTAssertGreaterThan(warmth(red), warmth(during) + 1000)
+        settings.captions.textColor = RGBColor(r: 1, g: 1, b: 1)
+
+        // A panel behind the words darkens the band they sit in.
+        func brightness(_ data: [UInt8]) -> Double {
+            var total = 0.0
+            for row in lower { for column in 0..<480 {
+                let index = (row * 480 + column) * 4
+                total += Double(data[index]) + Double(data[index + 1]) + Double(data[index + 2])
+            } }
+            return total / Double(lower.count * 480 * 3)
+        }
+        settings.captions.backdrop = .pill
+        settings.captions.backdropOpacity = 0.9
+        XCTAssertLessThan(brightness(try frame(2)), brightness(during) - 5)
+        settings.captions.backdrop = .none
+
+        // Fading in means the first instant is fainter than the middle.
+        settings.captions.animation = .fade
+        XCTAssertLessThan(ink(try frame(1.01), rows: lower), ink(during, rows: lower))
+        XCTAssertEqual(ink(try frame(2), rows: lower), ink(during, rows: lower), accuracy: 0.001)
+
+        // Word by word, the accent lands on a different word as it plays.
+        settings.captions.animation = .karaoke
+        settings.captions.highlightFill = true
+        settings.captions.highlightColor = RGBColor(r: 0, g: 0.9, b: 0.2)
+        func greenest(_ data: [UInt8]) -> Int {
+            var best = -1.0, column = 0
+            for candidate in 0..<480 {
+                var total = 0.0
+                for row in lower {
+                    let index = (row * 480 + candidate) * 4
+                    total += Double(data[index + 1]) - Double(data[index])
+                }
+                if total > best { best = total; column = candidate }
+            }
+            return column
+        }
+        XCTAssertLessThan(greenest(try frame(1.3)), greenest(try frame(2.4)))
+
+        // Typewriter writes the line out: less of it early than late.
+        settings.captions.animation = .typewriter
+        XCTAssertLessThan(ink(try frame(1.1), rows: lower), ink(try frame(2.6), rows: lower))
+
+        // A line too long for one row wraps instead of running off the canvas.
+        settings.captions.animation = .none
+        settings.captions.size = 0.07
+        settings.captions.maxWidth = 0.6
+        settings.captions.cues = [CaptionCue(start: 1, duration: 2, text: "A much longer line of narration than will fit across one row of this canvas")]
+        let wrapped = try XCTUnwrap(CaptionRenderer.render(cue: settings.captions.cues[0], at: 2, settings: settings.captions, accent: CGColor(gray: 1, alpha: 1), canvas: canvas))
+        XCTAssertLessThanOrEqual(wrapped.box.width, canvas.width)
+        XCTAssertGreaterThan(wrapped.box.height, canvas.height * 0.07 * 1.5)
+        XCTAssertEqual(wrapped.box.midX, canvas.midX, accuracy: 1)
+        XCTAssertGreaterThan(ink(try frame(2), rows: lower), 1)
+    }
+
+    /// Captions survive a project round trip, follow the trim and the
+    /// speed on the way out, and a project written before they existed
+    /// still opens.
+    @MainActor func testCaptionsPersistAndFollowTheEdit() throws {
+        let model = EditorModel(restoreLatest: false)
+        model.duration = 20; model.trimEnd = 20
+        model.videoURL = URL(fileURLWithPath: "/tmp/caption-check-nonexistent.mp4")
+        defer { model.videoURL = nil }
+
+        var captions = CaptionSettings()
+        captions.enabled = true
+        captions.fontName = "Helvetica"
+        captions.cues = [
+            CaptionCue(start: 1, duration: 2, text: "First line"),
+            CaptionCue(start: 5, duration: 2, text: "Second line"),
+            CaptionCue(start: 15, duration: 2, text: "Last line"),
+        ]
+        model.captions = captions
+
+        // What the renderer is handed is what the panel is showing.
+        XCTAssertEqual(model.settings().captions.cues.count, 3)
+        XCTAssertEqual(model.settings().captions.fontName, "Helvetica")
+
+        // Trimming drops what falls outside it and rebases the rest, and a
+        // speed range moves the later lines with the picture.
+        model.trimStart = 4
+        model.trimEnd = 12
+        let trimmed = model.exportableCues()
+        XCTAssertEqual(trimmed.count, 1)
+        XCTAssertEqual(trimmed[0].text, "Second line")
+        XCTAssertEqual(trimmed[0].start, 1, accuracy: 0.0001)
+        model.segments = [EditSegment(kind: .speed, start: 4, duration: 1, intensity: 2, x: 0.5, y: 0.5)]
+        XCTAssertEqual(model.exportableCues()[0].start, 0.5, accuracy: 0.0001)
+
+        // A preset changes the look and leaves the words alone.
+        model.trimStart = 0; model.trimEnd = 20; model.segments = []
+        // Edits within a moment of each other are one history step, which
+        // in a test is all of them. End the group so the preset is its own.
+        model.endPoseGesture()
+        model.applyCaptionPreset(.shorts)
+        XCTAssertEqual(model.captions.casing, .upper)
+        XCTAssertEqual(model.captions.animation, .karaoke)
+        XCTAssertEqual(model.captions.cues.map(\.text), ["First line", "Second line", "Last line"])
+        XCTAssertEqual(model.captions.fontName, "Helvetica")
+        // And it is one step back, like every other edit.
+        model.undo()
+        XCTAssertEqual(model.captions.casing, .spoken)
+
+        // Editing a line, and adding one at the playhead.
+        let first = try XCTUnwrap(model.captions.cues.first)
+        model.updateCaptionCue(first.id) { $0.text = "Rewritten" }
+        XCTAssertEqual(model.captions.cues.first?.text, "Rewritten")
+        model.playhead = 9
+        model.addCaptionCue()
+        XCTAssertEqual(model.captions.cues.count, 4)
+        XCTAssertEqual(model.captions.cues.map(\.start), model.captions.cues.map(\.start).sorted())
+        model.removeCaptionCue(first.id)
+        XCTAssertEqual(model.captions.cues.count, 3)
+
+        // Written out, read back.
+        let encoded = try JSONEncoder().encode(model.captions)
+        XCTAssertEqual(try JSONDecoder().decode(CaptionSettings.self, from: encoded), model.captions)
+
+        // A project saved before captions existed opens without them.
+        let older = """
+        {"videoPath":"/tmp/x.mp4","segments":[],"background":"aurora","ratio":"Source","padding":7,
+         "cornerRadius":18,"shadow":30,"cursorSize":1.25,"clickEffects":true}
+        """
+        let document = try JSONDecoder().decode(ProjectDocument.self, from: Data(older.utf8)).migrated()
+        XCTAssertNil(document.captions)
+        XCTAssertEqual(CaptionSettings().enabled, false)
+        XCTAssertEqual(CaptionSettings().isVisible, false)
+    }
+
+    /// Recognition is done a piece at a time, and a piece is a real audio
+    /// file cut out of the recording. If that cut fails there is nothing
+    /// to listen to, and the whole feature is silent for no visible reason.
+    func testCaptionAudioIsSlicedOutOfTheRecording() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("focusflow-caption-audio-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("spoken.m4a")
+        try await makeSpokenFixture(at: source, seconds: 8)
+
+        let asset = AVURLAsset(url: source)
+        let slice = directory.appendingPathComponent("piece.m4a")
+        try await CaptionTranscriber.extractAudio(from: asset, range: CMTimeRange(
+            start: CMTime(seconds: 3, preferredTimescale: 600),
+            duration: CMTime(seconds: 2, preferredTimescale: 600)), to: slice)
+
+        let cut = AVURLAsset(url: slice)
+        XCTAssertEqual(try await cut.load(.duration).seconds, 2, accuracy: 0.2)
+        XCTAssertEqual(try await cut.loadTracks(withMediaType: .audio).count, 1)
+        XCTAssertTrue(try await cut.load(.isPlayable))
+
+        // The pieces overlap, so a word spoken across a join is heard whole
+        // and the repeat is dropped when they are stitched back together.
+        XCTAssertGreaterThan(CaptionTranscriber.overlap, 0.5)
+        XCTAssertGreaterThan(CaptionTranscriber.chunk, CaptionTranscriber.overlap * 4)
+        XCTAssertTrue(CaptionTranscriber.supportedLanguages.contains { $0.identifier == "en-US" })
+
+        // A recording with nothing to hear says so rather than failing late.
+        let silentPicture = directory.appendingPathComponent("picture.mp4")
+        try await makeFixture(at: silentPicture, camera: false)
+        do {
+            _ = try await CaptionTranscriber.words(in: silentPicture, language: "en-US") { _ in }
+            XCTFail("A recording with no audio should refuse before asking for permission")
+        } catch let error as CaptionError {
+            guard case .noAudio = error else { return XCTFail("Expected the no-audio refusal, got \(error)") }
+        }
+    }
+
+    /// A few seconds of tone, written as a real AAC file.
+    private func makeSpokenFixture(at url: URL, seconds: Double) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ])
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+
+        let rate = 44_100.0, block = 4_410
+        var format: CMFormatDescription?
+        var description = AudioStreamBasicDescription(mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 4,
+            mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1, mBitsPerChannel: 32, mReserved: 0)
+        CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &description,
+                                       layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+                                       extensions: nil, formatDescriptionOut: &format)
+        let shape = try XCTUnwrap(format)
+        var written = 0
+        let total = Int(seconds * rate)
+        while written < total {
+            let count = min(block, total - written)
+            var samples = [Float](repeating: 0, count: count)
+            for index in 0..<count {
+                samples[index] = Float(sin(Double(written + index) * 2 * .pi * 220 / rate) * 0.3)
+            }
+            var buffer: CMBlockBuffer?
+            let bytes = count * 4
+            CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+                blockLength: bytes, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+                offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &buffer)
+            let block = try XCTUnwrap(buffer)
+            samples.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) }
+            var sample: CMSampleBuffer?
+            var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+                                            presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate)),
+                                            decodeTimeStamp: .invalid)
+            CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: shape,
+                                      sampleCount: count, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                                      sampleSizeEntryCount: 1, sampleSizeArray: [4], sampleBufferOut: &sample)
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            XCTAssertTrue(input.append(try XCTUnwrap(sample)))
+            written += count
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+    }
+
     private func pixels(_ image: CGImage) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
         bytes.withUnsafeMutableBytes { storage in

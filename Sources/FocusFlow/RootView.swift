@@ -214,8 +214,8 @@ struct ToolRail: View {
     @EnvironmentObject private var model: EditorModel
     private let sections: [(String, String)] = [
         ("Canvas", "rectangle.on.rectangle"), ("Cursor", "cursorarrow"),
-        ("Motion", "sparkles"), ("Camera", "video"), ("Audio", "speaker.wave.2"),
-        ("Export", "square.and.arrow.up")
+        ("Motion", "sparkles"), ("Camera", "video"), ("Captions", "captions.bubble"),
+        ("Audio", "speaker.wave.2"), ("Export", "square.and.arrow.up")
     ]
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -488,6 +488,7 @@ struct InspectorView: View {
                     case "Cursor": CursorAppearanceInspector().padding(18)
                     case "Motion": MotionPanel().padding(18)
                     case "Camera": CameraPanel().padding(18)
+                    case "Captions": CaptionsPanel().padding(18)
                     case "Audio": AudioPanel().padding(18)
                     case "Export": ExportPanel().padding(18)
                     case "Segment": SegmentInspector()

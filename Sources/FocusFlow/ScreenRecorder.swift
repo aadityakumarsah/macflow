@@ -69,6 +69,50 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var lastLeftButtonDown = false
     private var outputURL: URL?
 
+    /// The pixel size a capture should be made at.
+    ///
+    /// A display and a window both report their size in points. A MacBook's
+    /// built-in screen is 1512 x 982 of them and 3024 x 1964 pixels, so
+    /// asking ScreenCaptureKit for the point size recorded the Mac at half
+    /// its resolution — every pixel of detail thrown away before the editor
+    /// ever saw it, and nothing downstream could put it back.
+    static func capturePixels(points: CGSize, scale: CGFloat) -> CGSize {
+        let scale = scale.isFinite && scale > 0 ? scale : 1
+        // H.264 and HEVC both reject odd dimensions.
+        return CGSize(width: max(2, (points.width * scale / 2).rounded() * 2),
+                      height: max(2, (points.height * scale / 2).rounded() * 2))
+    }
+
+    /// How the capture itself is encoded.
+    ///
+    /// The rate scales with the frame rate as well as the frame, which the
+    /// flat per-pixel figure this replaced did not: a Retina display at 60
+    /// fps carries four times the pixels of the 1080p30 this was tuned for
+    /// and was being written at a third of the bits per pixel. Screen
+    /// content is flat colour and hard edges, and edges are the first thing
+    /// a mean bitrate softens, so it is generous by camera standards.
+    static func captureSettings(width: Int, height: Int, frameRate: Int) -> [String: Any] {
+        let pixels = Double(width) * Double(height)
+        // H.264's levels top out around 4096 on a side, and the hardware
+        // encoder refuses beyond that — which a 6K display would be.
+        let overSized = max(width, height) > 4096
+        let codec: AVVideoCodecType = overSized ? .hevc : .h264
+        let perPixel = overSized ? 0.085 : 0.12
+        let bitrate = min(150_000_000, max(8_000_000, pixels * Double(frameRate) * perPixel))
+        var compression: [String: Any] = [
+            AVVideoAverageBitRateKey: Int(bitrate),
+            AVVideoExpectedSourceFrameRateKey: frameRate,
+            AVVideoMaxKeyFrameIntervalKey: frameRate * 2,
+        ]
+        if !overSized { compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel }
+        return [
+            AVVideoCodecKey: codec,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: compression,
+        ]
+    }
+
     @MainActor
     func start(target: CaptureTarget? = nil, region: ContentRegion = .full, capturesAudio: Bool = true, capturesMicrophone: Bool = false, frameRate: Int = 60) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
@@ -103,15 +147,14 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         switch resolvedTarget {
         case .display(let display):
             filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: [])
-            width = max(2, display.width / 2 * 2)
-            height = max(2, display.height / 2 * 2)
+            let pixels = Self.capturePixels(points: display.frame.size, scale: CGFloat(filter.pointPixelScale))
+            width = Int(pixels.width); height = Int(pixels.height)
             captureFrame = display.frame
         case .window(let window):
             targetPID = window.owningApplication?.processID; targetWindowID = window.windowID
             filter = SCContentFilter(desktopIndependentWindow: window)
-            let scale = CGFloat(filter.pointPixelScale)
-            width = max(2, Int(window.frame.width * scale) / 2 * 2)
-            height = max(2, Int(window.frame.height * scale) / 2 * 2)
+            let pixels = Self.capturePixels(points: window.frame.size, scale: CGFloat(filter.pointPixelScale))
+            width = Int(pixels.width); height = Int(pixels.height)
             captureFrame = window.frame
         }
         let fullSize = CGSize(width: width, height: height)
@@ -124,16 +167,7 @@ final class ScreenRecorder: NSObject, ObservableObject, SCStreamOutput, SCStream
         width = Int(pixelCrop.width); height = Int(pixelCrop.height)
         sourceSize = CGSize(width: width, height: height)
         sourceName = resolvedTarget.name + (region == .full ? "" : " · Selected area")
-        let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: min(24_000_000, width * height * 5),
-                AVVideoExpectedSourceFrameRateKey: frameRate,
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
-            ]
-        ])
+        let video = AVAssetWriterInput(mediaType: .video, outputSettings: Self.captureSettings(width: width, height: height, frameRate: frameRate))
         video.expectsMediaDataInRealTime = true
         guard assetWriter.canAdd(video) else { throw RecorderError.writerFailed }
         assetWriter.add(video)

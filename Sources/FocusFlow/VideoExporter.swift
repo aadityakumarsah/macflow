@@ -50,6 +50,7 @@ struct ExportSettings {
     var scrollEvents: [ScrollEvent] = []
     var sounds = SoundSettings()
     var selectionFocus = SelectionFocusSettings()
+    var captions = CaptionSettings()
 }
 
 enum ExportError: LocalizedError {
@@ -752,7 +753,58 @@ final class FocusFlowCompositor: NSObject, AVVideoCompositing {
             if settings.cameraMirrored { camera = normalized(camera.transformed(by: CGAffineTransform(scaleX: -1, y: 1))) }
             result = applyCamera(camera, over: result, settings: settings, canvas: canvas)
         }
+        // Last of all, so nothing is ever laid over the words — not the
+        // camera, not the progress line, not a 3D lean.
+        result = applyCaptions(to: result, at: time, settings: settings, canvas: canvas)
         return result.cropped(to: canvas)
+    }
+
+    /// The spoken line for this moment, over the finished frame.
+    func applyCaptions(to image: CIImage, at time: Double, settings: ExportSettings, canvas: CGRect) -> CIImage {
+        let captions = settings.captions
+        guard captions.isVisible, let cue = captions.cue(at: time),
+              let drawn = CaptionRenderer.render(cue: cue, at: time, settings: captions,
+                                                 accent: settings.cursor.accentColor, canvas: canvas) else { return image }
+        let motion = CaptionRenderer.motion(for: cue, at: time, animation: captions.animation)
+        guard motion.opacity > 0.004 else { return image }
+
+        var result = image
+        let box = drawn.box.offsetBy(dx: 0, dy: motion.lift * drawn.box.height)
+        // Softening the picture behind the words is the one backdrop that
+        // cannot be drawn into the caption's own bitmap: it is made of what
+        // is underneath it.
+        if captions.backdrop == .blur {
+            let region = box.insetBy(dx: -canvas.width * 0.004, dy: -canvas.height * 0.004).intersection(canvas)
+            if !region.isEmpty {
+                let radius = max(6, canvas.height * 0.016)
+                var panel = image.clampedToExtent()
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
+                    .cropped(to: region)
+                let tint = max(0, min(1, captions.backdropOpacity))
+                if tint > 0.004 {
+                    let wash = CIImage(color: CIColor(cgColor: CGColor(red: captions.backdropColor.r, green: captions.backdropColor.g, blue: captions.backdropColor.b, alpha: tint))).cropped(to: region)
+                    panel = wash.composited(over: panel)
+                }
+                let radiusPx = min(region.height / 2, canvas.height * captions.size * captions.backdropRadius)
+                if let mask = rounded(region, radius: radiusPx, color: CGColor(gray: 1, alpha: 1)) {
+                    panel = panel.applyingFilter("CIBlendWithMask", parameters: [
+                        kCIInputBackgroundImageKey: CIImage(color: .clear).cropped(to: region),
+                        kCIInputMaskImageKey: mask])
+                }
+                result = opacity(panel, motion.opacity).composited(over: result)
+            }
+        }
+
+        var placed = drawn.image.transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+        if abs(motion.scale - 1) > 0.001 {
+            // Grown about where it sits, so a line springs up in place
+            // rather than drifting out of its own box.
+            let centre = CGPoint(x: box.midX, y: box.midY)
+            placed = placed.transformed(by: CGAffineTransform(translationX: centre.x, y: centre.y)
+                .scaledBy(x: motion.scale, y: motion.scale)
+                .translatedBy(x: -centre.x, y: -centre.y))
+        }
+        return opacity(placed, motion.opacity).composited(over: result).cropped(to: canvas)
     }
 
     /// Applies the chosen look: colour controls, a tint wash, exposure and a

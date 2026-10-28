@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.26.0</string>
+	<string>0.27.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>43</string>
+	<string>44</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSCameraUsageDescription</key>
@@ -43,6 +43,8 @@
 	<string>FocusFlow records pointer clicks and keyboard shortcuts so they can be redrawn as editable tutorial effects.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FocusFlow can include your narration in screen recordings.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>FocusFlow transcribes your narration so it can write captions for your recording.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>FocusFlow records your selected display to create editable screen demos.</string>
 </dict>
