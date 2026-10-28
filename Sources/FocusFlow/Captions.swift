@@ -446,7 +446,10 @@ enum CaptionTranscriber {
             let offset = Double(piece) * step
             let length = min(chunk, duration - offset)
             guard length > 0.2 else { break }
-            progress(Double(piece) / Double(pieces))
+            let share = { (reached: Double) in
+                progress(min(0.99, (Double(piece) + min(1, reached / max(1, length))) / Double(pieces)))
+            }
+            share(0)
             let slice = scratch.appendingPathComponent("piece-\(piece).wav")
             let peak = try await extractAudio(from: asset, range: CMTimeRange(
                 start: CMTime(seconds: offset, preferredTimescale: 600),
@@ -455,7 +458,7 @@ enum CaptionTranscriber {
             // Nothing on the track but the noise floor. Handing that to the
             // recogniser costs seconds per piece and returns nothing.
             guard peak > silence else { continue }
-            let spoken = try await recognize(slice, recognizer: recognizer, onDevice: onDevice)
+            let spoken = try await recognize(slice, recognizer: recognizer, onDevice: onDevice, progress: share)
             for word in spoken {
                 let placed = CaptionWord(text: word.text, start: word.start + offset, duration: word.duration)
                 // Anything already heard in the overlap is the same word
@@ -548,54 +551,167 @@ enum CaptionTranscriber {
         return peak
     }
 
-    private static func recognize(_ url: URL, recognizer: SFSpeechRecognizer, onDevice: Bool) async throws -> [CaptionWord] {
+    private static func recognize(_ url: URL, recognizer: SFSpeechRecognizer, onDevice: Bool,
+                                  progress: @escaping @Sendable (Double) -> Void) async throws -> [CaptionWord] {
         let request = SFSpeechURLRecognitionRequest(url: url)
-        request.shouldReportPartialResults = false
+        // Not optional, despite only the finished text being wanted: see
+        // `Hearing`. Asking for final results only loses most of the file.
+        request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = onDevice
         request.taskHint = .dictation
         if #available(macOS 13.0, *) { request.addsPunctuation = true }
 
-        /// The recogniser answers on its own queue, possibly more than
-        /// once, and a continuation may only be resumed once. It also has
-        /// to be reachable from outside so a stalled piece, or a stopped
-        /// generation, can call it off rather than waiting for ever.
-        final class Attempt: @unchecked Sendable {
-            private let lock = NSLock()
-            private var finished = false
-            private var task: SFSpeechRecognitionTask?
-            func claim() -> Bool { lock.lock(); defer { lock.unlock() }; if finished { return false }; finished = true; return true }
-            func hold(_ task: SFSpeechRecognitionTask) {
-                lock.lock(); let over = finished; self.task = task; lock.unlock()
-                if over { task.cancel() }
-            }
-            func stop() { lock.lock(); let task = self.task; lock.unlock(); task?.cancel() }
-        }
-        let attempt = Attempt()
+        let hearing = Hearing(progress: progress)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let task = recognizer.recognitionTask(with: request) { result, error in
-                    if let error {
-                        guard attempt.claim() else { return }
-                        continuation.resume(throwing: CaptionError.failed(error.localizedDescription))
-                        return
-                    }
-                    guard let result, result.isFinal else { return }
-                    guard attempt.claim() else { return }
-                    continuation.resume(returning: result.bestTranscription.segments.compactMap { segment in
-                        let text = segment.substring.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !text.isEmpty else { return nil }
-                        return CaptionWord(text: text, start: segment.timestamp, duration: max(0.08, segment.duration))
-                    })
-                }
-                attempt.hold(task)
-                // A piece that has not answered long after it should have
-                // is not going to. Calling it off produces an error the
-                // panel can show, rather than a progress bar that never
-                // moves and a Stop that stops nothing.
-                DispatchQueue.global().asyncAfter(deadline: .now() + stall) { attempt.stop() }
+                // Set before the task exists: the delegate can be called
+                // before `recognitionTask` has even returned.
+                hearing.answer(continuation)
+                hearing.hold(recognizer.recognitionTask(with: request, delegate: hearing))
+                // A piece that has not answered long after it should have is
+                // not going to. Calling it off produces an error the panel
+                // can show, rather than a bar that never moves.
+                DispatchQueue.global().asyncAfter(deadline: .now() + stall) { hearing.stop() }
             }
         } onCancel: {
-            attempt.stop()
+            hearing.stop()
         }
+    }
+}
+
+/// What has been heard so far, merged on the moment each word was spoken.
+///
+/// The recogniser reports a long file in overlapping instalments: a
+/// running guess at the utterance it is in the middle of, then a settled
+/// account of that utterance once it ends, then on to the next. Keeping
+/// only one of those instalments keeps only part of the recording, so
+/// they are all folded together here.
+///
+/// A word is identified by the hundredth of a second it starts on. A
+/// settled utterance wins over a guess, and replaces every guess inside
+/// the stretch it covers — otherwise a word the recogniser heard, then
+/// thought better of, survives in the gap between two words it kept.
+struct CaptionTranscript {
+    /// Keyed by the hundredth of a second the word starts on.
+    private var heard: [Int: CaptionWord] = [:]
+    private var settled: Set<Int> = []
+
+    var words: [CaptionWord] { heard.values.sorted { $0.start < $1.start } }
+    var isEmpty: Bool { heard.isEmpty }
+
+    private func key(_ start: Double) -> Int { Int((start * 100).rounded()) }
+
+    mutating func absorb(_ spoken: [CaptionWord], settled settledUtterance: Bool) {
+        guard !spoken.isEmpty else { return }
+        let ordered = spoken.sorted { $0.start < $1.start }
+        if settledUtterance, let from = ordered.first?.start, let to = ordered.last?.end {
+            for (at, word) in heard where !settled.contains(at)
+                && word.start >= from - 0.01 && word.start <= to + 0.01 {
+                heard[at] = nil
+            }
+        }
+        for word in ordered {
+            let at = key(word.start)
+            if !settledUtterance && settled.contains(at) { continue }
+            heard[at] = word
+            if settledUtterance { settled.insert(at) }
+        }
+    }
+}
+
+/// Collects a whole file's worth of transcription.
+///
+/// A long recording is not recognised in one pass. The recogniser works
+/// through it an utterance at a time and reports each one separately, and
+/// when it is asked for final results only it delivers exactly one of
+/// them — the last. Everything said before that is recognised, reported as
+/// it goes, and thrown away unread, which is why a forty-second narration
+/// came back captioned only at its end.
+///
+/// So every result is taken, the running ones included, and the words are
+/// merged on the moment they were spoken. A later, better hearing of a
+/// moment replaces the earlier guess at it; a moment nothing has been said
+/// about yet is kept. When the recogniser settles an utterance, its own
+/// account of that stretch replaces whatever was there, so a guess it
+/// discarded does not survive in the gaps. The task's delegate says when
+/// there is no more coming, which no flag on a result can.
+private final class Hearing: NSObject, SFSpeechRecognitionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var transcript = CaptionTranscript()
+    private var task: SFSpeechRecognitionTask?
+    private var continuation: CheckedContinuation<[CaptionWord], Error>?
+    private var finished = false
+    private var furthest = 0.0
+    private let progress: @Sendable (Double) -> Void
+
+    init(progress: @escaping @Sendable (Double) -> Void) {
+        self.progress = progress
+    }
+
+    func answer(_ continuation: CheckedContinuation<[CaptionWord], Error>) {
+        lock.lock(); self.continuation = continuation; lock.unlock()
+    }
+
+    func hold(_ task: SFSpeechRecognitionTask) {
+        lock.lock(); let over = finished; self.task = task; lock.unlock()
+        if over { task.cancel() }
+    }
+
+    /// Called off: from a cancelled generation, or from the watchdog.
+    func stop() {
+        lock.lock(); let task = self.task; lock.unlock()
+        task?.cancel()
+        // A task that never started cannot report its own cancellation.
+        complete(.success(words()))
+    }
+
+    private func words() -> [CaptionWord] {
+        lock.lock(); defer { lock.unlock() }
+        return transcript.words
+    }
+
+    private func complete(_ result: Result<[CaptionWord], Error>) {
+        lock.lock()
+        guard !finished, let continuation else { lock.unlock(); return }
+        finished = true
+        self.continuation = nil
+        lock.unlock()
+        continuation.resume(with: result)
+    }
+
+    private func absorb(_ transcription: SFTranscription, settledUtterance: Bool) {
+        let spoken: [CaptionWord] = transcription.segments.compactMap { segment in
+            let text = segment.substring.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return CaptionWord(text: text, start: segment.timestamp, duration: max(0.08, segment.duration))
+        }
+        guard !spoken.isEmpty else { return }
+        lock.lock()
+        transcript.absorb(spoken, settled: settledUtterance)
+        let reached = max(furthest, spoken.last?.end ?? 0)
+        furthest = reached
+        lock.unlock()
+        progress(reached)
+    }
+
+    func speechRecognitionTask(_ task: SFSpeechRecognitionTask, didHypothesizeTranscription transcription: SFTranscription) {
+        absorb(transcription, settledUtterance: false)
+    }
+
+    func speechRecognitionTask(_ task: SFSpeechRecognitionTask, didFinishRecognition result: SFSpeechRecognitionResult) {
+        absorb(result.bestTranscription, settledUtterance: true)
+    }
+
+    func speechRecognitionTask(_ task: SFSpeechRecognitionTask, didFinishSuccessfully successfully: Bool) {
+        // What was heard before it stopped is worth more than an error that
+        // throws away a minute of correct transcription, so a failure part
+        // way through still returns the part that worked.
+        let spoken = words()
+        if successfully || !spoken.isEmpty { complete(.success(spoken)) }
+        else { complete(.failure(CaptionError.failed(task.error?.localizedDescription ?? "the recogniser stopped."))) }
+    }
+
+    func speechRecognitionTaskWasCancelled(_ task: SFSpeechRecognitionTask) {
+        complete(.success(words()))
     }
 }

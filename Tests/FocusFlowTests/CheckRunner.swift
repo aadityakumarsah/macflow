@@ -80,6 +80,7 @@ func XCTUnwrap<T>(_ value: T?) throws -> T { guard let value else { throw NSErro
             try tests.testCaptionsBreakIntoReadableLines()
             try await tests.testCaptionsAreDrawnOverTheFinishedFrame()
             try await tests.testCaptionsPersistAndFollowTheEdit()
+            try tests.testTranscriptKeepsEveryInstalment()
             try await tests.testCaptionAudioIsSlicedOutOfTheRecording()
             try await tests.testCaptionsCanBePlacedAnywhere()
             try await tests.testCaptionsAreEditableFromTheTimeline()

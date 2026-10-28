@@ -423,7 +423,12 @@ final class EditorModel: ObservableObject {
                 updated.enabled = true
                 captions = updated
                 captionProgress = nil
-                captionStatus = "\(updated.cues.count) lines from \(words.count) words."
+                // What it covered, not just how much there is of it. A
+                // transcription that stops a third of the way in looks
+                // perfectly healthy as a count of lines, and this was
+                // exactly the failure that hid behind one.
+                let from = words.first?.start ?? 0, to = words.last?.end ?? 0
+                captionStatus = "\(updated.cues.count) lines covering \(stamp(from)) to \(stamp(to)) of \(stamp(duration))."
             } catch is CancellationError {
                 captionProgress = nil
             } catch {
@@ -450,6 +455,12 @@ final class EditorModel: ObservableObject {
         // and no complaint.
         guard let tracks = try? await asset.loadTracks(withMediaType: .audio), !tracks.isEmpty else { return }
         generateCaptions()
+    }
+
+    /// Minutes and seconds, for a status line somebody reads at a glance.
+    private func stamp(_ seconds: Double) -> String {
+        let total = max(0, seconds)
+        return String(format: "%d:%02d", Int(total) / 60, Int(total) % 60)
     }
 
     func cancelCaptions() {

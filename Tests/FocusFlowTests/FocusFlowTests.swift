@@ -3114,6 +3114,65 @@ final class FocusFlowTests {
         model.automaticCaptions = was
     }
 
+    /// A long recording is reported by the recogniser in instalments, and
+    /// keeping one of them keeps a fraction of what was said.
+    func testTranscriptKeepsEveryInstalment() throws {
+        func word(_ text: String, _ start: Double, _ duration: Double = 0.4) -> CaptionWord {
+            CaptionWord(text: text, start: start, duration: duration)
+        }
+        var transcript = CaptionTranscript()
+        XCTAssertTrue(transcript.isEmpty)
+
+        // The recogniser works through an utterance, guessing as it goes,
+        // then settles it and moves on. This is what forty seconds of
+        // narration arrives as.
+        transcript.absorb([word("Section", 0.5)], settled: false)
+        transcript.absorb([word("Section", 0.5), word("one", 1.0)], settled: false)
+        transcript.absorb([word("Section", 0.5), word("one.", 1.0)], settled: true)
+        transcript.absorb([word("Section", 10.0), word("two.", 10.5)], settled: true)
+        transcript.absorb([word("Section", 20.0), word("three.", 20.5)], settled: true)
+
+        // Everything, in order — not merely the last utterance, which is
+        // the one the recogniser flags as final and all this used to keep.
+        XCTAssertEqual(transcript.words.map(\.text),
+                       ["Section", "one.", "Section", "two.", "Section", "three."])
+        XCTAssertEqual(transcript.words.map(\.start), [0.5, 1.0, 10.0, 10.5, 20.0, 20.5])
+        XCTAssertEqual(transcript.words.first?.start, 0.5)
+        XCTAssertEqual(transcript.words.last?.start, 20.5)
+
+        // A settled utterance replaces the running guess at the same
+        // moment rather than doubling it up.
+        XCTAssertEqual(transcript.words.filter { $0.start == 1.0 }.count, 1)
+
+        // A word the recogniser heard and then thought better of does not
+        // survive in the gap between the words it kept.
+        var revised = CaptionTranscript()
+        revised.absorb([word("their", 3.0), word("bass", 3.4), word("ill", 3.8)], settled: false)
+        revised.absorb([word("the", 3.0), word("basil", 3.4)], settled: true)
+        XCTAssertEqual(revised.words.map(\.text), ["the", "basil"])
+
+        // And a late guess cannot overwrite a stretch already settled.
+        revised.absorb([word("rubbish", 3.0)], settled: false)
+        XCTAssertEqual(revised.words.first?.text, "the")
+
+        // Instalments can arrive out of order; the transcript is in time order.
+        var jumbled = CaptionTranscript()
+        jumbled.absorb([word("end", 30)], settled: true)
+        jumbled.absorb([word("start", 1)], settled: true)
+        XCTAssertEqual(jumbled.words.map(\.text), ["start", "end"])
+
+        // Real instalments cover the whole file, so the lines built from
+        // them do too — the symptom was captions only over the last third.
+        var whole = CaptionTranscript()
+        for second in stride(from: 0.0, to: 40.0, by: 2.0) {
+            whole.absorb([word("word\(Int(second))", second)], settled: true)
+        }
+        let cues = CaptionBuilder.cues(from: whole.words, wordsPerLine: 6)
+        XCTAssertEqual(cues.first?.start, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(cues.last?.end), 38)
+        XCTAssertEqual(cues.flatMap { $0.text.split(separator: " ") }.count, 20)
+    }
+
     /// The loudest sample in a file, as a share of full scale.
     private func loudest(of url: URL) async throws -> Double {
         let asset = AVURLAsset(url: url)

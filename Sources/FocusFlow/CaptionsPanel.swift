@@ -93,7 +93,7 @@ private struct CaptionGenerateSection: View {
 
             if let status = model.captionStatus {
                 Text(status).font(.caption2)
-                    .foregroundStyle(status.hasSuffix("words.") ? Color.secondary : Color.orange)
+                    .foregroundStyle(status.hasPrefix("Caption") || status.contains(" lines covering ") ? Color.secondary : Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(CaptionTranscriber.onDeviceAvailable(model.captions.language)
